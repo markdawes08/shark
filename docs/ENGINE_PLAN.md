@@ -1,9 +1,9 @@
 # Shark Engine Plan
 
-- **Status:** Proposed working plan for owner review
+- **Status:** Active working plan
 - **Plan date:** July 11, 2026
-- **Current increment:** `P-000` - architecture and roadmap
-- **Next increment:** `F-001` - toolchain prerequisites and build contract
+- **Completed through:** `F-001` - toolchain prerequisites and build contract
+- **Next increment:** `F-002` - reproducible CMake project skeleton
 
 ## 1. Project direction
 
@@ -89,12 +89,12 @@ Architecture Decision Record (ADR) explaining why.
 | Area | Decision | Reason |
 |---|---|---|
 | Platform | Windows 11, x64 desktop | Direct3D 12 is the purpose of the project; a cross-platform layer would slow the first vertical slice |
-| Language | C++20 with MSVC strict conformance | Modern facilities with mature compiler and library support |
+| Language | C++20 with MSVC `14.50` LTS (`v145`) strict conformance | Modern facilities on a three-year LTS compiler family |
 | Windowing | Native Win32 | Minimal dependency surface and direct DXGI integration |
-| Build | CMake presets, MSVC, and a pinned vcpkg manifest | Reproducible command-line and Visual Studio builds |
+| Build | CMake 4.2+, `Visual Studio 18 2026` generator, and a pinned vcpkg manifest | Reproducible command-line and Visual Studio builds |
 | Graphics API | Direct3D 12 through a narrow typed RHI | Keeps D3D objects below the renderer without inventing an unneeded Vulkan abstraction |
-| Runtime | Retail DirectX 12 Agility SDK `1.619.3`, pinned | Current retail D3D12 runtime at plan time; preview SDKs stay off `main` |
-| Shaders | HLSL compiled to DXIL by a pinned retail DXC | Reproducible Shader Model 6 builds and PIX source debugging |
+| Runtime | Retail DirectX 12 Agility SDK, exact release selected and pinned in `F-002` | Current stable D3D12 runtime; preview SDKs stay off `main` |
+| Shaders | HLSL compiled to DXIL by retail DXC, exact release selected and pinned in `F-002` | Reproducible Shader Model 6 builds and PIX source debugging |
 | Required GPU baseline | Feature Level 12_0+ and Shader Model 6.0+ | Runs the first environment on a broad D3D12 hardware base with conventional descriptor tables |
 | Modern GPU profile | Shader Model 6.6+ and Resource Binding Tier 3, capability-gated | Enables direct descriptor-heap indexing when material scale justifies a bindless path |
 | Ultimate features | Feature-query and enable individually | Feature Level 12_2, DXR, mesh shaders, VRS, and sampler feedback are enhancements, not startup dependencies |
@@ -114,9 +114,9 @@ experiment branches, not on `main`.
 
 Keep third-party code deliberately small and pin every dependency:
 
-- DirectX 12 Agility SDK and DXC for the runtime and shader toolchain;
-- retail `Microsoft.Direct3D.WARP` `1.0.20` for a reproducible software-GPU
-  smoke-test path;
+- retail DirectX 12 Agility SDK and DXC for the runtime and shader toolchain;
+- retail `Microsoft.Direct3D.WARP` for a reproducible software-GPU smoke-test
+  path;
 - DirectX-Headers/`d3dx12.h` and DirectXMath for official API helpers and math;
 - DirectXTex/`texconv` for offline texture preparation plus a small DDS runtime
   loader;
@@ -137,9 +137,12 @@ adapters by high-performance preference, log all candidates, choose explicitly,
 and support command-line adapter selection. A WARP mode will exist for smoke
 tests, not performance validation.
 
-CMake, Ninja, MSVC, and DXC are not currently visible to the shell, and a Visual
-Studio C++ workload was not detected. `F-001` handles this prerequisite gap
-before source-code scaffolding begins.
+The `F-001` checker confirms the system D3D12 runtime is present. It also finds
+that Git for Windows is below the maintained security floor and that Visual
+Studio 2026/MSVC 14.50 LTS, CMake 4.2+, and a complete Windows SDK are not yet
+installed; Graphics Tools, PIX, and optional Ninja are also absent. Global DXC
+is intentionally not required because Shark restores a pinned project-local
+copy. See [Windows development setup](WINDOWS_SETUP.md).
 
 ## 5. World, math, and color conventions
 
@@ -492,7 +495,7 @@ dependency graph or build times justify them.
 Each row is intended to become one owner-reviewed manual commit. A milestone is
 a useful product checkpoint made from several such commits.
 
-### M0 - Direction (current)
+### M0 - Direction
 
 | ID | Level | Increment and acceptance gate | Suggested commit |
 |---|---:|---|---|
@@ -516,7 +519,7 @@ This is the shortest responsible path to the first requested visual feature.
 | `G-001` | - | Initialize Agility/D3D12, choose the high-performance adapter, log capabilities, and start hardware/WARP with zero debug errors | `feat(gpu): initialize Direct3D 12 device` |
 | `G-002` | V | Create a resize-safe flip swap chain and present a clear color for 1,000 frames without validation or live-object errors | `feat(gpu): present a clear-color frame` |
 | `G-003` | - | Add triple-buffered frame contexts, fences, upload storage, and descriptor allocators with verified retirement | `feat(gpu): add frame resource lifecycle` |
-| `G-004` | V | Pin DXC, compile HLSL at build time, and render a triangle; a broken shader fails the build | `feat(render): add the first HLSL pipeline` |
+| `G-004` | V | Use the project-pinned DXC to compile HLSL at build time and render a triangle; a broken shader fails the build | `feat(render): add the first HLSL pipeline` |
 | `G-005` | V | Add camera math, input, reversed-Z depth, and a textured cube; rotation and translation behave consistently | `feat(render): add camera and depth conventions` |
 | `G-006` | - | Add the simple direct-queue render graph with declared back-buffer/depth use and centralized barriers | `feat(render): add minimal render graph` |
 | `G-007` | - | Add named PIX events and GPU timestamp queries; frame/pass timings are reproducible in logs with bounded query storage | `feat(diagnostics): add GPU frame instrumentation` |
@@ -660,16 +663,17 @@ entity scale or query patterns make it useful.
 
 ## 14. Immediate next increment
 
-After `P-000` is reviewed and committed by the owner, implement only `F-001`:
+After `F-001` is reviewed and committed by the owner, implement only `F-002`:
 
-- document the exact Visual Studio/MSVC, Windows SDK, CMake, Git, PIX/Graphics
-  Tools, and optional Ninja prerequisites;
-- add a read-only PowerShell prerequisite checker;
-- verify it reports the current missing tools clearly; and
-- stop before adding C++ source code or installing dependencies into the repo.
+- add CMake presets using the `Visual Studio 18 2026` x64 generator and MSVC
+  14.50 LTS toolset;
+- add pinned dependency manifests/restoration for the retail DirectX packages;
+- create only `SharkEngine`, `SharkSandbox`, and `SharkTests` skeleton targets;
+- document a fresh configure/build/test sequence and make one test pass; and
+- stop before adding a Win32 window, D3D12 device, or runtime engine behavior.
 
-That keeps setup reviewable and makes `F-002` a clean, reproducible build-system
-increment.
+That keeps the build scaffold independently reviewable before core or platform
+implementation begins.
 
 ## 15. Primary technical references
 

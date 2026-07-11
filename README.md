@@ -7,8 +7,10 @@ surface water.
 
 ## Project status
 
-The engine is in architecture and planning. No implementation toolchain or
-runtime code has been added yet.
+The architecture and Windows toolchain contract are defined. No C++ project,
+engine runtime, or downloaded dependency has been added yet.
 
 - [Engine architecture and roadmap](docs/ENGINE_PLAN.md)
-- Next increment: `F-001` toolchain prerequisites and reproducible build contract
+- [Windows development setup](docs/WINDOWS_SETUP.md)
+- [Read-only prerequisite checker](scripts/check-prerequisites.ps1)
+- Next increment: `F-002` reproducible CMake project skeleton

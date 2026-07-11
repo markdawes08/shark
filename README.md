@@ -5,10 +5,6 @@ engine. Its first vertical slice is an interactive outdoor environment with a
 skybox, textured terrain, rain, terrain collision, and progressively simulated
 surface water.
 
-The project is intentionally built in small, reviewable increments. Codex will
-prepare and verify one increment at a time; the repository owner will manually
-stage, commit, and push every increment.
-
 ## Project status
 
 The engine is in architecture and planning. No implementation toolchain or

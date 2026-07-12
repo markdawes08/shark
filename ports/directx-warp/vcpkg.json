@@ -1,0 +1,9 @@
+{
+  "name": "directx-warp",
+  "version": "1.0.20",
+  "description": "Microsoft Direct3D WARP software rasterizer for testing",
+  "homepage": "https://www.nuget.org/packages/Microsoft.Direct3D.WARP/1.0.20",
+  "license": null,
+  "supports": "windows & x64"
+}
+

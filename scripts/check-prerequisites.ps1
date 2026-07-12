@@ -15,7 +15,7 @@ $MinimumVisualStudio = [version]'18.0'
 $MaximumVisualStudio = [version]'19.0'
 $RequiredMsvcFamily = '14.50'
 $MinimumCMake = [version]'4.2.0'
-$MinimumWindowsSdk = [version]'10.0.26100.0'
+$RequiredWindowsSdk = [version]'10.0.26100.0'
 $MinimumPix = [version]'2603.25'
 
 $script:Results = @()
@@ -283,7 +283,7 @@ function Get-RequiredMsvcToolset {
 }
 
 function Get-CMakeCandidates {
-    param([AllowNull()][string]$VisualStudioPath)
+    param([AllowEmptyCollection()][string[]]$VisualStudioPaths = @())
 
     $candidates = @()
     $pathCandidate = Get-ApplicationPath -Name 'cmake.exe'
@@ -291,8 +291,10 @@ function Get-CMakeCandidates {
         $candidates += $pathCandidate
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($VisualStudioPath)) {
-        $candidates += (Join-Path $VisualStudioPath 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe')
+    foreach ($visualStudioPath in $VisualStudioPaths) {
+        if (-not [string]::IsNullOrWhiteSpace($visualStudioPath)) {
+            $candidates += (Join-Path $visualStudioPath 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe')
+        }
     }
 
     foreach ($programFilesRoot in @(Get-ProgramFilesRoots)) {
@@ -305,10 +307,10 @@ function Get-CMakeCandidates {
 }
 
 function Get-BestCMake {
-    param([AllowNull()][string]$VisualStudioPath)
+    param([AllowEmptyCollection()][string[]]$VisualStudioPaths = @())
 
     $probes = @()
-    foreach ($candidate in @(Get-CMakeCandidates -VisualStudioPath $VisualStudioPath)) {
+    foreach ($candidate in @(Get-CMakeCandidates -VisualStudioPaths $VisualStudioPaths)) {
         $probe = Invoke-VersionProbe -Path $candidate
         $version = Get-NumericVersion -Text $probe.Text
         if ($probe.Succeeded -and $null -ne $version) {
@@ -323,6 +325,48 @@ function Get-BestCMake {
     return $probes |
         Sort-Object -Property Version -Descending |
         Select-Object -First 1
+}
+
+function Get-BestVcpkg {
+    param([AllowEmptyCollection()][string[]]$VisualStudioPaths = @())
+
+    $candidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:VCPKG_ROOT)) {
+        $candidates += (Join-Path $env:VCPKG_ROOT 'vcpkg.exe')
+    }
+
+    $pathCandidate = Get-ApplicationPath -Name 'vcpkg.exe'
+    if (-not [string]::IsNullOrWhiteSpace($pathCandidate)) {
+        $candidates += $pathCandidate
+    }
+
+    foreach ($visualStudioPath in $VisualStudioPaths) {
+        if (-not [string]::IsNullOrWhiteSpace($visualStudioPath)) {
+            $candidates += (Join-Path $visualStudioPath 'VC\vcpkg\vcpkg.exe')
+        }
+    }
+
+    foreach ($candidate in @(
+        $candidates |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path -LiteralPath $_ -PathType Leaf) } |
+            Select-Object -Unique
+    )) {
+        $candidateRoot = Split-Path -Path $candidate -Parent
+        $toolchain = Join-Path $candidateRoot 'scripts\buildsystems\vcpkg.cmake'
+        if (-not (Test-Path -LiteralPath $toolchain -PathType Leaf)) {
+            continue
+        }
+
+        $probe = Invoke-VersionProbe -Path $candidate
+        if ($probe.Succeeded) {
+            return [pscustomobject]@{
+                Path = $candidate
+                Text = (($probe.Text -split "`r?`n")[0])
+            }
+        }
+    }
+
+    return $null
 }
 
 function Get-WindowsSdkRoots {
@@ -408,15 +452,17 @@ function Get-WindowsSdkInventory {
 }
 
 function Get-NinjaCandidates {
-    param([AllowNull()][string]$VisualStudioPath)
+    param([AllowEmptyCollection()][string[]]$VisualStudioPaths = @())
 
     $candidates = @()
     $pathCandidate = Get-ApplicationPath -Name 'ninja.exe'
     if (-not [string]::IsNullOrWhiteSpace($pathCandidate)) {
         $candidates += $pathCandidate
     }
-    if (-not [string]::IsNullOrWhiteSpace($VisualStudioPath)) {
-        $candidates += (Join-Path $VisualStudioPath 'Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe')
+    foreach ($visualStudioPath in $VisualStudioPaths) {
+        if (-not [string]::IsNullOrWhiteSpace($visualStudioPath)) {
+            $candidates += (Join-Path $visualStudioPath 'Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe')
+        }
     }
 
     return $candidates |
@@ -600,6 +646,7 @@ try {
     }
 
     $visualStudioPath = $null
+    $visualStudioPaths = @()
     $vsWherePath = Get-VsWherePath
     if ([string]::IsNullOrWhiteSpace($vsWherePath)) {
         Add-CheckResult -Status FAIL -Phase 'F-002' -Name 'Visual Studio 2026 / MSVC 14.50 LTS' -BlocksF002 $true `
@@ -611,6 +658,7 @@ try {
             Get-VisualStudioInstallations -VsWherePath $vsWherePath |
                 Where-Object { $null -ne $_ -and $null -ne $_.installationPath }
         )
+        $visualStudioPaths = @($vsInstallations | ForEach-Object { [string]$_.installationPath })
         if ($vsInstallations.Count -eq 0) {
             $diagnostic = Get-VisualStudioDiagnostic -VsWherePath $vsWherePath
             Add-CheckResult -Status FAIL -Phase 'F-002' -Name 'Visual Studio 2026 / MSVC 14.50 LTS' -BlocksF002 $true `
@@ -649,7 +697,7 @@ try {
         }
     }
 
-    $cmake = Get-BestCMake -VisualStudioPath $visualStudioPath
+    $cmake = Get-BestCMake -VisualStudioPaths $visualStudioPaths
     if ($null -eq $cmake) {
         Add-CheckResult -Status FAIL -Phase 'F-002' -Name 'CMake' -BlocksF002 $true `
             -Detail ('No working CMake {0} or newer was found on PATH or in Visual Studio.' -f $MinimumCMake) `
@@ -665,10 +713,20 @@ try {
             -Detail ('CMake {0}; {1}' -f $cmake.Version, $cmake.Path)
     }
 
+    $vcpkg = Get-BestVcpkg -VisualStudioPaths @($visualStudioPath)
+    if ($null -eq $vcpkg) {
+        Add-CheckResult -Status FAIL -Phase 'F-002' -Name 'vcpkg' -BlocksF002 $true `
+            -Detail 'No working vcpkg executable was found on PATH, under VCPKG_ROOT, or in Visual Studio 2026.' `
+            -Remediation 'In Visual Studio Installer, add the vcpkg individual component to the C++ workload.'
+    }
+    else {
+        Add-CheckResult -Status PASS -Phase 'F-002' -Name 'vcpkg' -BlocksF002 $true `
+            -Detail ('{0}; {1}' -f $vcpkg.Text, $vcpkg.Path)
+    }
+
     $sdkInventory = @(Get-WindowsSdkInventory)
     $usableSdk = $sdkInventory |
-        Where-Object { $_.Complete -and $_.Version -ge $MinimumWindowsSdk } |
-        Sort-Object -Property Version -Descending |
+        Where-Object { $_.Complete -and $_.Version -eq $RequiredWindowsSdk } |
         Select-Object -First 1
     if ($null -ne $usableSdk) {
         Add-CheckResult -Status PASS -Phase 'F-002' -Name 'Windows 11 SDK' -BlocksF002 $true `
@@ -682,8 +740,8 @@ try {
             'none'
         }
         Add-CheckResult -Status FAIL -Phase 'F-002' -Name 'Windows 11 SDK' -BlocksF002 $true `
-            -Detail ('No complete SDK {0} or newer was found. Detected SDK payloads: {1}.' -f $MinimumWindowsSdk, $detectedVersions) `
-            -Remediation 'Modify the Visual Studio C++ workload and install a supported Windows 11 SDK (10.0.26100 family or newer).'
+            -Detail ('The pinned complete SDK {0} was not found. Detected SDK payloads: {1}.' -f $RequiredWindowsSdk, $detectedVersions) `
+            -Remediation 'Modify the Visual Studio C++ workload and install Windows 11 SDK 10.0.26100.0 explicitly.'
     }
 
     $systemDirectory = Get-NativeSystemDirectory
@@ -746,7 +804,7 @@ try {
             -Detail ('PIX {0}; {1}' -f $usablePix.Version, $usablePix.Path)
     }
 
-    $ninjaCandidates = @(Get-NinjaCandidates -VisualStudioPath $visualStudioPath)
+    $ninjaCandidates = @(Get-NinjaCandidates -VisualStudioPaths $visualStudioPaths)
     if ($ninjaCandidates.Count -eq 0) {
         Add-CheckResult -Status WARN -Phase 'Optional' -Name 'Ninja' `
             -Detail 'Ninja was not found; it is not required because Shark will use the Visual Studio 18 2026 generator.' `
@@ -796,7 +854,7 @@ try {
         'A global dxc.exe exists at {0}, but Shark will not depend on it.' -f $globalDxc
     }
     Add-CheckResult -Status INFO -Phase 'F-002' -Name 'Project-restored DirectX tools' `
-        -Detail ($globalDxcDetail + ' F-002 will select and pin retail Agility SDK, DXC, WARP, and WinPixEventRuntime packages inside the project.')
+        -Detail ($globalDxcDetail + ' Shark restores pinned retail Agility SDK, DXC, WARP, and WinPixEventRuntime packages through its vcpkg manifest.')
 
     Write-Host ''
     $passCount = @($script:Results | Where-Object { $_.Status -eq 'PASS' }).Count

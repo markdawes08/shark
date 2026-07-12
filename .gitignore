@@ -1,0 +1,23 @@
+/out/
+/build/
+/.vs/
+/CMakeUserPresets.json
+/vcpkg_installed/
+/packages/
+/downloads/
+
+# Accidental in-source CMake generation
+/CMakeCache.txt
+/CMakeFiles/
+/CTestTestfile.cmake
+/Testing/
+/cmake_install.cmake
+/*.sln
+/*.vcxproj
+/*.vcxproj.filters
+/*.vcxproj.user
+
+# Visual Studio user state
+*.suo
+*.user
+

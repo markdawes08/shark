@@ -1,7 +1,7 @@
 # Shark Windows Development Setup
 
 - **Increment:** `F-001`
-- **Last verified:** July 11, 2026
+- **Last verified:** July 12, 2026
 - **Target:** Windows 11 x64, Direct3D 12, C++20
 
 This document defines the workstation contract for Shark. The accompanying
@@ -21,7 +21,8 @@ can be configured and built.
 | Visual Studio | Stable Visual Studio 2026 Community or Build Tools | Supplies MSBuild, the Windows C++ environment, and the VS 18 generator target |
 | MSVC | `v145` x64/x86 toolset, specifically the `14.50` LTS family | Three-year LTS compiler line rather than the shorter-lived default toolset |
 | CMake | `4.2.0` or newer; current stable `4.4.0` recommended | CMake added the `Visual Studio 18 2026` generator in 4.2 |
-| Windows SDK | Complete `10.0.26100.0` family or newer | Supplies Win32, D3D12, DXGI, UCRT headers, and x64 import libraries |
+| vcpkg | Working executable from Visual Studio, `VCPKG_ROOT`, or `PATH` | Restores the immutable manifest dependency graph during configure |
+| Windows SDK | Complete `10.0.26100.0` payload | Matches the reproducibly pinned preset and supplies Win32, D3D12, DXGI, UCRT headers, and x64 import libraries |
 | Direct3D runtime | `%WINDIR%\System32\d3d12.dll` | Required system D3D12 loader/runtime |
 
 The checker verifies actual compiler, header, and library payloads. Registry
@@ -44,12 +45,14 @@ In Visual Studio Installer:
    not rely only on the **Latest** component, which can select a shorter-lived
    compiler such as 14.51.
 3. Select **C++ CMake tools for Windows**.
-4. Select a supported **Windows 11 SDK (10.0.26100 family or newer)**.
-5. Keep the installer on the Stable channel; preview/Insiders components do not
+4. Select the **vcpkg package manager** individual component.
+5. Explicitly select **Windows 11 SDK 10.0.26100.0**. A newer SDK may coexist,
+   but it does not replace the pinned build target.
+6. Keep the installer on the Stable channel; preview/Insiders components do not
    satisfy the project gate.
 
 Recommended but non-blocking Visual Studio components are C++ AddressSanitizer,
-C++ test tools, and vcpkg. Shark does not need MFC, ATL, C++/CLI, UWP, ARM,
+C++ test tools, and Build Insights. Shark does not need MFC, C++/CLI, UWP, ARM,
 legacy toolsets, or the June 2010 DirectX SDK.
 
 After modifying Visual Studio, close and reopen PowerShell before rerunning the
@@ -76,7 +79,7 @@ that prevent clones from disclosing Windows NTLM credentials to an
 attacker-controlled server. Git for Windows supports its latest release line,
 so this is a security gate rather than a command-syntax preference.
 
-For this workstation, the user-run upgrade command is:
+The user-run upgrade command is:
 
 ```powershell
 winget upgrade --id Git.Git --exact
@@ -84,8 +87,8 @@ winget upgrade --id Git.Git --exact
 
 ## Required by later graphics increments
 
-These do not block the code-free `F-002` scaffold, so the checker reports a
-warning instead of a failure when they are absent.
+These do not block the `F-002` build scaffold, so the checker reports a warning
+instead of a failure when they are absent.
 
 ### Windows Graphics Tools - required before `G-001`
 
@@ -120,7 +123,7 @@ winget install --id Microsoft.PIX --exact
 ### Ninja - optional
 
 Ninja is convenient for some local workflows but is not required. Shark's
-initial presets will use CMake's multi-configuration `Visual Studio 18 2026`
+initial presets use CMake's multi-configuration `Visual Studio 18 2026`
 generator. A Visual Studio-bundled Ninja is accepted when present.
 
 ### Graphics drivers
@@ -132,16 +135,16 @@ binding tier. `G-001` will perform the authoritative runtime capability query.
 ## Project-restored tools and libraries
 
 Do **not** install these globally for Shark and do not add them to `PATH`.
-`F-002` will select and restore exact project-local packages or manifest
-baselines. F-001 intentionally does not choose those package versions:
+`F-002` selected exact project-local packages and one immutable manifest
+baseline. See [Shark dependency pins](DEPENDENCIES.md) for the full graph:
 
-| Package/tool | F-002 ownership |
+| Package/tool | Pinned selection |
 |---|---|
-| DirectX 12 Agility SDK (`Microsoft.Direct3D.D3D12`) | Select and pin a retail release |
-| DirectX Shader Compiler (`Microsoft.Direct3D.DXC`) | Select and pin a retail release |
-| Microsoft WARP (`Microsoft.Direct3D.WARP`) | Select and pin a retail release |
-| WinPixEventRuntime | Select and pin a retail release |
-| DirectX headers/math/texture helpers, spdlog, Catch2 | Select an exact vcpkg baseline/manifest version |
+| DirectX 12 Agility SDK (`Microsoft.Direct3D.D3D12`) | Retail `1.619.4` |
+| DirectX Shader Compiler (`Microsoft.Direct3D.DXC`) | Retail `1.9.2602.24` |
+| Microsoft WARP (`Microsoft.Direct3D.WARP`) | Retail `1.0.20` |
+| WinPixEventRuntime | Retail `1.0.240308001` |
+| DirectX headers/math/texture helpers, spdlog, Catch2 | vcpkg registry commit `f87344cac03158cbf1467264565f1fd36b382a24` |
 
 This separation prevents a developer's global DXC or SDK copy from silently
 changing shader output or runtime behavior.
@@ -179,20 +182,23 @@ The checker performs no network requests. Its only executable probes are local
 `--version` calls, `vswhere`, local Windows capability inspection, and local WMI
 hardware inventory.
 
-## Planning-time result on this workstation
+## Current verified result on this workstation
 
-The verified `F-001` run found:
+The July 12, 2026 checker run reports:
 
-- **PASS:** Windows 11 build 26200, x64 PowerShell 5.1, the system D3D12 runtime,
-  an NVIDIA RTX 4070 Laptop GPU, and Intel UHD Graphics;
-- **FAIL:** outdated Git for Windows 2.50.1, no usable Visual Studio 2026/MSVC
-  14.50 LTS payload, no CMake 4.2+, and no complete Windows SDK payload;
-- **WARN:** Windows Graphics Tools, PIX, and Ninja are absent; and
-- **EXPECTED:** no global DXC is present because Shark will restore it locally.
+- **PASS:** Windows 11 build 26200, x64 PowerShell 5.1, Git for Windows 2.55.0(2),
+  Visual Studio Community 2026 18.7, MSVC 14.50.35717, CMake 4.3.1, vcpkg,
+  the pinned Windows SDK 10.0.26100.0 (with 10.0.28000.0 also installed), the
+  D3D12 runtime, Graphics Tools, Ninja, and both detected graphics adapters;
+- **FAIL:** none;
+- **WARN:** PIX is still required before `G-007`; and
+- **EXPECTED:** no global DXC is needed because the manifest restores the pinned
+  retail compiler.
 
-The checker therefore returns exit code `1` until the four blocking toolchain
-items are resolved. That is a valid, tested missing-state result, not a checker
-failure.
+The summary is `12 PASS, 0 FAIL, 1 WARN, 1 INFO`, and the checker returns exit
+code `0`: the `F-002` machine-tool gate is ready. The build preset deliberately
+targets Windows SDK 10.0.26100.0 rather than silently following the newest
+installed SDK.
 
 ## Official references
 

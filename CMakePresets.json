@@ -1,0 +1,121 @@
+{
+  "version": 10,
+  "cmakeMinimumRequired": {
+    "major": 4,
+    "minor": 2,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "windows-vs2026",
+      "displayName": "Windows x64 - Visual Studio 2026",
+      "description": "Shark's supported MSVC 14.50 LTS build",
+      "generator": "Visual Studio 18 2026",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "installDir": "${sourceDir}/out/install/${presetName}",
+      "architecture": {
+        "value": "x64,version=10.0.26100.0",
+        "strategy": "set"
+      },
+      "toolset": {
+        "value": "v145,version=14.50,host=x64",
+        "strategy": "set"
+      },
+      "toolchainFile": "${sourceDir}/cmake/SharkVcpkgToolchain.cmake",
+      "cacheVariables": {
+        "BUILD_TESTING": "ON",
+        "CMAKE_CONFIGURATION_TYPES": "Debug;Release",
+        "VCPKG_HOST_TRIPLET": "x64-windows-shark",
+        "VCPKG_MANIFEST_INSTALL": "ON",
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/ports",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/triplets",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-shark"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-debug",
+      "displayName": "Build Windows Debug",
+      "configurePreset": "windows-vs2026",
+      "configuration": "Debug"
+    },
+    {
+      "name": "windows-release",
+      "displayName": "Build Windows Release",
+      "configurePreset": "windows-vs2026",
+      "configuration": "Release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-debug",
+      "displayName": "Test Windows Debug",
+      "configurePreset": "windows-vs2026",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "stopOnFailure": true
+      }
+    },
+    {
+      "name": "windows-release",
+      "displayName": "Test Windows Release",
+      "configurePreset": "windows-vs2026",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error",
+        "stopOnFailure": true
+      }
+    }
+  ],
+  "workflowPresets": [
+    {
+      "name": "windows-debug",
+      "displayName": "Configure, build, and test Windows Debug",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "windows-vs2026"
+        },
+        {
+          "type": "build",
+          "name": "windows-debug"
+        },
+        {
+          "type": "test",
+          "name": "windows-debug"
+        }
+      ]
+    },
+    {
+      "name": "windows-release",
+      "displayName": "Configure, build, and test Windows Release",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "windows-vs2026"
+        },
+        {
+          "type": "build",
+          "name": "windows-release"
+        },
+        {
+          "type": "test",
+          "name": "windows-release"
+        }
+      ]
+    }
+  ]
+}

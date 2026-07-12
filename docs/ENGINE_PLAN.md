@@ -2,8 +2,9 @@
 
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
-- **Completed through:** `F-001` - toolchain prerequisites and build contract
-- **Next increment:** `F-002` - reproducible CMake project skeleton
+- **Last updated:** July 12, 2026
+- **Completed through:** `F-002` - reproducible CMake project skeleton
+- **Next increment:** `F-003` - core diagnostics foundation
 
 ## 1. Project direction
 
@@ -91,10 +92,10 @@ Architecture Decision Record (ADR) explaining why.
 | Platform | Windows 11, x64 desktop | Direct3D 12 is the purpose of the project; a cross-platform layer would slow the first vertical slice |
 | Language | C++20 with MSVC `14.50` LTS (`v145`) strict conformance | Modern facilities on a three-year LTS compiler family |
 | Windowing | Native Win32 | Minimal dependency surface and direct DXGI integration |
-| Build | CMake 4.2+, `Visual Studio 18 2026` generator, and a pinned vcpkg manifest | Reproducible command-line and Visual Studio builds |
+| Build | CMake 4.2+, `Visual Studio 18 2026` generator, and vcpkg registry commit `f87344cac03158cbf1467264565f1fd36b382a24` | Reproducible command-line and Visual Studio builds |
 | Graphics API | Direct3D 12 through a narrow typed RHI | Keeps D3D objects below the renderer without inventing an unneeded Vulkan abstraction |
-| Runtime | Retail DirectX 12 Agility SDK, exact release selected and pinned in `F-002` | Current stable D3D12 runtime; preview SDKs stay off `main` |
-| Shaders | HLSL compiled to DXIL by retail DXC, exact release selected and pinned in `F-002` | Reproducible Shader Model 6 builds and PIX source debugging |
+| Runtime | Retail DirectX 12 Agility SDK `1.619.4`, pinned in `F-002` | Current stable D3D12 runtime; preview SDKs stay off `main` |
+| Shaders | HLSL compiled to DXIL by retail DXC `1.9.2602.24`, pinned in `F-002` | Reproducible Shader Model 6 builds and PIX source debugging |
 | Required GPU baseline | Feature Level 12_0+ and Shader Model 6.0+ | Runs the first environment on a broad D3D12 hardware base with conventional descriptor tables |
 | Modern GPU profile | Shader Model 6.6+ and Resource Binding Tier 3, capability-gated | Enables direct descriptor-heap indexing when material scale justifies a bindless path |
 | Ultimate features | Feature-query and enable individually | Feature Level 12_2, DXR, mesh shaders, VRS, and sampler feedback are enhancements, not startup dependencies |
@@ -137,12 +138,11 @@ adapters by high-performance preference, log all candidates, choose explicitly,
 and support command-line adapter selection. A WARP mode will exist for smoke
 tests, not performance validation.
 
-The `F-001` checker confirms the system D3D12 runtime is present. It also finds
-that Git for Windows is below the maintained security floor and that Visual
-Studio 2026/MSVC 14.50 LTS, CMake 4.2+, and a complete Windows SDK are not yet
-installed; Graphics Tools, PIX, and optional Ninja are also absent. Global DXC
-is intentionally not required because Shark restores a pinned project-local
-copy. See [Windows development setup](WINDOWS_SETUP.md).
+The July 12 prerequisite check reports the `F-002` gate ready with no blocking
+failures. Visual Studio 2026, MSVC 14.50 LTS, CMake 4.3.1, vcpkg, Windows SDK,
+Graphics Tools, and Ninja are available. PIX remains a non-blocking requirement
+for `G-007`. Global DXC is intentionally unnecessary because Shark restores a
+pinned project-local copy. See [Windows development setup](WINDOWS_SETUP.md).
 
 ## 5. World, math, and color conventions
 
@@ -663,17 +663,17 @@ entity scale or query patterns make it useful.
 
 ## 14. Immediate next increment
 
-After `F-001` is reviewed and committed by the owner, implement only `F-002`:
+After `F-002` is reviewed and committed by the owner, implement only `F-003`:
 
-- add CMake presets using the `Visual Studio 18 2026` x64 generator and MSVC
-  14.50 LTS toolset;
-- add pinned dependency manifests/restoration for the retail DirectX packages;
-- create only `SharkEngine`, `SharkSandbox`, and `SharkTests` skeleton targets;
-- document a fresh configure/build/test sequence and make one test pass; and
-- stop before adding a Win32 window, D3D12 device, or runtime engine behavior.
+- add a small result/error type with focused unit coverage;
+- add structured development logging through the pinned `spdlog` dependency;
+- add assertion handling with a deliberately triggered failure covered by a
+  controlled unit test;
+- enable strict `/W4 /WX` warnings for Shark-owned targets; and
+- stop before adding the Win32 window, input loop, or any D3D12 behavior.
 
-That keeps the build scaffold independently reviewable before core or platform
-implementation begins.
+That makes failures observable and consistent before the platform shell begins
+in `F-004`.
 
 ## 15. Primary technical references
 

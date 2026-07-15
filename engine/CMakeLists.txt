@@ -15,16 +15,29 @@ add_library(SharkEngine STATIC
     core/src/error.cpp
     core/src/engine_info.cpp
     core/src/logging.cpp
+    platform/windows/include/shark/platform/application.hpp
+    platform/windows/include/shark/platform/events.hpp
+    platform/windows/src/application.cpp
 )
 
 target_include_directories(SharkEngine
     PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/core/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/platform/windows/include"
+)
+
+target_compile_definitions(SharkEngine
+    PRIVATE
+        NOMINMAX
+        UNICODE
+        WIN32_LEAN_AND_MEAN
+        _UNICODE
 )
 
 target_link_libraries(SharkEngine
     PRIVATE
         spdlog::spdlog
+        user32
 )
 
 shark_configure_target(SharkEngine)

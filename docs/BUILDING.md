@@ -62,9 +62,23 @@ out/build/windows-vs2026/lib/Release/SharkEngine.lib
 vcpkg deploys the spdlog/fmt runtime DLLs beside executables that need them;
 those generated files stay under ignored `out/`. WARP is not linked or deployed.
 
-`SharkSandbox` intentionally produces no window yet. It emits one structured
-startup record and exits with zero after the logging lifecycle and engine
-identity checks succeed.
+`SharkSandbox` now opens one native Win32 window and waits efficiently for
+window or input events. Resize, minimize, restore, keyboard, mouse, and close
+records are visible in the Debug console log. Close the title bar or press
+Alt+F4 to exit cleanly.
+
+For a noninteractive lifecycle check, run:
+
+```powershell
+& .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe --platform-smoke
+```
+
+The smoke mode shows a real nonactivating window, performs a native resize,
+minimize, and restore, waits idle, then wakes through an asynchronously posted
+close request and confirms destruction. CTest registers this mode separately
+with a ten-second timeout, so the normal interactive executable is never
+allowed to block an automated test. See [the platform contract](PLATFORM.md)
+for the event and ownership rules.
 
 ## Visual Studio
 

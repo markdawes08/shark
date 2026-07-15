@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 15, 2026
-- **Completed through:** `F-003` - core diagnostics foundation
-- **Next increment:** `F-004` - Win32 application shell
+- **Completed through:** `F-004` - Win32 application shell
+- **Next increment:** `G-001` - Direct3D 12 device initialization
 
 ## 1. Project direction
 
@@ -663,18 +663,22 @@ entity scale or query patterns make it useful.
 
 ## 14. Immediate next increment
 
-After `F-003` is reviewed and committed by the owner, implement only `F-004`:
+After `F-004` is reviewed and committed by the owner, implement only `G-001`:
 
-- open, resize, minimize, restore, and close one native Win32 window;
-- add a stable application/message loop and a platform event boundary;
-- route startup and platform failures through the F-003 result and logging
-  contracts;
-- add the first keyboard/mouse event records without camera or gameplay policy;
-  and
-- stop before creating a DXGI swap chain, D3D12 device, or renderer behavior.
+- enable the D3D12 debug layer before device creation and provide a focused
+  opt-in GPU-based-validation mode;
+- enumerate DXGI adapters by high-performance preference and log every
+  candidate rather than silently choosing one;
+- add explicit hardware, WARP, and adapter-selection command-line paths;
+- create a D3D12 device at the declared Feature Level 12_0 baseline and record
+  queried capabilities without treating optional features as requirements;
+- enable DRED and report device-startup failures through the existing
+  result/logging boundary; and
+- stop before creating a swap chain, back buffer, command queue, or rendered
+  frame.
 
-That establishes the host application boundary needed by the first graphics
-increment while keeping windowing independently reviewable.
+That proves device and adapter selection independently before G-002 adds frame
+submission and the first clear-color presentation.
 
 ## 15. Primary technical references
 

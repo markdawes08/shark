@@ -2,9 +2,9 @@
 
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
-- **Last updated:** July 12, 2026
-- **Completed through:** `F-002` - reproducible CMake project skeleton
-- **Next increment:** `F-003` - core diagnostics foundation
+- **Last updated:** July 15, 2026
+- **Completed through:** `F-003` - core diagnostics foundation
+- **Next increment:** `F-004` - Win32 application shell
 
 ## 1. Project direction
 
@@ -663,17 +663,18 @@ entity scale or query patterns make it useful.
 
 ## 14. Immediate next increment
 
-After `F-002` is reviewed and committed by the owner, implement only `F-003`:
+After `F-003` is reviewed and committed by the owner, implement only `F-004`:
 
-- add a small result/error type with focused unit coverage;
-- add structured development logging through the pinned `spdlog` dependency;
-- add assertion handling with a deliberately triggered failure covered by a
-  controlled unit test;
-- enable strict `/W4 /WX` warnings for Shark-owned targets; and
-- stop before adding the Win32 window, input loop, or any D3D12 behavior.
+- open, resize, minimize, restore, and close one native Win32 window;
+- add a stable application/message loop and a platform event boundary;
+- route startup and platform failures through the F-003 result and logging
+  contracts;
+- add the first keyboard/mouse event records without camera or gameplay policy;
+  and
+- stop before creating a DXGI swap chain, D3D12 device, or renderer behavior.
 
-That makes failures observable and consistent before the platform shell begins
-in `F-004`.
+That establishes the host application boundary needed by the first graphics
+increment while keeping windowing independently reviewable.
 
 ## 15. Primary technical references
 

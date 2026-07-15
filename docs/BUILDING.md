@@ -59,8 +59,12 @@ out/build/windows-vs2026/lib/Debug/SharkEngine.lib
 out/build/windows-vs2026/lib/Release/SharkEngine.lib
 ```
 
-`SharkSandbox` intentionally produces no window or console output yet. A zero
-exit code only proves that the executable linked to `SharkEngine` correctly.
+vcpkg deploys the spdlog/fmt runtime DLLs beside executables that need them;
+those generated files stay under ignored `out/`. WARP is not linked or deployed.
+
+`SharkSandbox` intentionally produces no window yet. It emits one structured
+startup record and exits with zero after the logging lifecycle and engine
+identity checks succeed.
 
 ## Visual Studio
 

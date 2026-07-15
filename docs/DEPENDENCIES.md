@@ -47,13 +47,17 @@ At that baseline, Shark's direct ports resolve to:
 The registry commit fixes the complete port graph, including transitive ports.
 The `x64-windows-shark` overlay triplet selects the MSVC 14.50 LTS family with
 the dynamic CRT; the current verified compiler is 14.50.35717. `directx-dxc` is
-a host tool. DirectXTex and its offline tools are restored but no F-002 target
-links the library; the asset increment will decide the final runtime boundary.
-The vcpkg executable comes from Visual Studio 2026, `VCPKG_ROOT`, or a complete
+a host tool. F-003 links the compiled spdlog target privately behind Shark's
+public logging API, and vcpkg deploys its spdlog/fmt runtime DLLs only under
+ignored build output. DirectXTex and its offline tools remain restored but
+unlinked; the asset increment will decide the final runtime boundary. The vcpkg
+executable comes from Visual Studio 2026, `VCPKG_ROOT`, or a complete
 installation on `PATH`; its version is reported during setup but is not
 misrepresented as a project-pinned dependency.
 
 Package versions change only in a dedicated dependency increment that updates
 the manifest, this record, performs a fresh restore, and rebuilds/tests Debug
 and Release. Restored packages and caches stay under ignored build or user cache
-directories and are never committed.
+directories and are never committed. A future packaging increment must include
+the preserved spdlog and fmt MIT notices alongside the other required
+third-party notices; WARP remains excluded entirely.

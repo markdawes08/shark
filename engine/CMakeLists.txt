@@ -19,7 +19,10 @@ add_library(SharkEngine STATIC
     platform/windows/include/shark/platform/events.hpp
     platform/windows/src/application.cpp
     rhi/d3d12/include/shark/rhi/d3d12/device.hpp
+    rhi/d3d12/include/shark/rhi/d3d12/presentation.hpp
     rhi/d3d12/src/device.cpp
+    rhi/d3d12/src/device_access.hpp
+    rhi/d3d12/src/presentation.cpp
 )
 
 target_include_directories(SharkEngine
@@ -44,6 +47,7 @@ target_link_libraries(SharkEngine
         Microsoft::DirectX-Guids
         Microsoft::DirectX12-Agility
         dxgi
+        dxguid
         user32
 )
 

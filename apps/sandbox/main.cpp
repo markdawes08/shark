@@ -4,9 +4,11 @@
 #include <shark/platform/application.hpp>
 #include <shark/platform/events.hpp>
 #include <shark/rhi/d3d12/device.hpp>
+#include <shark/rhi/d3d12/presentation.hpp>
 
 #include "options.hpp"
 
+#include <chrono>
 #include <cstdlib>
 #include <exception>
 #include <optional>
@@ -48,6 +50,26 @@ public:
     message.push_back('x');
     message.append(std::to_string(extent.height));
     return message;
+}
+
+[[nodiscard]] constexpr shark::rhi::d3d12::PresentationExtent
+to_presentation_extent(
+    const shark::platform::WindowExtent extent) noexcept
+{
+    return shark::rhi::d3d12::PresentationExtent{
+        extent.width,
+        extent.height,
+    };
+}
+
+[[nodiscard]] shark::core::Error presentation_smoke_error(
+    std::string message)
+{
+    return shark::core::Error{
+        shark::core::ErrorCategory::graphics,
+        shark::core::ErrorCode::operation_failed,
+        std::move(message),
+    };
 }
 
 [[nodiscard]] std::string_view key_action_name(
@@ -349,6 +371,361 @@ void log_platform_event(const shark::platform::Event& event)
     return core::Result<void>::success();
 }
 
+[[nodiscard]] shark::core::Result<void> shutdown_and_validate_presentation(
+    shark::rhi::d3d12::Presentation& presentation,
+    shark::rhi::d3d12::Device& device,
+    bool& debug_state_validated)
+{
+    using namespace shark;
+
+    if (!presentation.is_shutdown()) {
+        auto shutdown_result = presentation.shutdown();
+        if (!shutdown_result) {
+            return core::Result<void>::failure(
+                std::move(shutdown_result).error());
+        }
+    }
+
+    if (!debug_state_validated) {
+        auto validation_result = device.validate_debug_state();
+        if (!validation_result) {
+            return core::Result<void>::failure(
+                std::move(validation_result).error());
+        }
+        debug_state_validated = true;
+    }
+
+    return core::Result<void>::success();
+}
+
+[[nodiscard]] shark::core::Result<void> run_presentation_shell(
+    shark::rhi::d3d12::Device& device,
+    const bool smoke_mode)
+{
+    using namespace shark;
+
+    constexpr std::uint64_t resize_after_frames = 250;
+    constexpr std::uint64_t minimize_after_frames = 500;
+    constexpr std::uint64_t required_smoke_frames = 1'000;
+    constexpr platform::WindowExtent smoke_resize_extent{960, 540};
+    const auto smoke_deadline_duration =
+        device.gpu_based_validation_enabled()
+        ? std::chrono::seconds{150}
+        : std::chrono::seconds{45};
+
+    platform::ApplicationConfig application_config;
+    application_config.visible = !smoke_mode;
+    auto application_result = platform::Application::create(
+        application_config);
+    if (!application_result) {
+        return core::Result<void>::failure(
+            std::move(application_result).error());
+    }
+    auto application = std::move(application_result).value();
+
+    if (smoke_mode) {
+        auto show_result = application.show_window();
+        if (!show_result) {
+            return core::Result<void>::failure(
+                std::move(show_result).error());
+        }
+    }
+
+    rhi::d3d12::PresentationConfig presentation_config;
+    presentation_config.native_window =
+        application.native_window_handle().value;
+    presentation_config.extent = to_presentation_extent(
+        application.client_extent());
+    presentation_config.synchronize_to_vertical_refresh = !smoke_mode;
+    auto presentation_result = rhi::d3d12::Presentation::create(
+        device,
+        presentation_config);
+    if (!presentation_result) {
+        return core::Result<void>::failure(
+            std::move(presentation_result).error());
+    }
+    auto presentation = std::move(presentation_result).value();
+
+    core::log_message(
+        core::LogLevel::info,
+        "sandbox",
+        smoke_mode
+            ? "Running fixed 1,000-frame clear/present smoke test"
+            : "Direct3D 12 clear-color presentation initialized");
+
+    const auto smoke_deadline =
+        std::chrono::steady_clock::now() + smoke_deadline_duration;
+    bool resize_requested = false;
+    bool observed_resize = false;
+    bool minimize_requested = false;
+    bool observed_minimized = false;
+    bool observed_minimized_iteration = false;
+    bool restore_requested = false;
+    bool observed_restored = false;
+    bool observed_restore_resize = false;
+    bool smoke_close_posted = false;
+    bool observed_close_request = false;
+    bool observed_closed = false;
+    bool debug_state_validated = false;
+    std::uint64_t frames_when_minimized = 0;
+
+    for (;;) {
+        auto pump_result = application.poll_events();
+        if (!pump_result) {
+            return core::Result<void>::failure(
+                std::move(pump_result).error());
+        }
+
+        bool accept_close = false;
+        std::optional<platform::WindowExtent> pending_resize;
+        for (const auto& event : application.events()) {
+            log_platform_event(event);
+            if (const auto* const resized =
+                    std::get_if<platform::WindowResizedEvent>(&event);
+                resized != nullptr) {
+                pending_resize = resized->client_extent;
+                if (resize_requested &&
+                    resized->client_extent == smoke_resize_extent) {
+                    observed_resize = true;
+                }
+                if (observed_restored) {
+                    observed_restore_resize = true;
+                }
+            }
+            else if (std::holds_alternative<
+                         platform::WindowMinimizedEvent>(event)) {
+                observed_minimized = true;
+            }
+            else if (std::holds_alternative<
+                         platform::WindowRestoredEvent>(event)) {
+                observed_restored = true;
+            }
+            else if (std::holds_alternative<
+                         platform::WindowCloseRequestedEvent>(event)) {
+                observed_close_request = true;
+                accept_close = true;
+            }
+            else if (std::holds_alternative<
+                         platform::WindowClosedEvent>(event)) {
+                observed_closed = true;
+            }
+        }
+
+        const auto dropped_events = application.dropped_event_count();
+        application.clear_events();
+        if (smoke_mode && dropped_events != 0) {
+            return core::Result<void>::failure(presentation_smoke_error(
+                "The presentation loop dropped " +
+                std::to_string(dropped_events) +
+                " platform event(s)"));
+        }
+        if (!smoke_mode && dropped_events != 0) {
+            core::log_message(
+                core::LogLevel::warning,
+                "window",
+                std::string{"Dropped platform events: "} +
+                    std::to_string(dropped_events));
+        }
+
+        if (accept_close) {
+            if (smoke_mode && !smoke_close_posted) {
+                return core::Result<void>::failure(
+                    presentation_smoke_error(
+                        "The presentation smoke window closed before "
+                        "1,000 frames completed"));
+            }
+
+            auto shutdown_result = shutdown_and_validate_presentation(
+                presentation,
+                device,
+                debug_state_validated);
+            if (!shutdown_result) {
+                return core::Result<void>::failure(
+                    std::move(shutdown_result).error());
+            }
+            auto close_result = application.close_window();
+            if (!close_result) {
+                return core::Result<void>::failure(
+                    std::move(close_result).error());
+            }
+            continue;
+        }
+
+        const auto pump = std::move(pump_result).value();
+        if (pump.quit_requested || !application.running()) {
+            break;
+        }
+
+        if (smoke_close_posted) {
+            if (std::chrono::steady_clock::now() >= smoke_deadline) {
+                return core::Result<void>::failure(
+                    presentation_smoke_error(
+                        "The presentation smoke window did not close "
+                        "before its deadline"));
+            }
+            std::this_thread::yield();
+            continue;
+        }
+
+        if (pending_resize.has_value() && !application.minimized()) {
+            const auto expected_extent = to_presentation_extent(
+                *pending_resize);
+            auto resize_result = presentation.resize(expected_extent);
+            if (!resize_result) {
+                return core::Result<void>::failure(
+                    std::move(resize_result).error());
+            }
+            if (presentation.extent() != expected_extent) {
+                return core::Result<void>::failure(
+                    presentation_smoke_error(
+                        "The swap-chain extent diverged from the physical "
+                        "window client extent"));
+            }
+        }
+
+        if (smoke_mode) {
+            if (std::chrono::steady_clock::now() >= smoke_deadline) {
+                return core::Result<void>::failure(
+                    presentation_smoke_error(
+                        "The presentation smoke deadline expired after " +
+                        std::to_string(
+                            presentation.stats().presented_frames) +
+                        " successful frame(s)"));
+            }
+
+            const auto presented_frames =
+                presentation.stats().presented_frames;
+            if (!resize_requested &&
+                presented_frames >= resize_after_frames) {
+                auto resize_result = application.resize_client(
+                    smoke_resize_extent);
+                if (!resize_result) {
+                    return core::Result<void>::failure(
+                        std::move(resize_result).error());
+                }
+                resize_requested = true;
+                continue;
+            }
+
+            if (observed_resize &&
+                !minimize_requested &&
+                presented_frames >= minimize_after_frames) {
+                frames_when_minimized = presented_frames;
+                auto minimize_result = application.minimize_window();
+                if (!minimize_result) {
+                    return core::Result<void>::failure(
+                        std::move(minimize_result).error());
+                }
+                minimize_requested = true;
+                continue;
+            }
+
+            if (application.minimized()) {
+                observed_minimized_iteration = true;
+                if (presentation.stats().presented_frames !=
+                    frames_when_minimized) {
+                    return core::Result<void>::failure(
+                        presentation_smoke_error(
+                            "A frame was presented while the window was "
+                            "minimized"));
+                }
+                if (observed_minimized && !restore_requested) {
+                    auto restore_result = application.restore_window();
+                    if (!restore_result) {
+                        return core::Result<void>::failure(
+                            std::move(restore_result).error());
+                    }
+                    restore_requested = true;
+                }
+                continue;
+            }
+
+            if (!smoke_close_posted &&
+                presented_frames >= required_smoke_frames) {
+                if (presented_frames != required_smoke_frames ||
+                    !observed_resize ||
+                    !observed_minimized ||
+                    !observed_minimized_iteration ||
+                    !observed_restored ||
+                    !observed_restore_resize) {
+                    return core::Result<void>::failure(
+                        presentation_smoke_error(
+                            "The presentation smoke lifecycle was incomplete"));
+                }
+
+                auto shutdown_result = shutdown_and_validate_presentation(
+                    presentation,
+                    device,
+                    debug_state_validated);
+                if (!shutdown_result) {
+                    return core::Result<void>::failure(
+                        std::move(shutdown_result).error());
+                }
+                auto close_result = application.request_close();
+                if (!close_result) {
+                    return core::Result<void>::failure(
+                        std::move(close_result).error());
+                }
+                smoke_close_posted = true;
+                continue;
+            }
+        }
+
+        if (application.minimized()) {
+            auto wait_result = application.wait_for_events();
+            if (!wait_result) {
+                return core::Result<void>::failure(
+                    std::move(wait_result).error());
+            }
+            continue;
+        }
+
+        auto present_result = presentation.present_clear_frame();
+        if (!present_result) {
+            return core::Result<void>::failure(
+                std::move(present_result).error());
+        }
+        if (present_result.value() ==
+            rhi::d3d12::PresentStatus::occluded) {
+            std::this_thread::sleep_for(std::chrono::milliseconds{16});
+        }
+    }
+
+    auto shutdown_result = shutdown_and_validate_presentation(
+        presentation,
+        device,
+        debug_state_validated);
+    if (!shutdown_result) {
+        return core::Result<void>::failure(
+            std::move(shutdown_result).error());
+    }
+
+    if (smoke_mode) {
+        const auto& stats = presentation.stats();
+        if (stats.presented_frames != required_smoke_frames ||
+            !observed_close_request ||
+            !observed_closed) {
+            return core::Result<void>::failure(
+                presentation_smoke_error(
+                    "The presentation smoke did not finish its close "
+                    "lifecycle"));
+        }
+
+        auto summary = std::string{"Presentation smoke passed: frames="};
+        summary.append(std::to_string(stats.presented_frames));
+        summary.append(", occluded=");
+        summary.append(std::to_string(stats.occluded_frames));
+        summary.append(", resizes=");
+        summary.append(std::to_string(stats.resize_count));
+        core::log_message(
+            core::LogLevel::info,
+            "gpu.presentation",
+            summary);
+    }
+
+    return core::Result<void>::success();
+}
+
 } // namespace
 
 int main(const int argument_count, char** const arguments)
@@ -408,7 +785,7 @@ int main(const int argument_count, char** const arguments)
                 device_result.error().message());
             return EXIT_FAILURE;
         }
-        const auto device = std::move(device_result).value();
+        auto device = std::move(device_result).value();
 
         if (options.run_mode == sandbox::RunMode::gpu_smoke) {
             core::log_message(
@@ -425,11 +802,13 @@ int main(const int argument_count, char** const arguments)
             return EXIT_SUCCESS;
         }
 
-        auto run_result = run_platform_shell(false);
+        const auto smoke_mode =
+            options.run_mode == sandbox::RunMode::present_smoke;
+        auto run_result = run_presentation_shell(device, smoke_mode);
         if (!run_result) {
             core::log_message(
                 core::LogLevel::error,
-                "platform",
+                "gpu.presentation",
                 run_result.error().message());
             return EXIT_FAILURE;
         }

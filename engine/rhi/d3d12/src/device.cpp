@@ -1,12 +1,16 @@
 #include <directx/d3d12.h>
 #include <directx/d3d12sdklayers.h>
 #include <dxgi1_6.h>
+#include <dxgidebug.h>
 #include <wrl/client.h>
+
+#include "device_access.hpp"
 
 #include <shark/core/error.hpp>
 #include <shark/core/logging.hpp>
 #include <shark/rhi/d3d12/device.hpp>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -33,6 +37,9 @@ constexpr D3D_SHADER_MODEL maximum_retail_shader_model =
 constexpr ShaderModel required_shader_model{6, 0};
 constexpr std::uint64_t bytes_per_mebibyte = 1024ULL * 1024ULL;
 constexpr UINT64 debug_message_limit = 1024;
+constexpr std::size_t maximum_dred_nodes = 64;
+constexpr std::size_t maximum_dred_contexts = 16;
+constexpr UINT maximum_dred_history_operations = 65'536;
 std::atomic_flag device_creation_started = ATOMIC_FLAG_INIT;
 
 [[nodiscard]] core::Error graphics_error(
@@ -890,8 +897,27 @@ void log_capabilities(const RendererCaps& capabilities)
     core::log_message(core::LogLevel::info, "gpu.caps", memory);
 }
 
+[[nodiscard]] bool is_live_child_message(
+    const D3D12_MESSAGE_ID identifier) noexcept
+{
+    switch (identifier) {
+    case D3D12_MESSAGE_ID_LIVE_SWAPCHAIN:
+    case D3D12_MESSAGE_ID_LIVE_COMMANDQUEUE:
+    case D3D12_MESSAGE_ID_LIVE_COMMANDALLOCATOR:
+    case D3D12_MESSAGE_ID_LIVE_COMMANDLIST12:
+    case D3D12_MESSAGE_ID_LIVE_RESOURCE:
+    case D3D12_MESSAGE_ID_LIVE_DESCRIPTORHEAP:
+    case D3D12_MESSAGE_ID_LIVE_MONITOREDFENCE:
+        return true;
+    default:
+        return false;
+    }
+}
+
 [[nodiscard]] core::Result<DebugMessageCounts> inspect_debug_messages(
-    ID3D12InfoQueue* const info_queue)
+    ID3D12InfoQueue* const info_queue,
+    const UINT64 first_message = 0,
+    std::uint64_t* const live_child_count = nullptr)
 {
     DebugMessageCounts counts;
     if (info_queue == nullptr) {
@@ -899,7 +925,12 @@ void log_capabilities(const RendererCaps& capabilities)
     }
 
     const auto message_count = info_queue->GetNumStoredMessages();
-    for (UINT64 index = 0; index < message_count; ++index) {
+    if (first_message > message_count) {
+        return core::Result<DebugMessageCounts>::failure(graphics_error(
+            core::ErrorCode::invalid_state,
+            "The D3D12 validation message cursor moved past storage"));
+    }
+    for (UINT64 index = first_message; index < message_count; ++index) {
         SIZE_T byte_count = 0;
         auto result = info_queue->GetMessage(index, nullptr, &byte_count);
         if (FAILED(result)) {
@@ -928,6 +959,10 @@ void log_capabilities(const RendererCaps& capabilities)
             message->pDescription,
             description_length,
         };
+        if (live_child_count != nullptr &&
+            is_live_child_message(message->ID)) {
+            ++(*live_child_count);
+        }
 
         switch (message->Severity) {
         case D3D12_MESSAGE_SEVERITY_CORRUPTION:
@@ -963,6 +998,108 @@ void log_capabilities(const RendererCaps& capabilities)
     }
 
     return core::Result<DebugMessageCounts>::success(counts);
+}
+
+[[nodiscard]] core::Result<DebugMessageCounts> inspect_dxgi_messages(
+    IDXGIInfoQueue* const info_queue,
+    const UINT64 first_message = 0)
+{
+    DebugMessageCounts counts;
+    if (info_queue == nullptr) {
+        return core::Result<DebugMessageCounts>::success(counts);
+    }
+
+    const auto message_count = info_queue->GetNumStoredMessages(
+        DXGI_DEBUG_DXGI);
+    if (first_message > message_count) {
+        return core::Result<DebugMessageCounts>::failure(graphics_error(
+            core::ErrorCode::invalid_state,
+            "The DXGI validation message cursor moved past storage"));
+    }
+    for (UINT64 index = first_message; index < message_count; ++index) {
+        SIZE_T byte_count = 0;
+        auto result = info_queue->GetMessage(
+            DXGI_DEBUG_DXGI,
+            index,
+            nullptr,
+            &byte_count);
+        if (FAILED(result)) {
+            return core::Result<DebugMessageCounts>::failure(
+                graphics_error(
+                    core::ErrorCode::operation_failed,
+                    hresult_message(
+                        "IDXGIInfoQueue::GetMessage(size)",
+                        result)));
+        }
+
+        std::vector<std::byte> storage(byte_count);
+        auto* const message = reinterpret_cast<DXGI_INFO_QUEUE_MESSAGE*>(
+            storage.data());
+        result = info_queue->GetMessage(
+            DXGI_DEBUG_DXGI,
+            index,
+            message,
+            &byte_count);
+        if (FAILED(result)) {
+            return core::Result<DebugMessageCounts>::failure(
+                graphics_error(
+                    core::ErrorCode::operation_failed,
+                    hresult_message("IDXGIInfoQueue::GetMessage", result)));
+        }
+
+        auto description_length = message->DescriptionByteLength;
+        if (description_length > 0 &&
+            message->pDescription[description_length - 1] == '\0') {
+            --description_length;
+        }
+        auto description = std::string{"DXGI: "};
+        description.append(message->pDescription, description_length);
+
+        switch (message->Severity) {
+        case DXGI_INFO_QUEUE_MESSAGE_SEVERITY_CORRUPTION:
+            ++counts.corruption;
+            core::log_message(
+                core::LogLevel::critical,
+                "gpu.validation",
+                description);
+            break;
+        case DXGI_INFO_QUEUE_MESSAGE_SEVERITY_ERROR:
+            ++counts.error;
+            core::log_message(
+                core::LogLevel::error,
+                "gpu.validation",
+                description);
+            break;
+        case DXGI_INFO_QUEUE_MESSAGE_SEVERITY_WARNING:
+            ++counts.warning;
+            core::log_message(
+                core::LogLevel::warning,
+                "gpu.validation",
+                description);
+            break;
+        case DXGI_INFO_QUEUE_MESSAGE_SEVERITY_INFO:
+            ++counts.info;
+            break;
+        case DXGI_INFO_QUEUE_MESSAGE_SEVERITY_MESSAGE:
+            ++counts.message;
+            break;
+        default:
+            break;
+        }
+    }
+
+    return core::Result<DebugMessageCounts>::success(counts);
+}
+
+void accumulate_message_counts(
+    DebugMessageCounts& destination,
+    const DebugMessageCounts& source) noexcept
+{
+    destination.corruption += source.corruption;
+    destination.error += source.error;
+    destination.warning += source.warning;
+    destination.info += source.info;
+    destination.message += source.message;
 }
 
 [[nodiscard]] core::Result<ComPtr<ID3D12InfoQueue>> configure_info_queue(
@@ -1014,6 +1151,213 @@ void log_capabilities(const RendererCaps& capabilities)
         std::move(info_queue));
 }
 
+[[nodiscard]] core::Result<ComPtr<IDXGIInfoQueue>>
+configure_dxgi_info_queue(const bool debug_layer_enabled)
+{
+    if (!debug_layer_enabled) {
+        return core::Result<ComPtr<IDXGIInfoQueue>>::success({});
+    }
+
+    ComPtr<IDXGIInfoQueue> info_queue;
+    const auto interface_result = DXGIGetDebugInterface1(
+        0,
+        IID_PPV_ARGS(&info_queue));
+    if (FAILED(interface_result)) {
+        return core::Result<ComPtr<IDXGIInfoQueue>>::failure(
+            graphics_error(
+                core::ErrorCode::unavailable,
+                hresult_message(
+                    "DXGIGetDebugInterface1(IDXGIInfoQueue)",
+                    interface_result)));
+    }
+
+    const auto limit_result = info_queue->SetMessageCountLimit(
+        DXGI_DEBUG_DXGI,
+        debug_message_limit);
+    if (FAILED(limit_result)) {
+        return core::Result<ComPtr<IDXGIInfoQueue>>::failure(
+            graphics_error(
+                core::ErrorCode::operation_failed,
+                hresult_message(
+                    "IDXGIInfoQueue::SetMessageCountLimit",
+                    limit_result)));
+    }
+
+    if (IsDebuggerPresent() != FALSE) {
+        const auto corruption_result = info_queue->SetBreakOnSeverity(
+            DXGI_DEBUG_DXGI,
+            DXGI_INFO_QUEUE_MESSAGE_SEVERITY_CORRUPTION,
+            TRUE);
+        const auto error_result = info_queue->SetBreakOnSeverity(
+            DXGI_DEBUG_DXGI,
+            DXGI_INFO_QUEUE_MESSAGE_SEVERITY_ERROR,
+            TRUE);
+        if (FAILED(corruption_result) || FAILED(error_result)) {
+            return core::Result<ComPtr<IDXGIInfoQueue>>::failure(
+                graphics_error(
+                    core::ErrorCode::operation_failed,
+                    "Failed to configure DXGI debugger breaks"));
+        }
+    }
+
+    return core::Result<ComPtr<IDXGIInfoQueue>>::success(
+        std::move(info_queue));
+}
+
+[[nodiscard]] std::string dred_name(
+    const char* const narrow_name,
+    const wchar_t* const wide_name)
+{
+    if (narrow_name != nullptr && narrow_name[0] != '\0') {
+        return narrow_name;
+    }
+    if (wide_name != nullptr && wide_name[0] != L'\0') {
+        return utf8_from_wide(wide_name);
+    }
+    return "<unnamed>";
+}
+
+void log_dred_allocations(
+    const std::string_view heading,
+    const D3D12_DRED_ALLOCATION_NODE1* node)
+{
+    std::size_t count = 0;
+    for (; node != nullptr && count < maximum_dred_nodes;
+         node = node->pNext, ++count) {
+        auto message = std::string{heading};
+        message.append(": ");
+        message.append(dred_name(node->ObjectNameA, node->ObjectNameW));
+        message.append(" (type=");
+        message.append(std::to_string(
+            static_cast<std::uint32_t>(node->AllocationType)));
+        message.push_back(')');
+        core::log_message(
+            core::LogLevel::error,
+            "gpu.dred",
+            message);
+    }
+    if (node != nullptr) {
+        core::log_message(
+            core::LogLevel::warning,
+            "gpu.dred",
+            std::string{heading} +
+                ": additional allocation nodes were truncated");
+    }
+}
+
+void log_dred_report(ID3D12Device* const device)
+{
+    ComPtr<ID3D12DeviceRemovedExtendedData1> dred;
+    const auto interface_result = device->QueryInterface(
+        IID_PPV_ARGS(&dred));
+    if (FAILED(interface_result)) {
+        core::log_message(
+            core::LogLevel::error,
+            "gpu.dred",
+            hresult_message(
+                "QueryInterface(ID3D12DeviceRemovedExtendedData1)",
+                interface_result));
+        return;
+    }
+
+    D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT1 breadcrumbs{};
+    const auto breadcrumb_result = dred->GetAutoBreadcrumbsOutput1(
+        &breadcrumbs);
+    if (FAILED(breadcrumb_result)) {
+        core::log_message(
+            core::LogLevel::error,
+            "gpu.dred",
+            hresult_message("DRED automatic breadcrumbs",
+                breadcrumb_result));
+    }
+    else {
+        auto* node = breadcrumbs.pHeadAutoBreadcrumbNode;
+        std::size_t node_count = 0;
+        for (; node != nullptr && node_count < maximum_dred_nodes;
+             node = node->pNext, ++node_count) {
+            const auto completed = node->pLastBreadcrumbValue != nullptr
+                ? *node->pLastBreadcrumbValue
+                : 0U;
+            auto message = std::string{"queue="};
+            message.append(dred_name(
+                node->pCommandQueueDebugNameA,
+                node->pCommandQueueDebugNameW));
+            message.append("; list=");
+            message.append(dred_name(
+                node->pCommandListDebugNameA,
+                node->pCommandListDebugNameW));
+            message.append("; completed=");
+            message.append(std::to_string(completed));
+            message.push_back('/');
+            message.append(std::to_string(node->BreadcrumbCount));
+            if (node->pCommandHistory != nullptr &&
+                completed < node->BreadcrumbCount) {
+                const auto history_index =
+                    completed % maximum_dred_history_operations;
+                message.append("; next-operation=");
+                message.append(std::to_string(static_cast<std::uint32_t>(
+                    node->pCommandHistory[history_index])));
+            }
+            core::log_message(
+                core::LogLevel::error,
+                "gpu.dred",
+                message);
+
+            const auto context_count =
+                (std::min)(
+                    static_cast<std::size_t>(
+                        node->BreadcrumbContextsCount),
+                    maximum_dred_contexts);
+            for (std::size_t index = 0;
+                 index < context_count &&
+                 node->pBreadcrumbContexts != nullptr;
+                 ++index) {
+                const auto& context = node->pBreadcrumbContexts[index];
+                auto context_message = std::string{"context["};
+                context_message.append(std::to_string(
+                    context.BreadcrumbIndex));
+                context_message.append("]=");
+                context_message.append(context.pContextString != nullptr
+                    ? utf8_from_wide(context.pContextString)
+                    : "<unnamed>");
+                core::log_message(
+                    core::LogLevel::error,
+                    "gpu.dred",
+                    context_message);
+            }
+        }
+        if (node != nullptr) {
+            core::log_message(
+                core::LogLevel::warning,
+                "gpu.dred",
+                "Additional breadcrumb nodes were truncated");
+        }
+    }
+
+    D3D12_DRED_PAGE_FAULT_OUTPUT1 page_fault{};
+    const auto page_fault_result = dred->GetPageFaultAllocationOutput1(
+        &page_fault);
+    if (FAILED(page_fault_result)) {
+        core::log_message(
+            core::LogLevel::error,
+            "gpu.dred",
+            hresult_message("DRED page-fault allocations",
+                page_fault_result));
+        return;
+    }
+    core::log_message(
+        core::LogLevel::error,
+        "gpu.dred",
+        std::string{"page-fault-address="} +
+            hexadecimal(page_fault.PageFaultVA, 16));
+    log_dred_allocations(
+        "existing allocation",
+        page_fault.pHeadExistingAllocationNode);
+    log_dred_allocations(
+        "recently freed allocation",
+        page_fault.pHeadRecentFreedAllocationNode);
+}
+
 } // namespace
 
 class Device::Implementation final {
@@ -1023,10 +1367,15 @@ public:
     ComPtr<IDXGIAdapter4> adapter;
     ComPtr<ID3D12Device> device;
     ComPtr<ID3D12InfoQueue> info_queue;
+    ComPtr<IDXGIInfoQueue> dxgi_info_queue;
     std::vector<AdapterInfo> adapter_candidates;
     AdapterInfo selected_adapter;
     RendererCaps capabilities;
     DebugMessageCounts debug_message_counts;
+    UINT64 debug_message_cursor{};
+    UINT64 discarded_debug_messages{};
+    UINT64 dxgi_message_cursor{};
+    UINT64 discarded_dxgi_messages{};
     std::string agility_runtime_path;
     std::optional<std::string> warp_runtime_path;
     bool debug_layer_enabled{};
@@ -1124,6 +1473,14 @@ core::Result<Device> Device::create(const DeviceConfig& config)
             std::move(dred_result).error());
     }
     implementation->dred_enabled = true;
+
+    auto dxgi_info_queue_result = configure_dxgi_info_queue(
+        config.enable_debug_layer);
+    if (!dxgi_info_queue_result) {
+        return core::Result<Device>::failure(
+            std::move(dxgi_info_queue_result).error());
+    }
+    auto dxgi_info_queue = std::move(dxgi_info_queue_result).value();
 
     auto runtime_path_result = loaded_agility_runtime_path();
     if (!runtime_path_result) {
@@ -1223,10 +1580,19 @@ core::Result<Device> Device::create(const DeviceConfig& config)
         return core::Result<Device>::failure(
             std::move(messages_result).error());
     }
-    const auto message_counts = std::move(messages_result).value();
+    auto message_counts = std::move(messages_result).value();
+    auto dxgi_messages_result = inspect_dxgi_messages(
+        dxgi_info_queue.Get());
+    if (!dxgi_messages_result) {
+        return core::Result<Device>::failure(
+            std::move(dxgi_messages_result).error());
+    }
+    accumulate_message_counts(
+        message_counts,
+        dxgi_messages_result.value());
     if (message_counts.corruption != 0 || message_counts.error != 0) {
         auto message = std::string{
-            "D3D12 initialization produced validation failures: "};
+            "DirectX initialization produced validation failures: "};
         message.append(std::to_string(message_counts.corruption));
         message.append(" corruption, ");
         message.append(std::to_string(message_counts.error));
@@ -1241,8 +1607,25 @@ core::Result<Device> Device::create(const DeviceConfig& config)
     implementation->selected_adapter = std::move(selected.info);
     implementation->device = std::move(device);
     implementation->info_queue = std::move(info_queue);
+    implementation->dxgi_info_queue = std::move(dxgi_info_queue);
     implementation->capabilities = std::move(capabilities);
     implementation->debug_message_counts = message_counts;
+    if (implementation->info_queue != nullptr) {
+        implementation->debug_message_cursor =
+            implementation->info_queue->GetNumStoredMessages();
+        implementation->discarded_debug_messages =
+            implementation->info_queue->
+                GetNumMessagesDiscardedByMessageCountLimit();
+    }
+    if (implementation->dxgi_info_queue != nullptr) {
+        implementation->dxgi_message_cursor =
+            implementation->dxgi_info_queue->GetNumStoredMessages(
+                DXGI_DEBUG_DXGI);
+        implementation->discarded_dxgi_messages =
+            implementation->dxgi_info_queue->
+                GetNumMessagesDiscardedByMessageCountLimit(
+                    DXGI_DEBUG_DXGI);
+    }
 
     core::log_message(
         core::LogLevel::info,
@@ -1338,6 +1721,158 @@ const std::optional<std::string>& Device::warp_runtime_path() const noexcept
         implementation_ != nullptr,
         "A moved-from D3D12 Device has no WARP runtime report");
     return implementation_->warp_runtime_path;
+}
+
+core::Result<void> Device::validate_debug_state()
+{
+    if (implementation_ == nullptr) {
+        return core::Result<void>::failure(graphics_error(
+            core::ErrorCode::invalid_state,
+            "A moved-from D3D12 Device cannot be validated"));
+    }
+    if (!implementation_->debug_layer_enabled) {
+        return core::Result<void>::success();
+    }
+
+    ComPtr<ID3D12DebugDevice2> debug_device;
+    const auto interface_result = implementation_->device.As(&debug_device);
+    if (FAILED(interface_result)) {
+        return core::Result<void>::failure(graphics_error(
+            core::ErrorCode::unavailable,
+            hresult_message("QueryInterface(ID3D12DebugDevice2)",
+                interface_result)));
+    }
+    const auto report_result = debug_device->ReportLiveDeviceObjects(
+        static_cast<D3D12_RLDO_FLAGS>(
+            D3D12_RLDO_SUMMARY |
+            D3D12_RLDO_DETAIL |
+            D3D12_RLDO_IGNORE_INTERNAL));
+    if (FAILED(report_result)) {
+        return core::Result<void>::failure(graphics_error(
+            core::ErrorCode::operation_failed,
+            hresult_message(
+                "ID3D12DebugDevice2::ReportLiveDeviceObjects",
+                report_result)));
+    }
+
+    const auto discarded = implementation_->info_queue->
+        GetNumMessagesDiscardedByMessageCountLimit();
+    const auto discarded_new_messages =
+        discarded > implementation_->discarded_debug_messages;
+    const auto discarded_dxgi = implementation_->dxgi_info_queue->
+        GetNumMessagesDiscardedByMessageCountLimit(DXGI_DEBUG_DXGI);
+    const auto discarded_new_dxgi_messages =
+        discarded_dxgi > implementation_->discarded_dxgi_messages;
+
+    std::uint64_t live_child_count = 0;
+    auto messages_result = inspect_debug_messages(
+        implementation_->info_queue.Get(),
+        implementation_->debug_message_cursor,
+        &live_child_count);
+    if (!messages_result) {
+        return core::Result<void>::failure(
+            std::move(messages_result).error());
+    }
+    auto message_counts = std::move(messages_result).value();
+    auto dxgi_messages_result = inspect_dxgi_messages(
+        implementation_->dxgi_info_queue.Get(),
+        implementation_->dxgi_message_cursor);
+    if (!dxgi_messages_result) {
+        return core::Result<void>::failure(
+            std::move(dxgi_messages_result).error());
+    }
+    accumulate_message_counts(
+        message_counts,
+        dxgi_messages_result.value());
+    implementation_->debug_message_cursor =
+        implementation_->info_queue->GetNumStoredMessages();
+    implementation_->discarded_debug_messages = discarded;
+    implementation_->dxgi_message_cursor =
+        implementation_->dxgi_info_queue->GetNumStoredMessages(
+            DXGI_DEBUG_DXGI);
+    implementation_->discarded_dxgi_messages = discarded_dxgi;
+    accumulate_message_counts(
+        implementation_->debug_message_counts,
+        message_counts);
+
+    if (discarded_new_messages ||
+        discarded_new_dxgi_messages ||
+        message_counts.corruption != 0 ||
+        message_counts.error != 0 ||
+        live_child_count != 0) {
+        auto message = std::string{"DirectX end-of-run validation failed: "};
+        message.append(std::to_string(message_counts.corruption));
+        message.append(" corruption, ");
+        message.append(std::to_string(message_counts.error));
+        message.append(" errors, ");
+        message.append(std::to_string(live_child_count));
+        message.append(" live D3D12 child objects");
+        if (discarded_new_messages || discarded_new_dxgi_messages) {
+            message.append(
+                ", and a bounded validation queue discarded messages");
+        }
+        return core::Result<void>::failure(graphics_error(
+            core::ErrorCode::operation_failed,
+            std::move(message)));
+    }
+
+    core::log_message(
+        core::LogLevel::info,
+        "gpu.validation",
+        std::string{"DirectX end-of-run validation: 0 corruption, 0 "
+            "errors, 0 "
+            "live D3D12 child objects, "} +
+            std::to_string(message_counts.warning) + " warnings");
+    return core::Result<void>::success();
+}
+
+detail::NativeDeviceContext detail::DeviceAccess::native_context(
+    Device& device) noexcept
+{
+    if (device.implementation_ == nullptr) {
+        return {};
+    }
+    return detail::NativeDeviceContext{
+        device.implementation_->device.Get(),
+        device.implementation_->factory.Get(),
+    };
+}
+
+core::Error detail::DeviceAccess::graphics_failure(
+    Device& device,
+    const std::string_view operation,
+    const HRESULT result)
+{
+    auto message = hresult_message(operation, result);
+    if (device.implementation_ == nullptr ||
+        device.implementation_->device == nullptr) {
+        return graphics_error(
+            core::ErrorCode::operation_failed,
+            std::move(message));
+    }
+
+    const auto removal_reason =
+        device.implementation_->device->GetDeviceRemovedReason();
+    const auto removal_path =
+        result == DXGI_ERROR_DEVICE_REMOVED ||
+        result == DXGI_ERROR_DEVICE_RESET ||
+        result == DXGI_ERROR_DEVICE_HUNG ||
+        result == DXGI_ERROR_DRIVER_INTERNAL_ERROR ||
+        FAILED(removal_reason);
+    if (removal_path) {
+        message.append("; device removal reason ");
+        message.append(hexadecimal(
+            static_cast<std::uint32_t>(removal_reason),
+            8));
+        core::log_message(
+            core::LogLevel::critical,
+            "gpu.device",
+            message);
+        log_dred_report(device.implementation_->device.Get());
+    }
+    return graphics_error(
+        core::ErrorCode::operation_failed,
+        std::move(message));
 }
 
 } // namespace shark::rhi::d3d12

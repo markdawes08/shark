@@ -56,12 +56,49 @@ TEST_CASE("sandbox options parse GPU smoke modifiers in any order", "[cli]")
         shark::rhi::d3d12::AdapterSelectionKind::warp);
 }
 
+TEST_CASE("sandbox options parse the fixed presentation smoke mode", "[cli]")
+{
+    const auto hardware = parse({"--present-smoke"});
+    REQUIRE(hardware);
+    REQUIRE(hardware.value().run_mode ==
+        shark::sandbox::RunMode::present_smoke);
+    REQUIRE(hardware.value().adapter.kind ==
+        shark::rhi::d3d12::AdapterSelectionKind::high_performance);
+    REQUIRE_FALSE(hardware.value().gpu_based_validation);
+
+    const auto warp = parse({
+        "--gpu-validation",
+        "--warp",
+        "--present-smoke",
+    });
+    REQUIRE(warp);
+    REQUIRE(warp.value().run_mode ==
+        shark::sandbox::RunMode::present_smoke);
+    REQUIRE(warp.value().adapter.kind ==
+        shark::rhi::d3d12::AdapterSelectionKind::warp);
+    REQUIRE(warp.value().gpu_based_validation);
+
+    const auto indexed = parse({
+        "--adapter",
+        "3",
+        "--present-smoke",
+    });
+    REQUIRE(indexed);
+    REQUIRE(indexed.value().adapter.kind ==
+        shark::rhi::d3d12::AdapterSelectionKind::preference_index);
+    REQUIRE(indexed.value().adapter.preference_index == 3);
+}
+
 TEST_CASE("sandbox options reject conflicting selections and modes", "[cli]")
 {
     REQUIRE_FALSE(parse({"--warp", "--adapter", "0"}));
     REQUIRE_FALSE(parse({"--adapter", "0", "--adapter", "1"}));
     REQUIRE_FALSE(parse({"--warp", "--warp"}));
     REQUIRE_FALSE(parse({"--gpu-smoke", "--capabilities"}));
+    REQUIRE_FALSE(parse({"--present-smoke", "--present-smoke"}));
+    REQUIRE_FALSE(parse({"--present-smoke", "--platform-smoke"}));
+    REQUIRE_FALSE(parse({"--present-smoke", "--gpu-smoke"}));
+    REQUIRE_FALSE(parse({"--present-smoke", "--capabilities"}));
     REQUIRE_FALSE(parse({"--gpu-validation", "--gpu-validation"}));
     REQUIRE_FALSE(parse({"--platform-smoke", "--warp"}));
     REQUIRE_FALSE(parse({"--platform-smoke", "--gpu-validation"}));

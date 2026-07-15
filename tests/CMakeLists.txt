@@ -2,6 +2,7 @@ find_package(Catch2 3 CONFIG REQUIRED)
 include(Catch)
 
 add_executable(SharkTests
+    "${PROJECT_SOURCE_DIR}/cmake/Shark.Windows.manifest"
     ../apps/sandbox/options.cpp
     unit/assertion_tests.cpp
     unit/d3d12_device_contract_tests.cpp
@@ -78,4 +79,40 @@ set_tests_properties(integration.gpu.warp_device
         LABELS "integration;gpu;warp"
         RUN_SERIAL TRUE
         TIMEOUT 20
+)
+
+add_test(
+    NAME integration.gpu.hardware_clear_present
+    COMMAND SharkSandbox --present-smoke
+)
+
+set_tests_properties(integration.gpu.hardware_clear_present
+    PROPERTIES
+        LABELS "integration;gpu;presentation;hardware"
+        RUN_SERIAL TRUE
+        TIMEOUT 60
+)
+
+add_test(
+    NAME integration.gpu.warp_clear_present
+    COMMAND SharkSandbox --present-smoke --warp
+)
+
+set_tests_properties(integration.gpu.warp_clear_present
+    PROPERTIES
+        LABELS "integration;gpu;presentation;warp"
+        RUN_SERIAL TRUE
+        TIMEOUT 90
+)
+
+add_test(
+    NAME integration.gpu.warp_clear_present_validation
+    COMMAND SharkSandbox --present-smoke --warp --gpu-validation
+)
+
+set_tests_properties(integration.gpu.warp_clear_present_validation
+    PROPERTIES
+        LABELS "integration;gpu;presentation;warp;validation"
+        RUN_SERIAL TRUE
+        TIMEOUT 180
 )

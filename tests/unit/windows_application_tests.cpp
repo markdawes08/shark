@@ -67,6 +67,103 @@ TEST_CASE("invalid window configuration returns platform errors", "[platform][wi
     }
 }
 
+TEST_CASE(
+    "window client extents are physical pixels under per-monitor DPI v2",
+    "[platform][window][dpi]")
+{
+    using namespace shark;
+
+    platform::ApplicationConfig config;
+    config.client_extent = platform::WindowExtent{800, 600};
+    config.visible = false;
+    auto application_result = platform::Application::create(config);
+    REQUIRE(application_result.has_value());
+    auto application = std::move(application_result).value();
+
+    const auto window = static_cast<HWND>(
+        application.native_window_handle().value);
+    REQUIRE(window != nullptr);
+    REQUIRE(AreDpiAwarenessContextsEqual(
+        GetWindowDpiAwarenessContext(window),
+        DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2));
+    REQUIRE(GetDpiForWindow(window) != 0);
+
+    RECT initial_client{};
+    REQUIRE(GetClientRect(window, &initial_client) != FALSE);
+    const platform::WindowExtent observed_initial{
+        static_cast<std::uint32_t>(
+            initial_client.right - initial_client.left),
+        static_cast<std::uint32_t>(
+            initial_client.bottom - initial_client.top),
+    };
+    REQUIRE(observed_initial == config.client_extent);
+    REQUIRE(application.client_extent() == observed_initial);
+
+    application.clear_events();
+    constexpr platform::WindowExtent resized_extent{960, 540};
+    REQUIRE(application.resize_client(resized_extent).has_value());
+
+    RECT resized_client{};
+    REQUIRE(GetClientRect(window, &resized_client) != FALSE);
+    const platform::WindowExtent observed_resized{
+        static_cast<std::uint32_t>(
+            resized_client.right - resized_client.left),
+        static_cast<std::uint32_t>(
+            resized_client.bottom - resized_client.top),
+    };
+    REQUIRE(observed_resized == resized_extent);
+    REQUIRE(application.client_extent() == observed_resized);
+
+    bool published_physical_resize = false;
+    for (const auto& event : application.events()) {
+        const auto* const resized =
+            std::get_if<platform::WindowResizedEvent>(&event);
+        if (resized != nullptr &&
+            resized->client_extent == observed_resized) {
+            published_physical_resize = true;
+        }
+    }
+    REQUIRE(published_physical_resize);
+
+    application.clear_events();
+    RECT current_window{};
+    REQUIRE(GetWindowRect(window, &current_window) != FALSE);
+    const auto current_width = current_window.right - current_window.left;
+    const auto current_height = current_window.bottom - current_window.top;
+    RECT suggested_window{
+        .left = current_window.left + 11,
+        .top = current_window.top + 13,
+        .right = current_window.left + 11 + current_width + 64,
+        .bottom = current_window.top + 13 + current_height + 32,
+    };
+    const auto dpi = static_cast<WORD>(GetDpiForWindow(window));
+    static_cast<void>(SendMessageW(
+        window,
+        WM_DPICHANGED,
+        static_cast<WPARAM>(MAKELONG(dpi, dpi)),
+        reinterpret_cast<LPARAM>(&suggested_window)));
+
+    const auto pump_result = application.poll_events();
+    REQUIRE(pump_result.has_value());
+    RECT dpi_changed_window{};
+    REQUIRE(GetWindowRect(window, &dpi_changed_window) != FALSE);
+    REQUIRE(dpi_changed_window.left == suggested_window.left);
+    REQUIRE(dpi_changed_window.top == suggested_window.top);
+    REQUIRE(dpi_changed_window.right == suggested_window.right);
+    REQUIRE(dpi_changed_window.bottom == suggested_window.bottom);
+
+    RECT dpi_changed_client{};
+    REQUIRE(GetClientRect(window, &dpi_changed_client) != FALSE);
+    const platform::WindowExtent observed_dpi_changed{
+        static_cast<std::uint32_t>(
+            dpi_changed_client.right - dpi_changed_client.left),
+        static_cast<std::uint32_t>(
+            dpi_changed_client.bottom - dpi_changed_client.top),
+    };
+    REQUIRE(application.client_extent() == observed_dpi_changed);
+    REQUIRE(application.close_window().has_value());
+}
+
 TEST_CASE("Win32 messages cross the platform event boundary in order", "[platform][window][input]")
 {
     using namespace shark;

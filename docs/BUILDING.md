@@ -72,10 +72,10 @@ All generated binaries stay under ignored `out/`. The WARP NuGet binary is for
 local development and testing only and must never enter a packaged product.
 
 With no arguments, `SharkSandbox` initializes the highest-priority eligible
-hardware device and then opens the native Win32 shell. It does not create a
-command queue, swap chain, or rendered frame yet. Resize, input, and window
-lifecycle records remain visible in the Debug console log. Close the title bar
-or press Alt+F4 to exit cleanly.
+hardware device, opens the native Win32 window, and continuously presents the
+G-002 clear color. Resize, input, and window lifecycle records remain visible
+in the Debug console log. Resize or minimize/restore the window to exercise the
+swap-chain lifecycle, then close the title bar or press Alt+F4 to exit cleanly.
 
 ## Graphics device checks
 
@@ -103,18 +103,36 @@ system change; use the logged name, LUID, vendor ID, and device ID when
 recording a test result.
 
 The D3D12 debug layer and DRED are enabled before any device probe. GPU-based
-validation is deliberately opt-in because it is expensive:
+validation is deliberately opt-in because it is expensive. The most useful
+focused command includes real submission and presentation:
 
 ```powershell
-& .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe --gpu-smoke --warp --gpu-validation
+& .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe --present-smoke --warp --gpu-validation
 ```
 
-Every device path fails if the initialization info queue contains an error or
-corruption message. See [the graphics-device contract](GRAPHICS_DEVICE.md) for
-selection, capability, ownership, and runtime rules.
+Every device path fails if either the D3D12 or DXGI initialization info queue
+contains an error or corruption message. See
+[the graphics-device contract](GRAPHICS_DEVICE.md) for selection, capability,
+ownership, and runtime rules.
 
-CTest registers the hardware and WARP paths as separate serial processes. To
-run only the graphics integration checks for either configuration:
+## Presentation checks
+
+Run the fixed clear/present contract on hardware and packaged WARP with:
+
+```powershell
+& .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe --present-smoke
+& .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe --present-smoke --warp
+```
+
+Each command shows a real PMv2-aware window, presents exactly 1,000 successful
+clear frames, performs a physical client resize, proves no frame is presented
+while minimized, restores, shuts down the presentation objects before the
+window, and checks new D3D12/DXGI messages plus live D3D12 device children.
+Submission or presentation removal failures also emit bounded DRED diagnostics.
+
+CTest registers hardware and WARP device and presentation paths as separate
+serial processes, plus a focused packaged-WARP GPU-validation presentation
+path. To run all graphics integration checks for either configuration:
 
 ```powershell
 & $ctest --preset windows-debug -R '^integration\.gpu\.'
@@ -134,6 +152,9 @@ destruction. CTest registers this mode separately with a ten-second timeout,
 so the normal interactive executable is never allowed to block an automated
 test. See [the platform contract](PLATFORM.md) for the event and ownership
 rules.
+
+See the [presentation contract](GRAPHICS_PRESENTATION.md) for the temporary
+serialized synchronization, resize ownership, and G-003 handoff.
 
 ## Visual Studio
 

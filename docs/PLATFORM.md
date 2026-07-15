@@ -1,6 +1,6 @@
 # Shark Win32 Platform Shell
 
-- **Increment:** `F-004`
+- **Increment:** `F-004` host contract; DPI policy completed by `G-002`
 - **Last verified:** July 15, 2026
 
 F-004 establishes the Windows host boundary used by later graphics and
@@ -9,12 +9,12 @@ structured stderr diagnostics stay visible while it owns one native Unicode
 Win32 window.
 
 The public platform headers contain no `windows.h` types. Win32 implementation
-details remain under `engine/platform/windows`, and the later swap-chain layer
-can obtain the HWND through an explicitly opaque `NativeWindowHandle`.
+details remain under `engine/platform/windows`, and the D3D12 presentation
+layer obtains the HWND through an explicitly opaque `NativeWindowHandle`.
 
 ## Ownership and lifecycle
 
-`Application::create` validates an UTF-8 title and a nonzero client extent,
+`Application::create` validates a UTF-8 title and a nonzero client extent,
 registers Shark's process-lifetime window class, and creates one top-level
 window. The movable public object owns a heap-backed implementation so the
 pointer stored in `GWLP_USERDATA` never changes when the public object moves.
@@ -47,9 +47,9 @@ callback boundary.
 `poll_events` drains the current thread's Win32 queue without blocking,
 translates and dispatches messages, and reports `WM_QUIT` plus its exit code.
 When the window remains open and no work is pending, `wait_for_events` uses
-`WaitMessage`; the no-render F-004 shell therefore sleeps instead of busy
-spinning. G-002 can retain the nonblocking poll boundary when rendering adds a
-continuous frame loop.
+`WaitMessage`. The GPU-independent F-004 smoke and a minimized interactive
+presentation therefore sleep, while a usable G-002 window polls and presents
+continuously.
 
 `WM_CLOSE` produces `WindowCloseRequestedEvent` but does not immediately
 destroy the window. The sandbox currently accepts that request by calling
@@ -83,6 +83,20 @@ Mouse movement is not yet coalesced.
 Keyboard records deliberately retain Windows virtual-key values. Text input,
 IME composition, raw input, an engine-wide key enum, action mapping, held-key
 state, cursor capture, and camera controls are separate future concerns.
+
+## DPI and physical client pixels
+
+Both executable manifests establish Per-Monitor DPI Awareness v2 before any
+window is created. Under that policy, `WindowExtent`, `WindowResizedEvent`, and
+`WindowRestoredEvent` dimensions are physical client pixels and can drive DXGI
+without a logical-pixel conversion.
+
+Initial and requested client sizes use `AdjustWindowRectExForDpi` with the
+system or current-window DPI. The platform then reads `GetClientRect` rather
+than assuming Windows produced the requested dimensions. `WM_DPICHANGED`
+applies Windows' suggested top-level rectangle; its resulting `WM_SIZE` event
+publishes the next usable physical client extent. The callback never performs
+DXGI work.
 
 ## Failure behavior
 
@@ -118,11 +132,12 @@ resize, minimize/restore, close-request, and destruction records:
 
 CTest runs that mode with a ten-second timeout in addition to deterministic
 hidden-window tests for configuration errors, message translation, ordering,
-buffer bounds, native lifetime, and `WM_QUIT`.
+buffer bounds, native lifetime, `WM_QUIT`, PMv2 awareness, and exact physical
+client sizing.
 
 ## Explicit non-goals
 
-F-004 adds no DXGI, Direct3D 12, WARP, swap chain, renderer, camera, gameplay
-input mapping, fixed simulation clock, multi-window support, fullscreen policy,
-or editor behavior. Per-monitor DPI policy and pixel-accurate swap-chain sizing
-must be established before G-002 presents the first frame.
+The platform layer owns no DXGI, Direct3D 12, WARP, swap-chain, or renderer
+objects. G-002 consumes only its opaque native handle and physical client
+extent. Camera controls, gameplay input mapping, a fixed simulation clock,
+multi-window support, fullscreen policy, and editor behavior remain deferred.

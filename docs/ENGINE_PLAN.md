@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 15, 2026
-- **Completed through:** `G-001` - Direct3D 12 device initialization
-- **Next increment:** `G-002` - clear-color swap chain and presentation
+- **Completed through:** `G-002` - clear-color swap chain and presentation
+- **Next increment:** `G-003` - frame resource lifecycle
 
 ## 1. Project direction
 
@@ -285,12 +285,12 @@ unstable circular solve; iterative two-way coupling is a later milestone.
 - Build a `RendererCaps` record using `CheckFeatureSupport`; never infer optional
   support from a feature-level number.
 - Before device creation, enable the D3D12 debug layer, optional GPU-based
-  validation, and DRED. After device creation, configure bounded
-  `ID3D12InfoQueue` storage and debugger-break policy without suppressing
+  validation, and DRED. Configure bounded `ID3D12InfoQueue` and
+  `IDXGIInfoQueue` storage plus debugger-break policy without suppressing
   messages. GPU-based validation is an opt-in focused-test mode because it is
   expensive.
-- Once submission exists, write DRED breadcrumbs/page-fault details on device
-  removal.
+- Submission, fence, resize, and present failures query the device-removal
+  reason and emit bounded DRED breadcrumb and page-fault details.
 - Use a flip-model, triple-buffered swap chain and a reversed-Z depth target.
 - Define direct, compute, and copy queue interfaces with monotonic fence
   timelines, but initially submit graphics, compute, and uploads on the direct
@@ -665,25 +665,23 @@ entity scale or query patterns make it useful.
 
 ## 14. Immediate next increment
 
-After `G-001` is reviewed and committed by the owner, implement only `G-002`:
+After `G-002` is reviewed and committed by the owner, implement only `G-003`:
 
-- create one direct command queue and a triple-buffered flip-model swap chain
-  for the existing Win32 window;
-- make the swap-chain extent follow physical client pixels under the existing
-  per-monitor DPI-aware window policy;
-- create back-buffer RTVs and the smallest serialized command path needed to
-  transition, clear, present, and wait safely;
-- handle resize, minimize, restore, and shutdown without retaining stale back
-  buffers;
-- add a bounded clear-color smoke mode that presents 1,000 frames with zero
-  D3D12/DXGI validation errors, and report DRED data if submission or present
-  removes the device; and
-- stop before generalized frame contexts, upload arenas, shader pipelines,
-  depth buffers, or a render graph.
+- replace the temporary wait-after-every-present path with three reusable
+  `FrameContext` records keyed to the swap-chain back buffers;
+- give each context its own command allocator and completion fence value so it
+  is reset only after the direct queue has finished using it;
+- add bounded per-frame upload storage and CPU-visible descriptor allocation
+  foundations with explicit exhaustion behavior;
+- use one monotonic direct-queue fence timeline and verify resource/descriptor
+  retirement before reuse;
+- preserve G-002 resize, minimize, shutdown, DRED, and validation behavior; and
+- stop before HLSL compilation, a triangle pipeline, depth buffers, a render
+  graph, copy queues, or asynchronous compute.
 
-The temporary serialized synchronization in `G-002` proves presentation. The
-next `G-003` increment replaces it with the durable triple-buffered frame
-resource and retirement model.
+`G-003` removes the deliberately serialized per-frame wait without introducing
+additional queues. Shader compilation and the first triangle remain the
+separate `G-004` increment.
 
 ## 15. Primary technical references
 

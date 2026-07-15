@@ -15,11 +15,17 @@ WRL, and COM types behind a PIMPL. Public callers receive owned engine records:
 - `RendererCaps` for the maximum Feature Level and Shader Model plus optional
   binding, barrier, DXR, mesh, VRS, sampler-feedback, work-graph, and memory
   capabilities; and
-- `DebugMessageCounts` for the initialization info queue.
+- `DebugMessageCounts` aggregated from the D3D12 and DXGI initialization info
+  queues.
 
 This is a narrow D3D12 RHI boundary, not a cross-API abstraction. Raw COM
 pointers remain private until later renderer code receives typed resource and
 queue operations.
+
+G-002 adds a private `detail::DeviceAccess` bridge used only inside the D3D12
+implementation. It lets `Presentation` borrow the authoritative device and
+factory without exposing COM through public headers. `Device` must outlive
+every presentation object.
 
 The process permits one authoritative `Device` startup. D3D12 debug-layer,
 GPU-validation, and DRED settings are process-global and must be fixed before
@@ -36,17 +42,20 @@ One device startup follows this fixed order:
 3. Enable the D3D12 debug layer and optional GPU-based validation.
 4. Force DRED automatic breadcrumbs, page-fault tracking, and breadcrumb
    contexts before any device probe.
-5. Create a debug DXGI factory.
+5. Bound the DXGI debug info queue and create a debug DXGI factory.
 6. Enumerate all adapters in `HIGH_PERFORMANCE` preference order, probe Feature
    Level 12_0 and Shader Model support, and log every candidate.
 7. Select the exact requested adapter with no fallback.
 8. Create and name the authoritative Feature Level 12_0 device.
-9. Bound and inspect its D3D12 info queue.
-10. Query required and optional capabilities, then publish the immutable report.
+9. Bound its D3D12 info queue.
+10. Query required and optional capabilities.
+11. Inspect both DirectX queues, fail corruption or errors, then publish the
+    immutable report.
 
-G-001 arms DRED before device creation. Extracting breadcrumbs and page-fault
-details is deferred until G-002 introduces a submission/present path that can
-actually encounter device removal.
+G-001 arms DRED before device creation. G-002 consumes that setup: failed
+submission, fence, resize, and present operations query the device-removal
+reason and log bounded automatic-breadcrumb, breadcrumb-context, page-fault,
+existing-allocation, and recently-freed-allocation details.
 
 If a debugger is attached, corruption and error messages also request a debug
 break. Unattended processes count and report those severities instead of
@@ -58,7 +67,7 @@ reported but do not masquerade as errors.
 The command-line contract is:
 
 ```text
-SharkSandbox [--platform-smoke | --gpu-smoke | --capabilities]
+SharkSandbox [--platform-smoke | --gpu-smoke | --present-smoke | --capabilities]
              [--warp | --adapter <index>]
              [--gpu-validation]
 ```
@@ -76,8 +85,11 @@ Selection rules are strict:
 
 `--platform-smoke` remains GPU-independent and rejects GPU selectors. Both
 `--gpu-smoke` and `--capabilities` create no window and exit after device
-verification. The default interactive path keeps the device alive while the
-existing Win32 shell runs.
+verification. `--present-smoke` accepts the normal GPU selectors and optional
+GPU-based validation, creates a real window, presents exactly 1,000 successful
+clear frames, verifies its lifecycle, and exits. The default interactive path
+keeps the device alive while clear-color presentation runs until the window is
+closed.
 
 ## Required and optional capabilities
 
@@ -128,14 +140,19 @@ and [Agility SDK integration guide](https://devblogs.microsoft.com/directx/getti
 
 ## Permanent checks
 
-CTest keeps three independent integration processes:
+CTest keeps six independent integration processes:
 
 - the GPU-independent Win32 lifecycle smoke;
-- automatic hardware device creation; and
-- packaged WARP device creation.
+- automatic hardware device creation;
+- packaged WARP device creation;
+- automatic hardware clear/present;
+- packaged WARP clear/present; and
+- packaged WARP clear/present with GPU-based validation.
 
 Unit tests cover the exact Feature Level/Shader Model baseline and the complete
-CLI conflict/malformed-index boundary. A focused manual WARP command covers
-GPU-based-validation setup. Debug and Release must both build and pass all
-registered tests with zero D3D12 corruption or error messages before G-001 is
-accepted.
+CLI conflict/malformed-index boundary. Presentation shutdown explicitly drains
+and releases its children before `Device::validate_debug_state` checks new
+D3D12 and DXGI messages plus live D3D12 child objects. Debug and Release must
+both build and pass all registered tests with zero DirectX corruption or error
+messages. See the [presentation contract](GRAPHICS_PRESENTATION.md) for the
+G-002 frame and resize rules.

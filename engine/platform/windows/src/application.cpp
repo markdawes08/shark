@@ -22,6 +22,7 @@ namespace {
 constexpr wchar_t window_class_name[] = L"Shark.Platform.Window.v1";
 constexpr std::uint32_t maximum_client_extent = 65'535;
 constexpr DWORD shark_window_style = WS_OVERLAPPEDWINDOW;
+constexpr DWORD shark_window_extended_style = 0;
 
 [[nodiscard]] bool valid_client_extent(
     const WindowExtent extent) noexcept
@@ -74,6 +75,62 @@ constexpr DWORD shark_window_style = WS_OVERLAPPEDWINDOW;
     }
 
     return platform_error(core::ErrorCode::operation_failed, std::move(message));
+}
+
+[[nodiscard]] core::Result<WindowExtent> observed_client_extent(
+    const HWND window)
+{
+    RECT client_rectangle{};
+    SetLastError(ERROR_SUCCESS);
+    if (GetClientRect(window, &client_rectangle) == FALSE) {
+        return core::Result<WindowExtent>::failure(windows_error(
+            "GetClientRect",
+            GetLastError()));
+    }
+
+    const auto width = client_rectangle.right - client_rectangle.left;
+    const auto height = client_rectangle.bottom - client_rectangle.top;
+    if (width <= 0 || height <= 0) {
+        return core::Result<WindowExtent>::failure(platform_error(
+            core::ErrorCode::operation_failed,
+            "The native window reported an unusable client extent"));
+    }
+
+    return core::Result<WindowExtent>::success(WindowExtent{
+        static_cast<std::uint32_t>(width),
+        static_cast<std::uint32_t>(height),
+    });
+}
+
+[[nodiscard]] core::Result<RECT> adjusted_window_rectangle(
+    const WindowExtent client_extent,
+    const UINT dpi)
+{
+    if (dpi == 0) {
+        return core::Result<RECT>::failure(platform_error(
+            core::ErrorCode::operation_failed,
+            "Windows reported an invalid zero DPI"));
+    }
+
+    RECT window_rectangle{
+        .left = 0,
+        .top = 0,
+        .right = static_cast<LONG>(client_extent.width),
+        .bottom = static_cast<LONG>(client_extent.height),
+    };
+    SetLastError(ERROR_SUCCESS);
+    if (AdjustWindowRectExForDpi(
+            &window_rectangle,
+            shark_window_style,
+            FALSE,
+            shark_window_extended_style,
+            dpi) == FALSE) {
+        return core::Result<RECT>::failure(windows_error(
+            "AdjustWindowRectExForDpi",
+            GetLastError()));
+    }
+
+    return core::Result<RECT>::success(window_rectangle);
 }
 
 [[nodiscard]] core::Result<std::wstring> utf8_to_utf16(
@@ -326,6 +383,34 @@ struct Application::Implementation final {
             return result;
         }
 
+        case WM_DPICHANGED: {
+            const auto* const suggested_rectangle =
+                reinterpret_cast<const RECT*>(long_parameter);
+            if (suggested_rectangle == nullptr ||
+                suggested_rectangle->right <= suggested_rectangle->left ||
+                suggested_rectangle->bottom <= suggested_rectangle->top) {
+                state->record_callback_error(
+                    "WM_DPICHANGED suggested rectangle",
+                    ERROR_INVALID_PARAMETER);
+                return 0;
+            }
+
+            SetLastError(ERROR_SUCCESS);
+            if (SetWindowPos(
+                    native_window,
+                    nullptr,
+                    suggested_rectangle->left,
+                    suggested_rectangle->top,
+                    suggested_rectangle->right - suggested_rectangle->left,
+                    suggested_rectangle->bottom - suggested_rectangle->top,
+                    SWP_NOACTIVATE | SWP_NOZORDER) == FALSE) {
+                state->record_callback_error(
+                    "SetWindowPos(WM_DPICHANGED)",
+                    GetLastError());
+            }
+            return 0;
+        }
+
         case WM_SIZE: {
             if (word_parameter == SIZE_MINIMIZED) {
                 if (!state->is_minimized) {
@@ -538,25 +623,18 @@ core::Result<Application> Application::create(
         auto implementation = std::make_unique<Implementation>();
         implementation->extent = config.client_extent;
 
-        RECT window_rectangle{
-            .left = 0,
-            .top = 0,
-            .right = static_cast<LONG>(config.client_extent.width),
-            .bottom = static_cast<LONG>(config.client_extent.height),
-        };
-        if (AdjustWindowRectEx(
-                &window_rectangle,
-                shark_window_style,
-                FALSE,
-                0) == FALSE) {
-            return core::Result<Application>::failure(windows_error(
-                "AdjustWindowRectEx",
-                GetLastError()));
+        auto rectangle_result = adjusted_window_rectangle(
+            config.client_extent,
+            GetDpiForSystem());
+        if (!rectangle_result) {
+            return core::Result<Application>::failure(
+                std::move(rectangle_result).error());
         }
+        const auto window_rectangle = std::move(rectangle_result).value();
 
         SetLastError(ERROR_SUCCESS);
         const auto window = CreateWindowExW(
-            0,
+            shark_window_extended_style,
             window_class_name,
             title.c_str(),
             shark_window_style,
@@ -579,6 +657,13 @@ core::Result<Application> Application::create(
                 operation,
                 error));
         }
+
+        auto extent_result = observed_client_extent(window);
+        if (!extent_result) {
+            return core::Result<Application>::failure(
+                std::move(extent_result).error());
+        }
+        implementation->extent = std::move(extent_result).value();
 
         if (config.visible) {
             static_cast<void>(ShowWindow(window, SW_SHOW));
@@ -727,21 +812,14 @@ core::Result<void> Application::resize_client(const WindowExtent extent)
             "Window client extent must be between 1 and 65535 pixels"));
     }
 
-    RECT window_rectangle{
-        .left = 0,
-        .top = 0,
-        .right = static_cast<LONG>(extent.width),
-        .bottom = static_cast<LONG>(extent.height),
-    };
-    if (AdjustWindowRectEx(
-            &window_rectangle,
-            shark_window_style,
-            FALSE,
-            0) == FALSE) {
-        return core::Result<void>::failure(windows_error(
-            "AdjustWindowRectEx",
-            GetLastError()));
+    auto rectangle_result = adjusted_window_rectangle(
+        extent,
+        GetDpiForWindow(implementation_->window));
+    if (!rectangle_result) {
+        return core::Result<void>::failure(
+            std::move(rectangle_result).error());
     }
+    const auto window_rectangle = std::move(rectangle_result).value();
 
     SetLastError(ERROR_SUCCESS);
     if (SetWindowPos(
@@ -757,18 +835,12 @@ core::Result<void> Application::resize_client(const WindowExtent extent)
             GetLastError()));
     }
 
-    RECT actual_client{};
-    if (GetClientRect(implementation_->window, &actual_client) == FALSE) {
-        return core::Result<void>::failure(windows_error(
-            "GetClientRect",
-            GetLastError()));
+    auto extent_result = observed_client_extent(implementation_->window);
+    if (!extent_result) {
+        return core::Result<void>::failure(
+            std::move(extent_result).error());
     }
-    const WindowExtent actual_extent{
-        static_cast<std::uint32_t>(
-            actual_client.right - actual_client.left),
-        static_cast<std::uint32_t>(
-            actual_client.bottom - actual_client.top),
-    };
+    const auto actual_extent = std::move(extent_result).value();
     if (actual_extent != extent) {
         std::string message{"Native client resize requested "};
         message.append(std::to_string(extent.width));
@@ -782,6 +854,7 @@ core::Result<void> Application::resize_client(const WindowExtent extent)
             core::ErrorCode::operation_failed,
             std::move(message)));
     }
+    implementation_->extent = actual_extent;
 
     return core::Result<void>::success();
 }

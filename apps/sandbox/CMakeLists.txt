@@ -1,4 +1,5 @@
 add_executable(SharkSandbox
+    "${PROJECT_SOURCE_DIR}/cmake/Shark.Windows.manifest"
     agility_sdk_exports.cpp
     main.cpp
     options.cpp

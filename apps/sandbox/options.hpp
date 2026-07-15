@@ -13,6 +13,7 @@ enum class RunMode : std::uint8_t {
     interactive = 1,
     platform_smoke,
     gpu_smoke,
+    present_smoke,
     capabilities,
 };
 
@@ -29,7 +30,8 @@ struct Options final {
 [[nodiscard]] constexpr std::string_view usage() noexcept
 {
     return "Usage: SharkSandbox "
-        "[--platform-smoke | --gpu-smoke | --capabilities] "
+        "[--platform-smoke | --gpu-smoke | --present-smoke | "
+        "--capabilities] "
         "[--warp | --adapter <index>] [--gpu-validation]";
 }
 

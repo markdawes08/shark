@@ -11,6 +11,10 @@
 
 namespace shark::rhi::d3d12 {
 
+namespace detail {
+class DeviceAccess;
+}
+
 enum class AdapterSelectionKind : std::uint8_t {
     high_performance = 1,
     preference_index,
@@ -129,8 +133,11 @@ public:
     [[nodiscard]] std::string_view agility_runtime_path() const noexcept;
     [[nodiscard]] const std::optional<std::string>& warp_runtime_path()
         const noexcept;
+    [[nodiscard]] core::Result<void> validate_debug_state();
 
 private:
+    friend class detail::DeviceAccess;
+
     class Implementation;
 
     explicit Device(std::unique_ptr<Implementation> implementation) noexcept;

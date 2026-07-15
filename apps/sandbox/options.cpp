@@ -34,6 +34,7 @@ core::Result<Options> parse_options(
         const auto argument = arguments[index];
         if (argument == "--platform-smoke" ||
             argument == "--gpu-smoke" ||
+            argument == "--present-smoke" ||
             argument == "--capabilities") {
             if (run_mode_seen) {
                 return invalid_options(
@@ -45,6 +46,9 @@ core::Result<Options> parse_options(
             }
             else if (argument == "--gpu-smoke") {
                 options.run_mode = RunMode::gpu_smoke;
+            }
+            else if (argument == "--present-smoke") {
+                options.run_mode = RunMode::present_smoke;
             }
             else {
                 options.run_mode = RunMode::capabilities;

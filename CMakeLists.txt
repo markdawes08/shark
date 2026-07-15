@@ -53,6 +53,33 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 include(CTest)
 include(cmake/SharkCompilerOptions.cmake)
 
+find_package(directx-headers CONFIG REQUIRED)
+
+# The Agility vcpkg config locates the Windows SDK import library with a plain
+# find_library call. Supply the exact SDK path selected by Shark because the
+# Visual Studio generator does not add UM library directories to CMake's
+# configure-time search path.
+if(SHARK_UCRT_CONTENT_ROOT AND CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION)
+    file(TO_CMAKE_PATH "${SHARK_UCRT_CONTENT_ROOT}"
+        _shark_windows_kits_root)
+    string(CONCAT _shark_d3d12_import_library
+        "${_shark_windows_kits_root}/Lib/"
+        "${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}/um/x64/d3d12.lib")
+    cmake_path(NORMAL_PATH _shark_d3d12_import_library)
+    if(NOT EXISTS "${_shark_d3d12_import_library}")
+        message(FATAL_ERROR
+            "The pinned Windows SDK D3D12 import library is missing: "
+            "${_shark_d3d12_import_library}")
+    endif()
+    set(D3D12_LIB "${_shark_d3d12_import_library}" CACHE FILEPATH
+        "Pinned Windows SDK D3D12 import library" FORCE)
+    unset(_shark_d3d12_import_library)
+    unset(_shark_windows_kits_root)
+endif()
+
+find_package(directx12-agility CONFIG REQUIRED)
+find_package(directx-warp CONFIG REQUIRED)
+
 add_subdirectory(engine)
 add_subdirectory(apps/sandbox)
 

@@ -3,6 +3,9 @@
 #include <shark/core/result.hpp>
 #include <shark/platform/application.hpp>
 #include <shark/platform/events.hpp>
+#include <shark/rhi/d3d12/device.hpp>
+
+#include "options.hpp"
 
 #include <cstdlib>
 #include <exception>
@@ -12,6 +15,7 @@
 #include <thread>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace {
 
@@ -357,19 +361,71 @@ int main(const int argument_count, char** const arguments)
     }
     const LoggingSession logging_session;
 
-    const bool smoke_mode =
-        argument_count == 2 &&
-        std::string_view{arguments[1]} == "--platform-smoke";
-    if (argument_count != 1 && !smoke_mode) {
+    std::vector<std::string_view> argument_views;
+    argument_views.reserve(
+        static_cast<std::size_t>(argument_count > 0
+            ? argument_count - 1
+            : 0));
+    for (int index = 1; index < argument_count; ++index) {
+        argument_views.emplace_back(arguments[index]);
+    }
+    auto options_result = sandbox::parse_options(argument_views);
+    if (!options_result) {
         core::log_message(
             core::LogLevel::error,
             "sandbox",
-            "Usage: SharkSandbox [--platform-smoke]");
+            options_result.error().message());
+        core::log_message(
+            core::LogLevel::error,
+            "sandbox",
+            sandbox::usage());
         return EXIT_FAILURE;
     }
+    const auto options = std::move(options_result).value();
 
     try {
-        auto run_result = run_platform_shell(smoke_mode);
+        if (options.run_mode == sandbox::RunMode::platform_smoke) {
+            auto run_result = run_platform_shell(true);
+            if (!run_result) {
+                core::log_message(
+                    core::LogLevel::error,
+                    "platform",
+                    run_result.error().message());
+                return EXIT_FAILURE;
+            }
+            return EXIT_SUCCESS;
+        }
+
+        rhi::d3d12::DeviceConfig device_config;
+        device_config.adapter = options.adapter;
+        device_config.enable_gpu_based_validation =
+            options.gpu_based_validation;
+        auto device_result = rhi::d3d12::Device::create(device_config);
+        if (!device_result) {
+            core::log_message(
+                core::LogLevel::error,
+                "gpu",
+                device_result.error().message());
+            return EXIT_FAILURE;
+        }
+        const auto device = std::move(device_result).value();
+
+        if (options.run_mode == sandbox::RunMode::gpu_smoke) {
+            core::log_message(
+                core::LogLevel::info,
+                "sandbox",
+                "Direct3D 12 device smoke test passed");
+            return EXIT_SUCCESS;
+        }
+        if (options.run_mode == sandbox::RunMode::capabilities) {
+            core::log_message(
+                core::LogLevel::info,
+                "sandbox",
+                "Direct3D 12 capability report completed");
+            return EXIT_SUCCESS;
+        }
+
+        auto run_result = run_platform_shell(false);
         if (!run_result) {
             core::log_message(
                 core::LogLevel::error,

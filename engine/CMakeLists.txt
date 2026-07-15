@@ -18,12 +18,15 @@ add_library(SharkEngine STATIC
     platform/windows/include/shark/platform/application.hpp
     platform/windows/include/shark/platform/events.hpp
     platform/windows/src/application.cpp
+    rhi/d3d12/include/shark/rhi/d3d12/device.hpp
+    rhi/d3d12/src/device.cpp
 )
 
 target_include_directories(SharkEngine
     PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/core/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/platform/windows/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/rhi/d3d12/include"
 )
 
 target_compile_definitions(SharkEngine
@@ -37,6 +40,10 @@ target_compile_definitions(SharkEngine
 target_link_libraries(SharkEngine
     PRIVATE
         spdlog::spdlog
+        Microsoft::DirectX-Headers
+        Microsoft::DirectX-Guids
+        Microsoft::DirectX12-Agility
+        dxgi
         user32
 )
 

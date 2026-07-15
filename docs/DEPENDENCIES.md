@@ -11,7 +11,7 @@ Preview packages are excluded.
 |---|---:|---|---|
 | `Microsoft.Direct3D.D3D12` | `1.619.4` | NuGet | Retail DirectX 12 Agility SDK runtime and headers |
 | `Microsoft.Direct3D.DXC` | `1.9.2602.24` | GitHub release archive | Retail DirectX Shader Compiler and headers |
-| `Microsoft.Direct3D.WARP` | `1.0.20` | NuGet | Retail software rasterizer for future smoke tests |
+| `Microsoft.Direct3D.WARP` | `1.0.20` | NuGet | Retail software rasterizer for development smoke tests |
 | `WinPixEventRuntime` | `1.0.240308001` | NuGet | PIX marker runtime for later GPU instrumentation |
 
 The curated `directx12-agility` and `winpixevent` ports consume Microsoft's
@@ -22,9 +22,11 @@ retail tool. The local `directx-warp` overlay downloads `1.0.20` from NuGet.org
 and verifies its SHA-512 before extracting anything.
 
 WARP is licensed for Windows development, testing, and internal use and is not
-redistributable by this project. Its restored DLL and PDB remain under ignored
-build output, are not linked into an F-002 target, and must be excluded from any
-future packaged product.
+redistributable by this project. G-001 gives the overlay an imported runtime
+target and copies its DLL beside `SharkSandbox.exe`; the explicit WARP path loads
+that absolute app-local file before DXGI enumeration. The restored DLL, its PDB,
+and every deployed copy remain under ignored build output and must be excluded
+from any packaged product.
 
 ## vcpkg registry
 
@@ -49,8 +51,12 @@ The `x64-windows-shark` overlay triplet selects the MSVC 14.50 LTS family with
 the dynamic CRT; the current verified compiler is 14.50.35717. `directx-dxc` is
 a host tool. F-003 links the compiled spdlog target privately behind Shark's
 public logging API, and vcpkg deploys its spdlog/fmt runtime DLLs only under
-ignored build output. DirectXTex and its offline tools remain restored but
-unlinked; the asset increment will decide the final runtime boundary. The vcpkg
+ignored build output. G-001 links the DirectX Headers, GUIDs, Agility import
+library, and DXGI into the engine; the executable exports SDK version `619` and
+path `.\\D3D12\\`, then copies the matching Core and SDK Layers to that folder.
+WARP is copied and loaded but not linked. DXC, DirectXTex, and WinPix remain
+restored but unconsumed; their owning increments decide the final runtime
+boundaries. The vcpkg
 executable comes from Visual Studio 2026, `VCPKG_ROOT`, or a complete
 installation on `PATH`; its version is reported during setup but is not
 misrepresented as a project-pinned dependency.
@@ -60,4 +66,5 @@ the manifest, this record, performs a fresh restore, and rebuilds/tests Debug
 and Release. Restored packages and caches stay under ignored build or user cache
 directories and are never committed. A future packaging increment must include
 the preserved spdlog and fmt MIT notices alongside the other required
-third-party notices; WARP remains excluded entirely.
+third-party notices; WARP remains excluded entirely from distributable product
+packages.

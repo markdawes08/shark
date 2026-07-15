@@ -2,11 +2,19 @@ find_package(Catch2 3 CONFIG REQUIRED)
 include(Catch)
 
 add_executable(SharkTests
+    ../apps/sandbox/options.cpp
     unit/assertion_tests.cpp
+    unit/d3d12_device_contract_tests.cpp
     unit/engine_info_tests.cpp
     unit/logging_tests.cpp
     unit/result_tests.cpp
+    unit/sandbox_options_tests.cpp
     unit/windows_application_tests.cpp
+)
+
+target_include_directories(SharkTests
+    PRIVATE
+        "${PROJECT_SOURCE_DIR}/apps/sandbox"
 )
 
 target_link_libraries(SharkTests
@@ -46,4 +54,28 @@ set_tests_properties(integration.platform.window_shell
         LABELS "integration;platform"
         RUN_SERIAL TRUE
         TIMEOUT 10
+)
+
+add_test(
+    NAME integration.gpu.hardware_device
+    COMMAND SharkSandbox --gpu-smoke
+)
+
+set_tests_properties(integration.gpu.hardware_device
+    PROPERTIES
+        LABELS "integration;gpu;hardware"
+        RUN_SERIAL TRUE
+        TIMEOUT 20
+)
+
+add_test(
+    NAME integration.gpu.warp_device
+    COMMAND SharkSandbox --gpu-smoke --warp
+)
+
+set_tests_properties(integration.gpu.warp_device
+    PROPERTIES
+        LABELS "integration;gpu;warp"
+        RUN_SERIAL TRUE
+        TIMEOUT 20
 )

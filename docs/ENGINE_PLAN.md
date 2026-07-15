@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 15, 2026
-- **Completed through:** `F-004` - Win32 application shell
-- **Next increment:** `G-001` - Direct3D 12 device initialization
+- **Completed through:** `G-001` - Direct3D 12 device initialization
+- **Next increment:** `G-002` - clear-color swap chain and presentation
 
 ## 1. Project direction
 
@@ -132,11 +132,11 @@ boundary as a comparison oracle or optional production backend.
 
 ### Known development-machine constraints
 
-At planning time, the development machine is Windows 11 with both an NVIDIA
-discrete GPU and an Intel integrated GPU. The engine must therefore enumerate
-adapters by high-performance preference, log all candidates, choose explicitly,
-and support command-line adapter selection. A WARP mode will exist for smoke
-tests, not performance validation.
+The development machine is Windows 11 with both an NVIDIA discrete GPU and an
+Intel integrated GPU. G-001 now enumerates adapters by high-performance
+preference, logs every candidate, supports exact session-index selection, and
+provides an explicit packaged-WARP smoke path. WARP is for correctness tests,
+not performance validation.
 
 The July 12 prerequisite check reports the `F-002` gate ready with no blocking
 failures. Visual Studio 2026, MSVC 14.50 LTS, CMake 4.3.1, vcpkg, Windows SDK,
@@ -285,10 +285,12 @@ unstable circular solve; iterative two-way coupling is a later milestone.
 - Build a `RendererCaps` record using `CheckFeatureSupport`; never infer optional
   support from a feature-level number.
 - Before device creation, enable the D3D12 debug layer, optional GPU-based
-  validation, and DRED. After device creation, configure `ID3D12InfoQueue`
-  filters/break severities. GPU-based validation is an opt-in focused-test mode
-  because it is expensive.
-- Write DRED breadcrumbs/page-fault details on device removal.
+  validation, and DRED. After device creation, configure bounded
+  `ID3D12InfoQueue` storage and debugger-break policy without suppressing
+  messages. GPU-based validation is an opt-in focused-test mode because it is
+  expensive.
+- Once submission exists, write DRED breadcrumbs/page-fault details on device
+  removal.
 - Use a flip-model, triple-buffered swap chain and a reversed-Z depth target.
 - Define direct, compute, and copy queue interfaces with monotonic fence
   timelines, but initially submit graphics, compute, and uploads on the direct
@@ -663,22 +665,25 @@ entity scale or query patterns make it useful.
 
 ## 14. Immediate next increment
 
-After `F-004` is reviewed and committed by the owner, implement only `G-001`:
+After `G-001` is reviewed and committed by the owner, implement only `G-002`:
 
-- enable the D3D12 debug layer before device creation and provide a focused
-  opt-in GPU-based-validation mode;
-- enumerate DXGI adapters by high-performance preference and log every
-  candidate rather than silently choosing one;
-- add explicit hardware, WARP, and adapter-selection command-line paths;
-- create a D3D12 device at the declared Feature Level 12_0 baseline and record
-  queried capabilities without treating optional features as requirements;
-- enable DRED and report device-startup failures through the existing
-  result/logging boundary; and
-- stop before creating a swap chain, back buffer, command queue, or rendered
-  frame.
+- create one direct command queue and a triple-buffered flip-model swap chain
+  for the existing Win32 window;
+- make the swap-chain extent follow physical client pixels under the existing
+  per-monitor DPI-aware window policy;
+- create back-buffer RTVs and the smallest serialized command path needed to
+  transition, clear, present, and wait safely;
+- handle resize, minimize, restore, and shutdown without retaining stale back
+  buffers;
+- add a bounded clear-color smoke mode that presents 1,000 frames with zero
+  D3D12/DXGI validation errors, and report DRED data if submission or present
+  removes the device; and
+- stop before generalized frame contexts, upload arenas, shader pipelines,
+  depth buffers, or a render graph.
 
-That proves device and adapter selection independently before G-002 adds frame
-submission and the first clear-color presentation.
+The temporary serialized synchronization in `G-002` proves presentation. The
+next `G-003` increment replaces it with the durable triple-buffered frame
+resource and retirement model.
 
 ## 15. Primary technical references
 

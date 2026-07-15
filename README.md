@@ -4,6 +4,7 @@ Shark is a Windows-first, modern Direct3D 12 graphics and physics simulation
 engine. Its first vertical slice is an interactive outdoor environment with a
 skybox, textured terrain, rain, terrain collision, and progressively simulated
 surface water.
+<<<<<<< HEAD
 
 ## Project status
 
@@ -20,3 +21,5 @@ runtime.
 - [Pinned dependency record](docs/DEPENDENCIES.md)
 - [Read-only prerequisite checker](scripts/check-prerequisites.ps1)
 - Next increment: `F-004` Win32 application shell
+=======
+>>>>>>> fe98cc353c4f80b6df750fa56243bb311308366b

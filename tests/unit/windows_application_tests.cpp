@@ -196,6 +196,16 @@ TEST_CASE("Win32 messages cross the platform event boundary in order", "[platfor
         WM_SIZE,
         SIZE_RESTORED,
         pack_coordinates(800, 600)));
+    static_cast<void>(SendMessageW(
+        window,
+        WM_SETFOCUS,
+        0,
+        0));
+    static_cast<void>(SendMessageW(
+        window,
+        WM_KILLFOCUS,
+        0,
+        0));
 
     constexpr LPARAM repeated_key_down =
         static_cast<LPARAM>(
@@ -244,7 +254,7 @@ TEST_CASE("Win32 messages cross the platform event boundary in order", "[platfor
     static_cast<void>(SendMessageW(window, WM_CLOSE, 0, 0));
 
     const auto events = application.events();
-    REQUIRE(events.size() == 11);
+    REQUIRE(events.size() == 13);
 
     const auto* resized =
         std::get_if<platform::WindowResizedEvent>(&events[0]);
@@ -264,7 +274,16 @@ TEST_CASE("Win32 messages cross the platform event boundary in order", "[platfor
         resized_after_restore->client_extent ==
         platform::WindowExtent{800, 600}));
 
-    const auto* key_down = std::get_if<platform::KeyEvent>(&events[4]);
+    const auto* focused =
+        std::get_if<platform::WindowFocusChangedEvent>(&events[4]);
+    REQUIRE(focused != nullptr);
+    REQUIRE(focused->focused);
+    const auto* unfocused =
+        std::get_if<platform::WindowFocusChangedEvent>(&events[5]);
+    REQUIRE(unfocused != nullptr);
+    REQUIRE_FALSE(unfocused->focused);
+
+    const auto* key_down = std::get_if<platform::KeyEvent>(&events[6]);
     REQUIRE(key_down != nullptr);
     REQUIRE(key_down->virtual_key == static_cast<std::uint32_t>('W'));
     REQUIRE(key_down->action == platform::KeyAction::pressed);
@@ -274,35 +293,35 @@ TEST_CASE("Win32 messages cross the platform event boundary in order", "[platfor
     REQUIRE(key_down->repeated);
     REQUIRE_FALSE(key_down->system_key);
 
-    const auto* released_key = std::get_if<platform::KeyEvent>(&events[5]);
+    const auto* released_key = std::get_if<platform::KeyEvent>(&events[7]);
     REQUIRE(released_key != nullptr);
     REQUIRE(released_key->action == platform::KeyAction::released);
     REQUIRE_FALSE(released_key->repeated);
 
     const auto* moved =
-        std::get_if<platform::MouseMovedEvent>(&events[6]);
+        std::get_if<platform::MouseMovedEvent>(&events[8]);
     REQUIRE(moved != nullptr);
     REQUIRE(moved->x == -12);
     REQUIRE(moved->y == 34);
 
     const auto* button_down =
-        std::get_if<platform::MouseButtonEvent>(&events[7]);
+        std::get_if<platform::MouseButtonEvent>(&events[9]);
     REQUIRE(button_down != nullptr);
     REQUIRE(button_down->button == platform::MouseButton::left);
     REQUIRE(button_down->action == platform::ButtonAction::pressed);
     const auto* button_up =
-        std::get_if<platform::MouseButtonEvent>(&events[8]);
+        std::get_if<platform::MouseButtonEvent>(&events[10]);
     REQUIRE(button_up != nullptr);
     REQUIRE(button_up->action == platform::ButtonAction::released);
 
     const auto* wheel =
-        std::get_if<platform::MouseWheelEvent>(&events[9]);
+        std::get_if<platform::MouseWheelEvent>(&events[11]);
     REQUIRE(wheel != nullptr);
     REQUIRE(wheel->delta == WHEEL_DELTA);
     REQUIRE(wheel->axis == platform::MouseWheelAxis::vertical);
 
     REQUIRE(std::holds_alternative<
-        platform::WindowCloseRequestedEvent>(events[10]));
+        platform::WindowCloseRequestedEvent>(events[12]));
     REQUIRE(application.running());
     REQUIRE(IsWindow(window) != FALSE);
     REQUIRE((

@@ -1,72 +1,72 @@
-set(triangle_shader_source
-    "${CMAKE_CURRENT_SOURCE_DIR}/triangle/triangle.hlsl")
-set(triangle_shader_include
-    "${CMAKE_CURRENT_SOURCE_DIR}/shared/triangle_data.hlsli")
+set(cube_shader_source
+    "${CMAKE_CURRENT_SOURCE_DIR}/cube/cube.hlsl")
+set(cube_shader_include
+    "${CMAKE_CURRENT_SOURCE_DIR}/shared/camera_constants.hlsli")
 
 shark_compile_hlsl(
-    SOURCE "${triangle_shader_source}"
+    SOURCE "${cube_shader_source}"
     ENTRY_POINT VSMain
     PROFILE vs_6_0
-    OUTPUT_NAME triangle.vertex
-    SYMBOL shark_triangle_vertex_shader
+    OUTPUT_NAME cube.vertex
+    SYMBOL shark_cube_vertex_shader
     INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
 )
-set(triangle_vertex_binary "${SHARK_SHADER_BINARY}")
-set(triangle_vertex_header "${SHARK_SHADER_HEADER}")
-set(triangle_vertex_pdb "${SHARK_SHADER_PDB}")
-set(triangle_vertex_depfile "${SHARK_SHADER_DEPFILE}")
+set(cube_vertex_binary "${SHARK_SHADER_BINARY}")
+set(cube_vertex_header "${SHARK_SHADER_HEADER}")
+set(cube_vertex_pdb "${SHARK_SHADER_PDB}")
+set(cube_vertex_depfile "${SHARK_SHADER_DEPFILE}")
 
 shark_compile_hlsl(
-    SOURCE "${triangle_shader_source}"
+    SOURCE "${cube_shader_source}"
     ENTRY_POINT PSMain
     PROFILE ps_6_0
-    OUTPUT_NAME triangle.pixel
-    SYMBOL shark_triangle_pixel_shader
+    OUTPUT_NAME cube.pixel
+    SYMBOL shark_cube_pixel_shader
     INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
 )
-set(triangle_pixel_binary "${SHARK_SHADER_BINARY}")
-set(triangle_pixel_header "${SHARK_SHADER_HEADER}")
-set(triangle_pixel_pdb "${SHARK_SHADER_PDB}")
-set(triangle_pixel_depfile "${SHARK_SHADER_DEPFILE}")
+set(cube_pixel_binary "${SHARK_SHADER_BINARY}")
+set(cube_pixel_header "${SHARK_SHADER_HEADER}")
+set(cube_pixel_pdb "${SHARK_SHADER_PDB}")
+set(cube_pixel_depfile "${SHARK_SHADER_DEPFILE}")
 
-add_custom_target(SharkTriangleShaders
+add_custom_target(SharkCubeShaders
     DEPENDS
-        "${triangle_vertex_binary}"
-        "${triangle_vertex_depfile}"
-        "${triangle_vertex_header}"
-        "${triangle_vertex_pdb}"
-        "${triangle_pixel_binary}"
-        "${triangle_pixel_depfile}"
-        "${triangle_pixel_header}"
-        "${triangle_pixel_pdb}"
+        "${cube_vertex_binary}"
+        "${cube_vertex_depfile}"
+        "${cube_vertex_header}"
+        "${cube_vertex_pdb}"
+        "${cube_pixel_binary}"
+        "${cube_pixel_depfile}"
+        "${cube_pixel_header}"
+        "${cube_pixel_pdb}"
     SOURCES
-        "${triangle_shader_source}"
-        "${triangle_shader_include}"
+        "${cube_shader_source}"
+        "${cube_shader_include}"
 )
-set_property(TARGET SharkTriangleShaders PROPERTY FOLDER "Shark/Shaders")
+set_property(TARGET SharkCubeShaders PROPERTY FOLDER "Shark/Shaders")
 
-set(SHARK_TRIANGLE_SHADER_TARGET
-    SharkTriangleShaders
+set(SHARK_CUBE_SHADER_TARGET
+    SharkCubeShaders
     PARENT_SCOPE
 )
-set(SHARK_TRIANGLE_SHADER_INCLUDE_DIRECTORY
+set(SHARK_CUBE_SHADER_INCLUDE_DIRECTORY
     "${CMAKE_BINARY_DIR}/generated/shaders/$<CONFIG>"
     PARENT_SCOPE
 )
-set(SHARK_TRIANGLE_VERTEX_HEADER
-    "${triangle_vertex_header}"
+set(SHARK_CUBE_VERTEX_HEADER
+    "${cube_vertex_header}"
     PARENT_SCOPE
 )
-set(SHARK_TRIANGLE_PIXEL_HEADER
-    "${triangle_pixel_header}"
+set(SHARK_CUBE_PIXEL_HEADER
+    "${cube_pixel_header}"
     PARENT_SCOPE
 )
-set(SHARK_TRIANGLE_VERTEX_DEPFILE
-    "${triangle_vertex_depfile}"
+set(SHARK_CUBE_VERTEX_DEPFILE
+    "${cube_vertex_depfile}"
     PARENT_SCOPE
 )
-set(SHARK_TRIANGLE_PIXEL_DEPFILE
-    "${triangle_pixel_depfile}"
+set(SHARK_CUBE_PIXEL_DEPFILE
+    "${cube_pixel_depfile}"
     PARENT_SCOPE
 )
 

@@ -1,4 +1,5 @@
 #include "device_access.hpp"
+#include "cube_scene_data.hpp"
 #include "frame_resource_state.hpp"
 
 #include <directx/d3d12.h>
@@ -39,8 +40,13 @@ constexpr std::size_t upload_bytes_per_frame = 64U * 1024U;
 constexpr UINT transient_descriptors_per_frame = 64;
 constexpr std::size_t frame_probe_bytes =
     D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT;
+constexpr std::size_t camera_matrix_bytes = sizeof(math::Matrix4x4);
+constexpr std::size_t frame_probe_offset = camera_matrix_bytes;
+constexpr UINT root_camera_constants = 0;
+constexpr UINT root_checker_texture = 1;
 
 static_assert(back_buffer_count <= 32);
+static_assert(camera_matrix_bytes == 64);
 
 struct FrameProbe final {
     std::uint64_t frame_ordinal{};
@@ -50,6 +56,9 @@ struct FrameProbe final {
     std::uint32_t height{};
     std::uint32_t reserved{};
 };
+
+static_assert(
+    frame_probe_offset + sizeof(FrameProbe) <= frame_probe_bytes);
 
 [[nodiscard]] core::Error graphics_error(
     const core::ErrorCode code,
@@ -99,6 +108,12 @@ struct FrameProbe final {
             container_signature.size()) == 0;
 }
 
+[[nodiscard]] bool valid_frame_data(
+    const PresentationFrameData& frame_data) noexcept
+{
+    return math::is_finite(frame_data.view_projection);
+}
+
 [[nodiscard]] D3D12_BLEND_DESC opaque_blend_description() noexcept
 {
     D3D12_BLEND_DESC description{};
@@ -120,7 +135,7 @@ struct FrameProbe final {
     return description;
 }
 
-[[nodiscard]] D3D12_RASTERIZER_DESC triangle_rasterizer_description()
+[[nodiscard]] D3D12_RASTERIZER_DESC cube_rasterizer_description()
     noexcept
 {
     D3D12_RASTERIZER_DESC description{};
@@ -140,7 +155,7 @@ struct FrameProbe final {
     return description;
 }
 
-[[nodiscard]] D3D12_DEPTH_STENCIL_DESC disabled_depth_description()
+[[nodiscard]] D3D12_DEPTH_STENCIL_DESC reversed_depth_description()
     noexcept
 {
     D3D12_DEPTH_STENCILOP_DESC disabled_stencil{};
@@ -150,9 +165,9 @@ struct FrameProbe final {
     disabled_stencil.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
 
     D3D12_DEPTH_STENCIL_DESC description{};
-    description.DepthEnable = FALSE;
-    description.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
-    description.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+    description.DepthEnable = TRUE;
+    description.DepthWriteMask = detail::cube_depth_write_mask;
+    description.DepthFunc = detail::cube_depth_comparison;
     description.StencilEnable = FALSE;
     description.StencilReadMask = D3D12_DEFAULT_STENCIL_READ_MASK;
     description.StencilWriteMask = D3D12_DEFAULT_STENCIL_WRITE_MASK;
@@ -436,9 +451,10 @@ public:
         return core::Result<FrameContext*>::success(&context);
     }
 
-    [[nodiscard]] core::Result<void> stage_frame_probe(
+    [[nodiscard]] core::Result<void> stage_frame_data(
         FrameContext& context,
-        const UINT back_buffer_index)
+        const UINT back_buffer_index,
+        const PresentationFrameData& frame_data)
     {
         auto upload_result = context.state.allocate_upload(
             frame_probe_bytes,
@@ -457,6 +473,10 @@ public:
         const auto descriptor = descriptor_result.value();
         auto* const destination = context.mapped_upload + upload.offset;
         std::memset(destination, 0, upload.size);
+        std::memcpy(
+            destination,
+            &frame_data.view_projection,
+            camera_matrix_bytes);
         const FrameProbe probe{
             statistics.frame_context_acquisitions,
             context.state.generation(),
@@ -465,7 +485,10 @@ public:
             current_extent.height,
             0,
         };
-        std::memcpy(destination, &probe, sizeof(probe));
+        std::memcpy(
+            destination + frame_probe_offset,
+            &probe,
+            sizeof(probe));
 
         auto descriptor_handle =
             context.descriptor_heap->GetCPUDescriptorHandleForHeapStart();
@@ -480,6 +503,19 @@ public:
         native_device->CreateConstantBufferView(&view, descriptor_handle);
         context.staged_probe_offset = upload.offset;
 
+        ++statistics.camera_constant_updates;
+        if (!has_last_camera_matrix ||
+            std::memcmp(
+                last_camera_matrix.data(),
+                &frame_data.view_projection,
+                camera_matrix_bytes) != 0) {
+            ++statistics.camera_matrix_changes;
+            std::memcpy(
+                last_camera_matrix.data(),
+                &frame_data.view_projection,
+                camera_matrix_bytes);
+            has_last_camera_matrix = true;
+        }
         ++statistics.upload_allocations;
         statistics.upload_bytes_written += upload.size;
         statistics.upload_high_water_bytes = std::max(
@@ -554,6 +590,418 @@ public:
         return core::Result<void>::success();
     }
 
+    [[nodiscard]] core::Result<void> create_depth_buffer(
+        const PresentationExtent extent)
+    {
+        D3D12_HEAP_PROPERTIES heap_properties{};
+        heap_properties.Type = D3D12_HEAP_TYPE_DEFAULT;
+        heap_properties.CPUPageProperty =
+            D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+        heap_properties.MemoryPoolPreference =
+            D3D12_MEMORY_POOL_UNKNOWN;
+        heap_properties.CreationNodeMask = 1;
+        heap_properties.VisibleNodeMask = 1;
+
+        D3D12_RESOURCE_DESC description{};
+        description.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        description.Alignment = 0;
+        description.Width = extent.width;
+        description.Height = extent.height;
+        description.DepthOrArraySize = 1;
+        description.MipLevels = 1;
+        description.Format = detail::cube_depth_format;
+        description.SampleDesc = DXGI_SAMPLE_DESC{1, 0};
+        description.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+        description.Flags = detail::cube_depth_resource_flags;
+
+        D3D12_CLEAR_VALUE clear_value{};
+        clear_value.Format = detail::cube_depth_format;
+        clear_value.DepthStencil.Depth = detail::cube_depth_clear_value;
+        clear_value.DepthStencil.Stencil = 0;
+
+        const auto result = native_device->CreateCommittedResource(
+            &heap_properties,
+            D3D12_HEAP_FLAG_NONE,
+            &description,
+            detail::cube_depth_resource_state,
+            &clear_value,
+            IID_PPV_ARGS(&depth_buffer));
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Device::CreateCommittedResource(depth buffer)",
+                    result));
+        }
+        const auto name_result = depth_buffer->SetName(
+            L"Shark Reversed-Z Depth Buffer");
+        if (FAILED(name_result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Object::SetName(depth buffer)",
+                    name_result));
+        }
+
+        D3D12_DEPTH_STENCIL_VIEW_DESC view{};
+        view.Format = detail::cube_depth_format;
+        view.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+        view.Flags = D3D12_DSV_FLAG_NONE;
+        view.Texture2D.MipSlice = 0;
+        native_device->CreateDepthStencilView(
+            depth_buffer.Get(),
+            &view,
+            dsv_heap->GetCPUDescriptorHandleForHeapStart());
+        ++statistics.depth_resource_creations;
+        return core::Result<void>::success();
+    }
+
+    [[nodiscard]] core::Result<void> create_static_cube_resources()
+    {
+        constexpr UINT64 vertex_bytes = sizeof(detail::cube_vertices);
+        constexpr UINT64 index_bytes = sizeof(detail::cube_indices);
+        constexpr UINT64 index_upload_offset =
+            (vertex_bytes + 3U) & ~UINT64{3U};
+        constexpr UINT64 texture_upload_base =
+            (index_upload_offset + index_bytes +
+             D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1U) &
+            ~UINT64{D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1U};
+
+        D3D12_HEAP_PROPERTIES default_heap{};
+        default_heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+        default_heap.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+        default_heap.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+        default_heap.CreationNodeMask = 1;
+        default_heap.VisibleNodeMask = 1;
+
+        auto buffer_description = [](const UINT64 size) {
+            D3D12_RESOURCE_DESC description{};
+            description.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+            description.Alignment = 0;
+            description.Width = size;
+            description.Height = 1;
+            description.DepthOrArraySize = 1;
+            description.MipLevels = 1;
+            description.Format = DXGI_FORMAT_UNKNOWN;
+            description.SampleDesc = DXGI_SAMPLE_DESC{1, 0};
+            description.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+            description.Flags = D3D12_RESOURCE_FLAG_NONE;
+            return description;
+        };
+
+        const auto vertex_description = buffer_description(vertex_bytes);
+        auto result = native_device->CreateCommittedResource(
+            &default_heap,
+            D3D12_HEAP_FLAG_NONE,
+            &vertex_description,
+            D3D12_RESOURCE_STATE_COMMON,
+            nullptr,
+            IID_PPV_ARGS(&vertex_buffer));
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Device::CreateCommittedResource(cube vertices)",
+                    result));
+        }
+        result = vertex_buffer->SetName(L"Shark Cube Vertex Buffer");
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Object::SetName(cube vertices)",
+                    result));
+        }
+        ++statistics.geometry_buffer_creations;
+
+        const auto index_description = buffer_description(index_bytes);
+        result = native_device->CreateCommittedResource(
+            &default_heap,
+            D3D12_HEAP_FLAG_NONE,
+            &index_description,
+            D3D12_RESOURCE_STATE_COMMON,
+            nullptr,
+            IID_PPV_ARGS(&index_buffer));
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Device::CreateCommittedResource(cube indices)",
+                    result));
+        }
+        result = index_buffer->SetName(L"Shark Cube Index Buffer");
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Object::SetName(cube indices)",
+                    result));
+        }
+        ++statistics.geometry_buffer_creations;
+
+        D3D12_RESOURCE_DESC texture_description{};
+        texture_description.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        texture_description.Alignment = 0;
+        texture_description.Width = detail::checker_width;
+        texture_description.Height = detail::checker_height;
+        texture_description.DepthOrArraySize = 1;
+        texture_description.MipLevels = detail::checker_mip_levels;
+        texture_description.Format = detail::checker_format;
+        texture_description.SampleDesc = DXGI_SAMPLE_DESC{1, 0};
+        texture_description.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+        texture_description.Flags = D3D12_RESOURCE_FLAG_NONE;
+        result = native_device->CreateCommittedResource(
+            &default_heap,
+            D3D12_HEAP_FLAG_NONE,
+            &texture_description,
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            nullptr,
+            IID_PPV_ARGS(&checker_texture));
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Device::CreateCommittedResource(checker texture)",
+                    result));
+        }
+        result = checker_texture->SetName(L"Shark Procedural Checker Texture");
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Object::SetName(checker texture)",
+                    result));
+        }
+        ++statistics.checker_texture_creations;
+
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT texture_footprint{};
+        UINT texture_rows = 0;
+        UINT64 texture_row_bytes = 0;
+        UINT64 upload_bytes = 0;
+        native_device->GetCopyableFootprints(
+            &texture_description,
+            0,
+            1,
+            texture_upload_base,
+            &texture_footprint,
+            &texture_rows,
+            &texture_row_bytes,
+            &upload_bytes);
+        upload_bytes += texture_footprint.Offset;
+
+        D3D12_HEAP_PROPERTIES upload_heap{};
+        upload_heap.Type = D3D12_HEAP_TYPE_UPLOAD;
+        upload_heap.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+        upload_heap.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+        upload_heap.CreationNodeMask = 1;
+        upload_heap.VisibleNodeMask = 1;
+        const auto upload_description = buffer_description(upload_bytes);
+        ComPtr<ID3D12Resource> upload_buffer;
+        result = native_device->CreateCommittedResource(
+            &upload_heap,
+            D3D12_HEAP_FLAG_NONE,
+            &upload_description,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr,
+            IID_PPV_ARGS(&upload_buffer));
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Device::CreateCommittedResource(static upload)",
+                    result));
+        }
+        result = upload_buffer->SetName(L"Shark Cube Static Upload Buffer");
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Object::SetName(static upload)",
+                    result));
+        }
+
+        const D3D12_RANGE no_cpu_reads{0, 0};
+        void* mapped_data = nullptr;
+        result = upload_buffer->Map(0, &no_cpu_reads, &mapped_data);
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Resource::Map(static upload)",
+                    result));
+        }
+        auto* const upload_data = static_cast<std::byte*>(mapped_data);
+        std::memcpy(
+            upload_data,
+            detail::cube_vertices.data(),
+            vertex_bytes);
+        std::memcpy(
+            upload_data + index_upload_offset,
+            detail::cube_indices.data(),
+            index_bytes);
+        constexpr UINT64 checker_source_row_bytes =
+            detail::checker_width * 4U;
+        static_assert(
+            sizeof(detail::checker_pixels) ==
+            checker_source_row_bytes * detail::checker_height);
+        for (UINT row = 0; row < texture_rows; ++row) {
+            std::memcpy(
+                upload_data + texture_footprint.Offset +
+                    static_cast<UINT64>(row) *
+                        texture_footprint.Footprint.RowPitch,
+                detail::checker_pixels.data() +
+                    static_cast<std::size_t>(row) *
+                        checker_source_row_bytes,
+                static_cast<std::size_t>(texture_row_bytes));
+        }
+        upload_buffer->Unmap(0, nullptr);
+
+        D3D12_DESCRIPTOR_HEAP_DESC descriptor_heap_description{};
+        descriptor_heap_description.Type =
+            D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        descriptor_heap_description.NumDescriptors = 1;
+        descriptor_heap_description.Flags =
+            D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+        descriptor_heap_description.NodeMask = 0;
+        result = native_device->CreateDescriptorHeap(
+            &descriptor_heap_description,
+            IID_PPV_ARGS(&checker_descriptor_heap));
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Device::CreateDescriptorHeap(checker SRV)",
+                    result));
+        }
+        result = checker_descriptor_heap->SetName(
+            L"Shark Persistent Checker Descriptor Heap");
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Object::SetName(checker descriptor heap)",
+                    result));
+        }
+
+        D3D12_SHADER_RESOURCE_VIEW_DESC shader_resource_view{};
+        shader_resource_view.Format = detail::checker_format;
+        shader_resource_view.ViewDimension =
+            D3D12_SRV_DIMENSION_TEXTURE2D;
+        shader_resource_view.Shader4ComponentMapping =
+            D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        shader_resource_view.Texture2D.MostDetailedMip = 0;
+        shader_resource_view.Texture2D.MipLevels =
+            detail::checker_mip_levels;
+        shader_resource_view.Texture2D.PlaneSlice = 0;
+        shader_resource_view.Texture2D.ResourceMinLODClamp = 0.0F;
+        native_device->CreateShaderResourceView(
+            checker_texture.Get(),
+            &shader_resource_view,
+            checker_descriptor_heap->GetCPUDescriptorHandleForHeapStart());
+        ++statistics.texture_srv_creations;
+
+        auto& upload_allocator = frame_contexts[0].command_allocator;
+        result = upload_allocator->Reset();
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12CommandAllocator::Reset(static upload)",
+                    result));
+        }
+        result = command_list->Reset(upload_allocator.Get(), nullptr);
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12GraphicsCommandList::Reset(static upload)",
+                    result));
+        }
+
+        command_list->CopyBufferRegion(
+            vertex_buffer.Get(),
+            0,
+            upload_buffer.Get(),
+            0,
+            vertex_bytes);
+        command_list->CopyBufferRegion(
+            index_buffer.Get(),
+            0,
+            upload_buffer.Get(),
+            index_upload_offset,
+            index_bytes);
+        D3D12_TEXTURE_COPY_LOCATION texture_destination{};
+        texture_destination.pResource = checker_texture.Get();
+        texture_destination.Type =
+            D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        texture_destination.SubresourceIndex = 0;
+        D3D12_TEXTURE_COPY_LOCATION texture_source{};
+        texture_source.pResource = upload_buffer.Get();
+        texture_source.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        texture_source.PlacedFootprint = texture_footprint;
+        command_list->CopyTextureRegion(
+            &texture_destination,
+            0,
+            0,
+            0,
+            &texture_source,
+            nullptr);
+
+        std::array<D3D12_RESOURCE_BARRIER, 3> barriers{};
+        barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barriers[0].Transition.pResource = vertex_buffer.Get();
+        barriers[0].Transition.Subresource =
+            D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        barriers[0].Transition.StateBefore =
+            D3D12_RESOURCE_STATE_COPY_DEST;
+        barriers[0].Transition.StateAfter =
+            D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
+        barriers[1] = barriers[0];
+        barriers[1].Transition.pResource = index_buffer.Get();
+        barriers[1].Transition.StateAfter =
+            D3D12_RESOURCE_STATE_INDEX_BUFFER;
+        barriers[2] = barriers[0];
+        barriers[2].Transition.pResource = checker_texture.Get();
+        barriers[2].Transition.StateAfter =
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        command_list->ResourceBarrier(
+            static_cast<UINT>(barriers.size()),
+            barriers.data());
+
+        result = command_list->Close();
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12GraphicsCommandList::Close(static upload)",
+                    result));
+        }
+        ID3D12CommandList* command_lists[]{command_list.Get()};
+        command_queue->ExecuteCommandLists(1, command_lists);
+        ++statistics.static_upload_submissions;
+        auto fence_result = signal_queue(
+            "ID3D12CommandQueue::Signal(static cube upload)");
+        if (!fence_result) {
+            return core::Result<void>::failure(
+                std::move(fence_result).error());
+        }
+        auto wait_result = wait_for_fence(fence_result.value());
+        if (!wait_result) {
+            return wait_result;
+        }
+
+        vertex_buffer_view.BufferLocation =
+            vertex_buffer->GetGPUVirtualAddress();
+        vertex_buffer_view.SizeInBytes =
+            static_cast<UINT>(vertex_bytes);
+        vertex_buffer_view.StrideInBytes = detail::cube_vertex_stride;
+        index_buffer_view.BufferLocation =
+            index_buffer->GetGPUVirtualAddress();
+        index_buffer_view.SizeInBytes = static_cast<UINT>(index_bytes);
+        index_buffer_view.Format = DXGI_FORMAT_R16_UINT;
+        return core::Result<void>::success();
+    }
+
     [[nodiscard]] core::Result<void> verify_swap_chain_extent(
         const PresentationExtent expected_extent)
     {
@@ -586,6 +1034,7 @@ public:
 
     void release_back_buffers() noexcept
     {
+        depth_buffer.Reset();
         for (auto& buffer : back_buffers) {
             buffer.Reset();
         }
@@ -596,8 +1045,12 @@ public:
         release_back_buffers();
         swap_chain.Reset();
         command_list.Reset();
-        triangle_pipeline.Reset();
-        triangle_root_signature.Reset();
+        cube_pipeline.Reset();
+        cube_root_signature.Reset();
+        checker_descriptor_heap.Reset();
+        checker_texture.Reset();
+        index_buffer.Reset();
+        vertex_buffer.Reset();
         for (auto& context : frame_contexts) {
             if (context.upload_buffer != nullptr &&
                 context.mapped_upload != nullptr) {
@@ -609,6 +1062,7 @@ public:
             context.upload_buffer.Reset();
             context.command_allocator.Reset();
         }
+        dsv_heap.Reset();
         rtv_heap.Reset();
         command_queue.Reset();
         fence.Reset();
@@ -666,15 +1120,25 @@ public:
     ComPtr<ID3D12CommandQueue> command_queue;
     std::array<FrameContext, back_buffer_count> frame_contexts;
     ComPtr<ID3D12GraphicsCommandList> command_list;
-    ComPtr<ID3D12PipelineState> triangle_pipeline;
-    ComPtr<ID3D12RootSignature> triangle_root_signature;
+    ComPtr<ID3D12PipelineState> cube_pipeline;
+    ComPtr<ID3D12RootSignature> cube_root_signature;
+    ComPtr<ID3D12Resource> vertex_buffer;
+    ComPtr<ID3D12Resource> index_buffer;
+    ComPtr<ID3D12Resource> checker_texture;
+    ComPtr<ID3D12Resource> depth_buffer;
+    ComPtr<ID3D12DescriptorHeap> checker_descriptor_heap;
     ComPtr<ID3D12DescriptorHeap> rtv_heap;
+    ComPtr<ID3D12DescriptorHeap> dsv_heap;
     ComPtr<IDXGISwapChain4> swap_chain;
     std::array<ComPtr<ID3D12Resource>, back_buffer_count> back_buffers;
     ComPtr<ID3D12Fence> fence;
     HANDLE fence_event{};
     UINT rtv_descriptor_increment{};
     UINT transient_descriptor_increment{};
+    D3D12_VERTEX_BUFFER_VIEW vertex_buffer_view{};
+    D3D12_INDEX_BUFFER_VIEW index_buffer_view{};
+    std::array<float, 16> last_camera_matrix{};
+    bool has_last_camera_matrix{};
     detail::FenceTimeline fence_timeline;
 };
 
@@ -859,6 +1323,28 @@ core::Result<Presentation> Presentation::create(
         native.device->GetDescriptorHandleIncrementSize(
             D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
+    heap_description.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+    heap_description.NumDescriptors = 1;
+    result = native.device->CreateDescriptorHeap(
+        &heap_description,
+        IID_PPV_ARGS(&implementation->dsv_heap));
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Device::CreateDescriptorHeap(DSV)",
+                result));
+    }
+    result = implementation->dsv_heap->SetName(
+        L"Shark Presentation DSV Heap");
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Object::SetName(DSV heap)",
+                result));
+    }
+
     for (UINT index = 0; index < back_buffer_count; ++index) {
         auto& context = implementation->frame_contexts[index];
         result = native.device->CreateCommandAllocator(
@@ -883,11 +1369,52 @@ core::Result<Presentation> Presentation::create(
         }
     }
 
+    D3D12_DESCRIPTOR_RANGE checker_range{};
+    checker_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    checker_range.NumDescriptors = 1;
+    checker_range.BaseShaderRegister = 0;
+    checker_range.RegisterSpace = 0;
+    checker_range.OffsetInDescriptorsFromTableStart =
+        D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+    std::array<D3D12_ROOT_PARAMETER, 2> root_parameters{};
+    root_parameters[root_camera_constants].ParameterType =
+        D3D12_ROOT_PARAMETER_TYPE_CBV;
+    root_parameters[root_camera_constants].Descriptor.ShaderRegister = 0;
+    root_parameters[root_camera_constants].Descriptor.RegisterSpace = 0;
+    root_parameters[root_camera_constants].ShaderVisibility =
+        D3D12_SHADER_VISIBILITY_VERTEX;
+    root_parameters[root_checker_texture].ParameterType =
+        D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    root_parameters[root_checker_texture].DescriptorTable.NumDescriptorRanges =
+        1;
+    root_parameters[root_checker_texture].DescriptorTable.pDescriptorRanges =
+        &checker_range;
+    root_parameters[root_checker_texture].ShaderVisibility =
+        D3D12_SHADER_VISIBILITY_PIXEL;
+
+    D3D12_STATIC_SAMPLER_DESC checker_sampler{};
+    checker_sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+    checker_sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    checker_sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    checker_sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    checker_sampler.MipLODBias = 0.0F;
+    checker_sampler.MaxAnisotropy = 1;
+    checker_sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+    checker_sampler.BorderColor =
+        D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+    checker_sampler.MinLOD = 0.0F;
+    checker_sampler.MaxLOD = D3D12_FLOAT32_MAX;
+    checker_sampler.ShaderRegister = 0;
+    checker_sampler.RegisterSpace = 0;
+    checker_sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
     D3D12_ROOT_SIGNATURE_DESC root_signature_description{};
-    root_signature_description.NumParameters = 0;
-    root_signature_description.pParameters = nullptr;
-    root_signature_description.NumStaticSamplers = 0;
-    root_signature_description.pStaticSamplers = nullptr;
+    root_signature_description.NumParameters =
+        static_cast<UINT>(root_parameters.size());
+    root_signature_description.pParameters = root_parameters.data();
+    root_signature_description.NumStaticSamplers = 1;
+    root_signature_description.pStaticSamplers = &checker_sampler;
     root_signature_description.Flags =
         D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
         D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
@@ -915,27 +1442,27 @@ core::Result<Presentation> Presentation::create(
         0,
         serialized_root_signature->GetBufferPointer(),
         serialized_root_signature->GetBufferSize(),
-        IID_PPV_ARGS(&implementation->triangle_root_signature));
+        IID_PPV_ARGS(&implementation->cube_root_signature));
     if (FAILED(result)) {
         return core::Result<Presentation>::failure(
             detail::DeviceAccess::graphics_failure(
                 device,
-                "ID3D12Device::CreateRootSignature(first triangle)",
+                "ID3D12Device::CreateRootSignature(cube)",
                 result));
     }
-    result = implementation->triangle_root_signature->SetName(
-        L"Shark First Triangle Root Signature");
+    result = implementation->cube_root_signature->SetName(
+        L"Shark Textured Cube Root Signature");
     if (FAILED(result)) {
         return core::Result<Presentation>::failure(
             detail::DeviceAccess::graphics_failure(
                 device,
-                "ID3D12Object::SetName(first triangle root signature)",
+                "ID3D12Object::SetName(cube root signature)",
                 result));
     }
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pipeline_description{};
     pipeline_description.pRootSignature =
-        implementation->triangle_root_signature.Get();
+        implementation->cube_root_signature.Get();
     pipeline_description.VS = D3D12_SHADER_BYTECODE{
         config.vertex_shader.data,
         config.vertex_shader.size,
@@ -951,38 +1478,38 @@ core::Result<Presentation> Presentation::create(
     pipeline_description.BlendState = opaque_blend_description();
     pipeline_description.SampleMask = std::numeric_limits<UINT>::max();
     pipeline_description.RasterizerState =
-        triangle_rasterizer_description();
+        cube_rasterizer_description();
     pipeline_description.DepthStencilState =
-        disabled_depth_description();
-    pipeline_description.InputLayout = D3D12_INPUT_LAYOUT_DESC{};
+        reversed_depth_description();
+    pipeline_description.InputLayout = detail::cube_input_layout;
     pipeline_description.IBStripCutValue =
         D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
     pipeline_description.PrimitiveTopologyType =
         D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     pipeline_description.NumRenderTargets = 1;
     pipeline_description.RTVFormats[0] = back_buffer_format;
-    pipeline_description.DSVFormat = DXGI_FORMAT_UNKNOWN;
+    pipeline_description.DSVFormat = detail::cube_depth_format;
     pipeline_description.SampleDesc = DXGI_SAMPLE_DESC{1, 0};
     pipeline_description.NodeMask = 0;
     pipeline_description.CachedPSO = D3D12_CACHED_PIPELINE_STATE{};
     pipeline_description.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
     result = native.device->CreateGraphicsPipelineState(
         &pipeline_description,
-        IID_PPV_ARGS(&implementation->triangle_pipeline));
+        IID_PPV_ARGS(&implementation->cube_pipeline));
     if (FAILED(result)) {
         return core::Result<Presentation>::failure(
             detail::DeviceAccess::graphics_failure(
                 device,
-                "ID3D12Device::CreateGraphicsPipelineState(first triangle)",
+                "ID3D12Device::CreateGraphicsPipelineState(cube)",
                 result));
     }
-    result = implementation->triangle_pipeline->SetName(
-        L"Shark First Triangle Pipeline");
+    result = implementation->cube_pipeline->SetName(
+        L"Shark Textured Cube Pipeline");
     if (FAILED(result)) {
         return core::Result<Presentation>::failure(
             detail::DeviceAccess::graphics_failure(
                 device,
-                "ID3D12Object::SetName(first triangle pipeline)",
+                "ID3D12Object::SetName(cube pipeline)",
                 result));
     }
 
@@ -990,7 +1517,7 @@ core::Result<Presentation> Presentation::create(
         0,
         D3D12_COMMAND_LIST_TYPE_DIRECT,
         implementation->frame_contexts[0].command_allocator.Get(),
-        implementation->triangle_pipeline.Get(),
+        implementation->cube_pipeline.Get(),
         IID_PPV_ARGS(&implementation->command_list));
     if (FAILED(result)) {
         return core::Result<Presentation>::failure(
@@ -1000,7 +1527,7 @@ core::Result<Presentation> Presentation::create(
                 result));
     }
     result = implementation->command_list->SetName(
-        L"Shark First Triangle Command List");
+        L"Shark Textured Cube Command List");
     if (FAILED(result)) {
         return core::Result<Presentation>::failure(
             detail::DeviceAccess::graphics_failure(
@@ -1182,10 +1709,22 @@ core::Result<Presentation> Presentation::create(
         }
     }
 
+    auto static_resources_result =
+        implementation->create_static_cube_resources();
+    if (!static_resources_result) {
+        return core::Result<Presentation>::failure(
+            std::move(static_resources_result).error());
+    }
+
     auto buffer_result = implementation->acquire_back_buffers();
     if (!buffer_result) {
         return core::Result<Presentation>::failure(
             std::move(buffer_result).error());
+    }
+    auto depth_result = implementation->create_depth_buffer(config.extent);
+    if (!depth_result) {
+        return core::Result<Presentation>::failure(
+            std::move(depth_result).error());
     }
 
     core::log_message(
@@ -1194,13 +1733,14 @@ core::Result<Presentation> Presentation::create(
         std::string{"Created triple-buffered flip-discard swap chain at "} +
             std::to_string(config.extent.width) + "x" +
             std::to_string(config.extent.height) +
-            " with three fence-gated frame contexts and the first "
-            "triangle pipeline");
+            " with three fence-gated frame contexts, reversed-Z depth, "
+            "and the textured cube pipeline");
     return core::Result<Presentation>::success(
         Presentation{std::move(implementation)});
 }
 
-core::Result<PresentStatus> Presentation::present_frame()
+core::Result<PresentStatus> Presentation::present_frame(
+    const PresentationFrameData& frame_data)
 {
     if (implementation_ == nullptr) {
         return core::Result<PresentStatus>::failure(graphics_error(
@@ -1212,6 +1752,11 @@ core::Result<PresentStatus> Presentation::present_frame()
     if (!active_result) {
         return core::Result<PresentStatus>::failure(
             std::move(active_result).error());
+    }
+    if (!valid_frame_data(frame_data)) {
+        return core::Result<PresentStatus>::failure(graphics_error(
+            core::ErrorCode::invalid_argument,
+            "Presentation frame view-projection matrix must be finite"));
     }
 
     const auto back_buffer_index =
@@ -1229,9 +1774,10 @@ core::Result<PresentStatus> Presentation::present_frame()
             std::move(context_result).error());
     }
     auto* const context = context_result.value();
-    auto probe_result = implementation_->stage_frame_probe(
+    auto probe_result = implementation_->stage_frame_data(
         *context,
-        back_buffer_index);
+        back_buffer_index,
+        frame_data);
     if (!probe_result) {
         return core::Result<PresentStatus>::failure(
             std::move(probe_result).error());
@@ -1247,7 +1793,7 @@ core::Result<PresentStatus> Presentation::present_frame()
     }
     result = implementation_->command_list->Reset(
         context->command_allocator.Get(),
-        implementation_->triangle_pipeline.Get());
+        implementation_->cube_pipeline.Get());
     if (FAILED(result)) {
         return core::Result<PresentStatus>::failure(
             detail::DeviceAccess::graphics_failure(
@@ -1282,11 +1828,13 @@ core::Result<PresentStatus> Presentation::present_frame()
         implementation_->rtv_heap->GetCPUDescriptorHandleForHeapStart();
     render_target.ptr += static_cast<SIZE_T>(back_buffer_index) *
         static_cast<SIZE_T>(implementation_->rtv_descriptor_increment);
+    const auto depth_stencil =
+        implementation_->dsv_heap->GetCPUDescriptorHandleForHeapStart();
     implementation_->command_list->OMSetRenderTargets(
         1,
         &render_target,
         FALSE,
-        nullptr);
+        &depth_stencil);
     const std::array<float, 4> clear_color{
         implementation_->clear_color.red,
         implementation_->clear_color.green,
@@ -1298,6 +1846,14 @@ core::Result<PresentStatus> Presentation::present_frame()
         clear_color.data(),
         0,
         nullptr);
+    implementation_->command_list->ClearDepthStencilView(
+        depth_stencil,
+        D3D12_CLEAR_FLAG_DEPTH,
+        detail::cube_depth_clear_value,
+        0,
+        0,
+        nullptr);
+    ++implementation_->statistics.depth_clear_count;
 
     const D3D12_VIEWPORT viewport{
         0.0F,
@@ -1314,14 +1870,40 @@ core::Result<PresentStatus> Presentation::present_frame()
         static_cast<LONG>(implementation_->current_extent.height),
     };
     implementation_->command_list->SetGraphicsRootSignature(
-        implementation_->triangle_root_signature.Get());
+        implementation_->cube_root_signature.Get());
+    ID3D12DescriptorHeap* descriptor_heaps[]{
+        implementation_->checker_descriptor_heap.Get(),
+    };
+    implementation_->command_list->SetDescriptorHeaps(
+        static_cast<UINT>(std::size(descriptor_heaps)),
+        descriptor_heaps);
+    implementation_->command_list->SetGraphicsRootConstantBufferView(
+        root_camera_constants,
+        context->upload_buffer->GetGPUVirtualAddress() +
+            context->staged_probe_offset);
+    implementation_->command_list->SetGraphicsRootDescriptorTable(
+        root_checker_texture,
+        implementation_->checker_descriptor_heap
+            ->GetGPUDescriptorHandleForHeapStart());
+    ++implementation_->statistics.texture_bindings;
     implementation_->command_list->RSSetViewports(1, &viewport);
     implementation_->command_list->RSSetScissorRects(
         1,
         &scissor_rectangle);
     implementation_->command_list->IASetPrimitiveTopology(
         D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    implementation_->command_list->DrawInstanced(3, 1, 0, 0);
+    implementation_->command_list->IASetVertexBuffers(
+        0,
+        1,
+        &implementation_->vertex_buffer_view);
+    implementation_->command_list->IASetIndexBuffer(
+        &implementation_->index_buffer_view);
+    implementation_->command_list->DrawIndexedInstanced(
+        static_cast<UINT>(detail::cube_indices.size()),
+        1,
+        0,
+        0,
+        0);
 
     auto to_present = to_render_target;
     to_present.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -1346,8 +1928,9 @@ core::Result<PresentStatus> Presentation::present_frame()
         return core::Result<PresentStatus>::failure(
             std::move(submit_result).error());
     }
-    ++implementation_->statistics.triangle_draw_calls;
-    implementation_->statistics.triangle_vertices += 3;
+    ++implementation_->statistics.cube_draw_calls;
+    implementation_->statistics.cube_indices +=
+        detail::cube_indices.size();
 
     result = implementation_->swap_chain->Present(
         implementation_->synchronize_to_vertical_refresh ? 1 : 0,
@@ -1427,6 +2010,10 @@ core::Result<void> Presentation::resize(
     auto buffer_result = implementation_->acquire_back_buffers();
     if (!buffer_result) {
         return buffer_result;
+    }
+    auto depth_result = implementation_->create_depth_buffer(extent);
+    if (!depth_result) {
+        return depth_result;
     }
     implementation_->current_extent = extent;
     ++implementation_->statistics.resize_count;

@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 16, 2026
-- **Completed through:** `G-004` - build-time HLSL and first triangle
-- **Next increment:** `G-005` - camera, reversed-Z depth, and textured cube
+- **Completed through:** `G-005` - camera, reversed-Z depth, and textured cube
+- **Next increment:** `G-006` - minimal direct-queue render graph
 
 ## 1. Project direction
 
@@ -304,9 +304,11 @@ unstable circular solve; iterative two-way coupling is a later milestone.
   arrive with the increments that use them.
 - Defer destruction of GPU resources, descriptors, pipelines, and upload storage
   until every relevant queue fence in their retirement set completes. G-003
-  verifies whole-context transient reuse. G-004 creates one persistent root
-  signature and PSO at presentation startup and releases them only after the
-  shutdown queue drain; generic fence-keyed deferred destruction remains later.
+  verifies whole-context transient reuse. G-005 creates one persistent root
+  signature/PSO, cube vertex/index buffers, checker texture/SRV, and resize-owned
+  depth target; one bounded static-upload wait precedes the frame loop and
+  shutdown releases every persistent object after the final drain. Generic
+  fence-keyed deferred destruction remains later.
 
 ### Resources and descriptors
 
@@ -318,6 +320,8 @@ unstable circular solve; iterative two-way coupling is a later milestone.
 - Use one shader-visible CBV/SRV/UAV heap and one sampler heap with stable
   persistent indices; recycle slots only after their fences complete. Begin
   with conventional descriptor tables while keeping handles bindless-ready.
+  G-005 proves only one shader-visible SRV slot and one static sampler for its
+  procedural checker; the stable-index allocator remains future work.
 - Keep CPU-only RTV and DSV allocators separate.
 - Add upload and readback arenas, with a per-frame linear upload ring.
 - Expose descriptor use and DXGI video-memory budget in diagnostics before
@@ -335,14 +339,16 @@ unstable circular solve; iterative two-way coupling is a later milestone.
 - Begin with a small shared root-signature convention using descriptor tables and
   frame/pass constants. Direct heap indexing becomes a separate capability-gated
   increment only after Shader Model 6.6, Binding Tier 3, and a real scale need are
-  confirmed. The G-004 proof uses an intentionally empty root signature because
-  its `SV_VertexID` triangle consumes no resources; descriptor conventions begin
-  when G-005 introduces the textured cube.
+  confirmed. G-005 establishes the first narrow convention: one root CBV for
+  the row-major camera `view_projection` matrix, one single-SRV descriptor
+  table, and one static sampler. This is not yet a versioned renderer-wide
+  layout.
 - Key shader artifacts by source/include hashes, entry point, target, defines,
   flags, compiler version, and root-signature version.
 - Cache immutable PSOs by structural hash; never compile a surprise PSO in the
-  middle of a render pass. G-004 creates one immutable PSO synchronously during
-  presentation startup; generalized artifact keys and PSO caching remain later.
+  middle of a render pass. G-005 creates one immutable cube/depth PSO
+  synchronously during presentation startup; generalized artifact keys and PSO
+  caching remain later.
 - Add development hot reload only after the offline build pipeline is reliable.
 
 ### Render graph growth
@@ -479,7 +485,7 @@ architecture folders are not committed merely to make the tree look complete.
 |   `-- diagnostics/
 |-- shaders/
 |   |-- shared/
-|   |-- triangle/             # First build-time HLSL proof
+|   |-- cube/                 # First camera/depth/resource-bound HLSL proof
 |   |-- sky/
 |   |-- terrain/
 |   |-- rain/
@@ -538,7 +544,7 @@ This is the shortest responsible path to the first requested visual feature.
 | `G-002` | V | Create a resize-safe flip swap chain and present a clear color for 1,000 frames without validation or live-object errors | `feat(gpu): present a clear-color frame` |
 | `G-003` | - | Add three back-buffer-indexed frame contexts, a monotonic direct-queue fence, bounded per-context upload and CPU descriptor staging, and verify transient slots reset only after submission completes | `feat(gpu): add frame resource lifecycle` |
 | `G-004` | V | Resolve retail DXC `1.9.2602.24` only from the manifest host tools; compile tracked `vs_6_0`/`ps_6_0` HLSL with warnings as errors; reject malformed/warning fixtures; create one immutable PSO; and record one three-vertex triangle draw per submitted frame | `feat(render): add the first HLSL pipeline` |
-| `G-005` | V | Add camera math, input, reversed-Z depth, and a textured cube; rotation and translation behave consistently | `feat(render): add camera and depth conventions` |
+| `G-005` | V | Add the `+Y`-up/`-Z`-forward row-vector camera and right-drag/`WASD`/`QE`/`Shift` controls; render one 24-vertex/36-index cube with an `8x8` procedural checker through a root CBV plus one SRV/static sampler; and recreate a `D32_FLOAT`, clear-`0`, `GREATER_EQUAL` reversed-Z target safely across resize | `feat(render): add camera and depth conventions` |
 | `G-006` | - | Add the simple direct-queue render graph with declared back-buffer/depth use and centralized barriers | `feat(render): add minimal render graph` |
 | `G-007` | - | Add named PIX events and GPU timestamp queries; frame/pass timings are reproducible in logs with bounded query storage | `feat(diagnostics): add GPU frame instrumentation` |
 | `S-001` | V | Load one licensed DDS cubemap through the texture/upload path with correct face orientation and sRGB handling | `feat(assets): load DDS cubemap textures` |
@@ -624,6 +630,7 @@ a block floats in it," with conservation, stability, and performance metrics.
 |---|---|
 | Core/build | Fresh configure, Debug/Release build, unit tests, warnings as errors |
 | D3D12 | Debug layer clean, focused GPU validation, DRED path, WARP smoke, named PIX passes |
+| Camera/cube | Basis and near/far math, elapsed-time input, aspect-changing resize, 24/36 geometry bounds, one static upload, one indexed draw/camera upload/depth clear per submission |
 | Sky/assets | Cubemap orientation, translation invariance, sRGB/linear correctness, missing-asset error |
 | Terrain | Flat/ramp samples, ray hits, normals, cell/chunk boundary equality, LOD seam captures |
 | Rain | Seed repeatability, capacity bounds, emission statistics, impact height, GPU timing |
@@ -681,27 +688,27 @@ entity scale or query patterns make it useful.
 
 ## 14. Immediate next increment
 
-After `G-004` is reviewed and committed by the owner, implement only `G-005`:
+After `G-005` is reviewed and committed by the owner, implement only `G-006`:
 
-- add the first engine-owned camera transform and right-handed view/projection
-  math using the established `+Y` up, forward `-Z`, row-vector convention;
-- consume the existing keyboard and mouse event boundary for consistent
-  free-look rotation and translation;
-- add a resize-safe `D32_FLOAT` depth buffer and DSV using reversed-Z (`0`
-  clear and `GREATER`/`GREATER_EQUAL` comparison), with focused math and state
-  tests;
-- replace the screen-space triangle with one textured cube whose vertex/index
-  data, per-frame camera constants, tiny procedural/checker texture, first
-  narrowly scoped shader-visible SRV table/static sampler, and transforms
-  exercise the first resource-bound root signature;
-- preserve the pinned build-time shader path, frame-context retirement, resize,
-  hardware/WARP smoke, GPU validation, and zero DirectX errors; and
-- stop before a general asset system, DDS/cubemap loading, mip/streaming
-  infrastructure, a material/PBR system, persistent resource/descriptor
-  allocation, scene/ECS work, skybox, render graph, terrain, or lighting.
+- add a small direct-queue render-graph builder whose passes declare named
+  resource reads/writes and execution callbacks;
+- import the current swap-chain back buffer and reversed-Z depth target as
+  external resources rather than transferring their ownership;
+- express the existing cube frame as one graph pass that declares render-target
+  and depth-write access;
+- compile deterministic pass order, reject undeclared resource access and
+  dependency cycles, and centralize the existing legacy transition barriers in
+  the graph executor;
+- preserve the G-005 camera controls, checker cube, resize-safe depth, static
+  upload, frame-context retirement, hardware/WARP smokes, GPU validation, and
+  zero DirectX errors; and
+- stop before transient placed resources, aliasing, resource pooling, pass
+  merging, parallel command recording, compute/copy queues, async compute,
+  cross-queue fences, renderer scene extraction, or a public scene API.
 
-`G-005` proves camera and depth conventions on a real 3D object. The minimal
-direct-queue render graph remains the separate `G-006` increment.
+`G-006` proves declared ownership and barrier orchestration without changing the
+visible scene. Managed transient lifetimes and multi-queue scheduling remain
+later render-graph stages.
 
 ## 15. Primary technical references
 

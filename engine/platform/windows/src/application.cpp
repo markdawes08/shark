@@ -442,6 +442,18 @@ struct Application::Implementation final {
             return 0;
         }
 
+        case WM_SETFOCUS:
+            state->push_event(WindowFocusChangedEvent{
+                .focused = true,
+            });
+            return 0;
+
+        case WM_KILLFOCUS:
+            state->push_event(WindowFocusChangedEvent{
+                .focused = false,
+            });
+            return 0;
+
         case WM_KEYDOWN:
         case WM_KEYUP:
         case WM_SYSKEYDOWN:

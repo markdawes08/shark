@@ -59,11 +59,15 @@ absolute `DIRECTX_DXC_TOOL` path from the active vcpkg host triplet, verifies
 retail version `1.9.2602.24`, and requires the compiler's `dxcompiler.dll` and
 `dxil.dll` sidecars in that tool directory. Those files run the compiler during
 the build; Shark neither links the DXC library nor deploys any DXC binary beside
-the executable. DirectXTex and WinPix remain restored but unconsumed; their
-owning increments decide the final runtime boundaries. The vcpkg executable
-comes from Visual Studio 2026, `VCPKG_ROOT`, or a complete installation on
-`PATH`; its version is reported during setup but is not misrepresented as a
-project-pinned dependency.
+the executable. G-005 consumes the header-only DirectXMath target privately for
+the engine-owned camera, view/projection, and cube transform implementation; it
+adds no DirectXMath runtime file and exposes no DirectXMath type through the
+public camera or presentation boundary. The procedural `8x8` checker is
+generated directly in memory, so DirectXTex remains restored but unconsumed.
+WinPix also remains restored for G-007. Those owning increments decide their
+final runtime boundaries. The vcpkg executable comes from Visual Studio 2026,
+`VCPKG_ROOT`, or a complete installation on `PATH`; its version is reported
+during setup but is not misrepresented as a project-pinned dependency.
 
 Package versions change only in a dedicated dependency increment that updates
 the manifest, this record, performs a fresh restore, and rebuilds/tests Debug

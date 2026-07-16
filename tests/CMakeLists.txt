@@ -3,12 +3,18 @@ include(Catch)
 
 add_executable(SharkTests
     "${PROJECT_SOURCE_DIR}/cmake/Shark.Windows.manifest"
+    ../apps/sandbox/camera_controller.cpp
+    ../apps/sandbox/camera_controller.hpp
     ../apps/sandbox/options.cpp
+    unit/camera_controller_tests.cpp
+    unit/camera_tests.cpp
     unit/assertion_tests.cpp
+    unit/d3d12_cube_scene_data_tests.cpp
     unit/d3d12_device_contract_tests.cpp
     unit/d3d12_frame_resource_tests.cpp
     unit/engine_info_tests.cpp
     unit/logging_tests.cpp
+    unit/math_tests.cpp
     unit/result_tests.cpp
     unit/sandbox_options_tests.cpp
     unit/windows_application_tests.cpp
@@ -57,11 +63,11 @@ add_test(
         "-DSHARK_DEPENDENCY_PROBE_INCLUDE=${SHARK_DEPENDENCY_PROBE_INCLUDE}"
         "-DSHARK_DEPENDENCY_PROBE_INCLUDE_FIXTURE=${SHARK_DEPENDENCY_PROBE_INCLUDE_FIXTURE}"
         "-DSHARK_DEPENDENCY_PROBE_TARGET=${SHARK_DEPENDENCY_PROBE_TARGET}"
-        "-DSHARK_SHADER_TARGET=${SHARK_TRIANGLE_SHADER_TARGET}"
-        "-DSHARK_PRIMARY_SHADER_NAME=triangle.hlsl"
-        "-DSHARK_SHARED_SHADER_NAME=triangle_data.hlsli"
-        "-DSHARK_VERTEX_DEPFILE=${SHARK_TRIANGLE_VERTEX_DEPFILE}"
-        "-DSHARK_PIXEL_DEPFILE=${SHARK_TRIANGLE_PIXEL_DEPFILE}"
+        "-DSHARK_SHADER_TARGET=${SHARK_CUBE_SHADER_TARGET}"
+        "-DSHARK_PRIMARY_SHADER_NAME=cube.hlsl"
+        "-DSHARK_SHARED_SHADER_NAME=camera_constants.hlsli"
+        "-DSHARK_VERTEX_DEPFILE=${SHARK_CUBE_VERTEX_DEPFILE}"
+        "-DSHARK_PIXEL_DEPFILE=${SHARK_CUBE_PIXEL_DEPFILE}"
         -P "${PROJECT_SOURCE_DIR}/cmake/VerifyShaderDependencies.cmake"
 )
 
@@ -148,11 +154,11 @@ set_tests_properties(integration.gpu.warp_device
 )
 
 add_test(
-    NAME integration.gpu.hardware_triangle_present
+    NAME integration.gpu.hardware_cube_present
     COMMAND SharkSandbox --present-smoke
 )
 
-set_tests_properties(integration.gpu.hardware_triangle_present
+set_tests_properties(integration.gpu.hardware_cube_present
     PROPERTIES
         LABELS "integration;gpu;presentation;hardware"
         RUN_SERIAL TRUE
@@ -160,11 +166,11 @@ set_tests_properties(integration.gpu.hardware_triangle_present
 )
 
 add_test(
-    NAME integration.gpu.warp_triangle_present
+    NAME integration.gpu.warp_cube_present
     COMMAND SharkSandbox --present-smoke --warp
 )
 
-set_tests_properties(integration.gpu.warp_triangle_present
+set_tests_properties(integration.gpu.warp_cube_present
     PROPERTIES
         LABELS "integration;gpu;presentation;warp"
         RUN_SERIAL TRUE
@@ -172,11 +178,11 @@ set_tests_properties(integration.gpu.warp_triangle_present
 )
 
 add_test(
-    NAME integration.gpu.warp_triangle_present_validation
+    NAME integration.gpu.warp_cube_present_validation
     COMMAND SharkSandbox --present-smoke --warp --gpu-validation
 )
 
-set_tests_properties(integration.gpu.warp_triangle_present_validation
+set_tests_properties(integration.gpu.warp_cube_present_validation
     PROPERTIES
         LABELS "integration;gpu;presentation;warp;validation"
         RUN_SERIAL TRUE

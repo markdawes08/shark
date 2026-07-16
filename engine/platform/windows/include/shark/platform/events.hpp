@@ -31,6 +31,10 @@ struct WindowRestoredEvent final {
     WindowExtent client_extent;
 };
 
+struct WindowFocusChangedEvent final {
+    bool focused;
+};
+
 enum class KeyAction : std::uint8_t {
     pressed = 1,
     released,
@@ -89,6 +93,7 @@ using Event = std::variant<
     WindowResizedEvent,
     WindowMinimizedEvent,
     WindowRestoredEvent,
+    WindowFocusChangedEvent,
     KeyEvent,
     MouseMovedEvent,
     MouseButtonEvent,

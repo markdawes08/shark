@@ -40,8 +40,9 @@ SDK 10.0.26100, MSVC 14.50 specifically rather than the newer default toolset,
 and the pinned vcpkg registry. Shark's overlay triplet applies that same MSVC
 14.50 toolset to built dependencies. The configure step restores every declared
 dependency. G-001 consumes DirectX Headers/Guids and the Agility runtime;
-G-004 consumes DXC as a build-time host tool. DirectXTex and WinPix remain
-restored for their later increments.
+G-004 consumes DXC as a build-time host tool, and G-005 consumes the
+header-only DirectXMath package for camera and transform math. DirectXTex and
+WinPix remain restored for their later increments.
 
 The checked-in toolchain also scopes `UCRTContentRoot` to the complete Windows
 SDK payload for the CMake process. This avoids a Visual Studio 2026 installation
@@ -64,10 +65,10 @@ out/build/windows-vs2026/bin/Release/d3d10warp.dll
 out/build/windows-vs2026/bin/Release/SharkTests.exe
 out/build/windows-vs2026/lib/Debug/SharkEngine.lib
 out/build/windows-vs2026/lib/Release/SharkEngine.lib
-out/build/windows-vs2026/generated/shaders/Debug/triangle.vertex.dxil
-out/build/windows-vs2026/generated/shaders/Debug/triangle.pixel.dxil
-out/build/windows-vs2026/generated/shaders/Release/triangle.vertex.dxil
-out/build/windows-vs2026/generated/shaders/Release/triangle.pixel.dxil
+out/build/windows-vs2026/generated/shaders/Debug/cube.vertex.dxil
+out/build/windows-vs2026/generated/shaders/Debug/cube.pixel.dxil
+out/build/windows-vs2026/generated/shaders/Release/cube.vertex.dxil
+out/build/windows-vs2026/generated/shaders/Release/cube.pixel.dxil
 ```
 
 vcpkg deploys the spdlog/fmt runtime DLLs beside executables that need them.
@@ -78,10 +79,13 @@ local development and testing only and must never enter a packaged product.
 
 With no arguments, `SharkSandbox` initializes the highest-priority eligible
 hardware device, opens the native Win32 window, and continuously draws the
-G-004 color-interpolated triangle through the G-003 triple frame-resource
-lifecycle. Resize, input, and window lifecycle records remain visible in the
-Debug console log. Resize or minimize/restore the window to exercise the
-swap-chain lifecycle, then close the title bar or press Alt+F4 to exit cleanly.
+G-005 procedural-checker cube through the G-003 triple frame-resource
+lifecycle and the resize-safe reversed-Z depth target. Use `W`/`S` along the
+camera forward axis, `A`/`D` to strafe, `Q`/`E` to move down/up, hold
+`Shift` to move faster, and hold the right mouse button while dragging to look
+around. `Control` and `Space` are down/up aliases. Resize or minimize/restore
+the window to exercise the projection, swap-chain, and depth lifecycles, then
+close the title bar or press Alt+F4 to exit cleanly.
 
 ## Shader build contract
 
@@ -95,7 +99,7 @@ The build compiles `VSMain` as `vs_6_0` and `PSMain` as `ps_6_0`, using HLSL
 2021, row-major layout, strict mode, and warnings as errors. DXIL, generated C++
 byte arrays, PDBs, and dependency files are configuration-specific and stay
 under ignored `out/build/windows-vs2026/generated/shaders/`. The dependency
-files make edits to the shared triangle include rebuild both stages.
+files make edits to the shared cube include rebuild both stages.
 
 CTest adds three build checks: both shader depfiles must name the primary source
 and shared include, a build-tree include edit must actually regenerate the
@@ -107,13 +111,15 @@ missing tool or broken build target.
 Run only the normal shader target and focused build checks with:
 
 ```powershell
-& $cmake --build --preset windows-debug --target SharkTriangleShaders
+& $cmake --build --preset windows-debug --target SharkCubeShaders
 & $ctest --preset windows-debug -R '^build\.shader_'
 ```
 
 For the visual acceptance check, run `SharkSandbox` without arguments. A
-centered red/green/blue interpolated triangle must remain correctly framed over
-the dark clear color before and after resizing the window.
+clearly textured cube must retain correct hidden-surface occlusion and
+perspective while the camera moves. Right-drag must begin from the button-press
+coordinates without inheriting an old cursor position, and resizing from a wide
+to a non-wide aspect must not stretch the cube.
 
 ## Graphics device checks
 
@@ -155,7 +161,7 @@ ownership, and runtime rules.
 
 ## Presentation checks
 
-Run the fixed triangle/present contract on hardware and packaged WARP with:
+Run the fixed cube/present contract on hardware and packaged WARP with:
 
 ```powershell
 & .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe --present-smoke
@@ -163,25 +169,38 @@ Run the fixed triangle/present contract on hardware and packaged WARP with:
 ```
 
 Each command shows a real PMv2-aware window, presents exactly 1,000 successful
-triangle frames, performs a physical client resize, proves no frame is
-presented while minimized, restores, shuts down the presentation objects before
-the window, and checks new D3D12/DXGI messages plus live D3D12 device children.
-Submission or presentation removal failures also emit bounded DRED diagnostics.
+indexed-cube frames, changes the physical client area from `1280x720` to
+`960x600`, proves the projection and `D32_FLOAT` depth extent follow the
+aspect-changing resize, proves no frame is submitted while minimized, restores,
+shuts down the presentation objects before the window, and checks new
+D3D12/DXGI messages plus live D3D12 device children. Submission or presentation
+removal failures also emit bounded DRED diagnostics.
 
 The run also exercises three contexts selected by DXGI's back-buffer index.
-Each attempt writes and copies one 256-byte upload probe on the GPU and stages
-one descriptor in a CPU-only heap. A context waits only when its own allocator
-cannot yet be reused because its preceding submission fence has not completed;
-that checkpoint protects the allocator, upload bytes, and probe destination.
-Resize and shutdown perform the full queue drains. Every submitted frame must
-record one three-vertex draw. The summary reports triangle draws, context reuse,
-blocking reuse waits, queue drains, and upload/descriptor high-water marks. The
-wait count is deliberately not a performance gate because it depends on adapter
-speed and scheduling.
+Each attempt writes one 256-byte camera record, binds it through a root CBV,
+copies it to the existing GPU probe, and stages one descriptor in a CPU-only
+heap. A context waits only when its own allocator cannot yet be reused because
+its preceding submission fence has not completed; that checkpoint protects the
+allocator, camera bytes, and probe destination.
+
+Creation records one static direct-queue upload submission and bounded wait for
+the 24-vertex/36-index cube and deterministic `8x8` checker. Every submitted
+frame must then record one 36-index draw and one reversed-Z depth clear. Resize
+and shutdown perform the full queue drains. The summary reports
+`cube_draw_calls`/`cube_indices`, `camera_constant_updates` and
+`camera_matrix_changes`, `depth_clear_count`/`depth_resource_creations`,
+`texture_bindings`, `static_upload_submissions`, resource/SRV creation counts,
+context reuse, blocking reuse waits, queue drains, and upload/descriptor
+high-water marks. The reuse wait count is deliberately not a performance gate
+because it depends on adapter speed and scheduling.
 
 CTest registers hardware and WARP device and presentation paths as separate
 serial processes, plus a focused packaged-WARP GPU-validation presentation
-path. To run all graphics integration checks for either configuration:
+path. The G-005 presentation cases are
+`integration.gpu.hardware_cube_present`,
+`integration.gpu.warp_cube_present`, and
+`integration.gpu.warp_cube_present_validation`. To run all graphics integration
+checks for either configuration:
 
 ```powershell
 & $ctest --preset windows-debug -R '^integration\.gpu\.'
@@ -203,9 +222,12 @@ test. See [the platform contract](PLATFORM.md) for the event and ownership
 rules.
 
 See the [presentation and frame-resource contract](GRAPHICS_PRESENTATION.md)
-for context reuse, bounded staging, fence retirement, and resize ownership. See
-the [first HLSL pipeline contract](GRAPHICS_PIPELINE.md) for pinned compilation,
-generated artifacts, root-signature/PSO state, and draw behavior.
+for context reuse, bounded staging, fence retirement, depth ownership, and
+resize behavior. See the [HLSL pipeline contract](GRAPHICS_PIPELINE.md) for
+pinned compilation, generated artifacts, root-signature/PSO state, and indexed
+draw behavior. See the
+[camera and textured-cube contract](CAMERA_AND_CUBE.md) for controls,
+coordinate conventions, reversed-Z, geometry, texture, and explicit limits.
 
 ## Visual Studio
 

@@ -1,7 +1,8 @@
 # Shark Win32 Platform Shell
 
-- **Increment:** `F-004` host contract; DPI policy completed by `G-002`
-- **Last verified:** July 15, 2026
+- **Increment:** `F-004` host contract; DPI policy completed by `G-002`;
+  focus event and first camera consumer added by `G-005`
+- **Last verified:** July 16, 2026
 
 F-004 establishes the Windows host boundary used by later graphics and
 simulation increments. `SharkSandbox` remains a console-subsystem executable so
@@ -68,6 +69,7 @@ Events are plain records in a bounded 256-entry buffer:
 | `WindowResizedEvent` | A restored or maximized client-area extent changed |
 | `WindowMinimizedEvent` | The window entered the minimized state; no zero render extent is published |
 | `WindowRestoredEvent` | A minimized window returned with a usable client extent |
+| `WindowFocusChangedEvent` | `WM_SETFOCUS`/`WM_KILLFOCUS` changed keyboard/mouse focus |
 | `KeyEvent` | Windows virtual-key, scan code, repeat count/state, extended flag, press/release, and system-key flag |
 | `MouseMovedEvent` | Signed client coordinates |
 | `MouseButtonEvent` | Left, right, middle, or extra button press/release with client coordinates |
@@ -80,9 +82,20 @@ be lost behind an input burst. `dropped_event_count` makes ordinary overflow
 visible; `clear_events` resets both the current records and the drop count.
 Mouse movement is not yet coalesced.
 
-Keyboard records deliberately retain Windows virtual-key values. Text input,
-IME composition, raw input, an engine-wide key enum, action mapping, held-key
-state, cursor capture, and camera controls are separate future concerns.
+Keyboard records deliberately retain Windows virtual-key values. The G-005
+sandbox camera controller is a narrow consumer above this boundary: it owns
+held state for `W`, `A`, `S`, `D`, `Q`, `E`, and `Shift`, and interprets
+`Space`/`Control` as vertical aliases plus consecutive absolute mouse positions
+while the right button is held. Key repeat does not create additional held
+actions, and the right-button press coordinates establish the drag baseline.
+The composition root clears held state whenever the bounded queue reports a
+dropped event, so a lost release or focus record cannot latch motion. It also
+forwards `WindowFocusChangedEvent` to the controller so focus loss clears held
+keys and mouse-drag state. None of that camera policy belongs to `Application`.
+
+Text input, IME composition, raw input, an engine-wide key enum, configurable
+gameplay action mapping, cursor capture/recentering, and gamepad input remain
+separate future concerns.
 
 ## DPI and physical client pixels
 
@@ -115,9 +128,13 @@ The normal command opens the interactive window until the user closes it:
 Debug builds log keyboard and mouse records at Debug severity. Window lifecycle
 records remain visible at Info severity in both configurations.
 
-For manual acceptance, drag an edge and confirm resize records, minimize and
-restore the window, press and release a key, move/click/scroll the mouse, then
-close by both Alt+F4 and the title-bar button in separate runs. Each run must
+For manual platform acceptance, drag an edge and confirm resize records,
+minimize and restore the window, press and release a key, move/click/scroll the
+mouse, switch focus away and back, then close by both Alt+F4 and the title-bar
+button in separate runs. For the G-005 consumer check, confirm `WASD`, `Q`/`E`,
+`Shift`, and right-button drag drive the camera without changing the raw event
+records; `Space` and `Control` may also be used as up/down aliases. Focus loss
+must stop a held movement or drag rather than leaving it latched. Each run must
 stay responsive while idle and exit without an orphaned window.
 
 The noninteractive smoke mode shows a real top-level window without activating
@@ -132,12 +149,18 @@ resize, minimize/restore, close-request, and destruction records:
 
 CTest runs that mode with a ten-second timeout in addition to deterministic
 hidden-window tests for configuration errors, message translation, ordering,
-buffer bounds, native lifetime, `WM_QUIT`, PMv2 awareness, and exact physical
-client sizing.
+buffer bounds, focus gain/loss, native lifetime, `WM_QUIT`, PMv2 awareness, and
+exact physical client sizing.
 
 ## Explicit non-goals
 
 The platform layer owns no DXGI, Direct3D 12, WARP, swap-chain, or renderer
-objects. G-002 consumes only its opaque native handle and physical client
-extent. Camera controls, gameplay input mapping, a fixed simulation clock,
-multi-window support, fullscreen policy, and editor behavior remain deferred.
+objects. Graphics consumes only its opaque native handle, physical client
+extent, and raw events. The small G-005 free-fly controller is sandbox policy,
+not a platform input abstraction. A reusable gameplay input/action system, raw
+mouse/cursor-lock mode, fixed simulation clock, multi-window support,
+fullscreen policy, and editor behavior remain deferred.
+
+See [the camera and textured-cube contract](CAMERA_AND_CUBE.md) for the exact
+G-005 bindings and the ownership boundary between the raw event producer and
+camera consumer.

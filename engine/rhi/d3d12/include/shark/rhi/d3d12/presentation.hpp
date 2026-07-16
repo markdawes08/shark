@@ -1,5 +1,6 @@
 #pragma once
 
+#include <shark/core/math.hpp>
 #include <shark/core/result.hpp>
 
 #include <cstddef>
@@ -40,6 +41,10 @@ struct PresentationConfig final {
     bool synchronize_to_vertical_refresh{true};
 };
 
+struct PresentationFrameData final {
+    math::Matrix4x4 view_projection{};
+};
+
 enum class PresentStatus : std::uint8_t {
     presented = 1,
     occluded,
@@ -62,8 +67,17 @@ struct PresentationStats final {
     std::uint64_t upload_high_water_bytes{};
     std::uint64_t descriptor_allocations{};
     std::uint64_t descriptor_high_water_count{};
-    std::uint64_t triangle_draw_calls{};
-    std::uint64_t triangle_vertices{};
+    std::uint64_t cube_draw_calls{};
+    std::uint64_t cube_indices{};
+    std::uint64_t camera_constant_updates{};
+    std::uint64_t camera_matrix_changes{};
+    std::uint64_t depth_clear_count{};
+    std::uint64_t depth_resource_creations{};
+    std::uint64_t texture_bindings{};
+    std::uint64_t static_upload_submissions{};
+    std::uint64_t geometry_buffer_creations{};
+    std::uint64_t checker_texture_creations{};
+    std::uint64_t texture_srv_creations{};
     std::uint64_t last_submission_fence{};
 };
 
@@ -81,7 +95,8 @@ public:
         Device& device,
         const PresentationConfig& config);
 
-    [[nodiscard]] core::Result<PresentStatus> present_frame();
+    [[nodiscard]] core::Result<PresentStatus> present_frame(
+        const PresentationFrameData& frame_data);
     [[nodiscard]] core::Result<void> resize(PresentationExtent extent);
     [[nodiscard]] core::Result<void> shutdown();
 

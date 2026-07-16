@@ -1,3 +1,4 @@
+find_package(directxmath CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 
 # The pinned shared spdlog target disables MSVC 4251/4275 in every consumer.
@@ -10,11 +11,13 @@ add_library(SharkEngine STATIC
     core/include/shark/core/error.hpp
     core/include/shark/core/engine_info.hpp
     core/include/shark/core/logging.hpp
+    core/include/shark/core/math.hpp
     core/include/shark/core/result.hpp
     core/src/assertion.cpp
     core/src/error.cpp
     core/src/engine_info.cpp
     core/src/logging.cpp
+    core/src/math.cpp
     platform/windows/include/shark/platform/application.hpp
     platform/windows/include/shark/platform/events.hpp
     platform/windows/src/application.cpp
@@ -25,6 +28,8 @@ add_library(SharkEngine STATIC
     rhi/d3d12/src/frame_resource_state.cpp
     rhi/d3d12/src/frame_resource_state.hpp
     rhi/d3d12/src/presentation.cpp
+    world/include/shark/world/camera.hpp
+    world/src/camera.cpp
 )
 
 target_include_directories(SharkEngine
@@ -32,6 +37,7 @@ target_include_directories(SharkEngine
         "${CMAKE_CURRENT_SOURCE_DIR}/core/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/platform/windows/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/rhi/d3d12/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/world/include"
 )
 
 target_compile_definitions(SharkEngine
@@ -47,6 +53,7 @@ target_link_libraries(SharkEngine
         spdlog::spdlog
         Microsoft::DirectX-Headers
         Microsoft::DirectX-Guids
+        Microsoft::DirectXMath
         Microsoft::DirectX12-Agility
         dxgi
         dxguid

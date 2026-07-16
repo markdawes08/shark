@@ -1,21 +1,24 @@
 # Direct3D 12 Presentation and Frame-Resource Contract
 
-- **Completed through:** `G-004`
+- **Completed through:** `G-005`
 - **Last verified:** July 16, 2026
 
 G-002 produced Shark's first pixels through a resize-safe Direct3D 12
 flip-model swap chain. G-003 replaces its wait-after-every-present path with
 three fence-gated reusable frame contexts and bounded transient staging. G-004
-adds the first build-time HLSL pipeline and draws one color-interpolated
-triangle while preserving the established window and frame lifecycles.
+adds the first build-time HLSL pipeline. G-005 preserves those lifecycles while
+adding the engine camera, one indexed textured cube, the first shader-visible
+SRV binding, and a resize-safe reversed-Z depth target.
 
 ## Public boundary and ownership
 
 `shark::rhi::d3d12::Presentation` is a move-only PIMPL. Its public header uses
-an opaque native-window pointer and engine-owned extent, color, status, and
-statistics records plus pointer/size `ShaderBytecodeView` inputs; it exposes no
-Win32, DXGI, D3D12, WRL, or COM types. `present_frame()` records the current
-first-triangle frame.
+an opaque native-window pointer and engine-owned extent, color,
+`PresentationFrameData`, status, and statistics records plus pointer/size
+`ShaderBytecodeView` inputs; it exposes no Win32, DXGI, D3D12, WRL, or COM
+types. `PresentationFrameData` contains one finite engine-owned row-major
+`math::Matrix4x4 view_projection` value, which the per-frame call borrows while
+recording the current identity-world cube frame.
 
 The internal `detail::DeviceAccess` bridge borrows the authoritative D3D12
 device and DXGI factory from `Device`. It does not transfer ownership. The
@@ -38,8 +41,17 @@ The presentation object owns:
 - one three-buffer `DXGI_SWAP_EFFECT_FLIP_DISCARD` swap chain;
 - three `DXGI_FORMAT_R8G8B8A8_UNORM` back-buffer references;
 - one CPU-only RTV heap with three descriptors;
+- one CPU-only DSV heap with one descriptor and one
+  `DXGI_FORMAT_D32_FLOAT` depth texture matching the current physical extent;
 - one reusable graphics command list;
-- one persistent empty root signature and one immutable triangle graphics PSO;
+- one resource-bound root signature and one immutable cube graphics PSO;
+- one committed default-heap cube vertex buffer containing 24 position/UV
+  vertices and one committed default-heap index buffer containing 36
+  `uint16_t` indices;
+- one committed default-heap `8x8` one-mip
+  `DXGI_FORMAT_R8G8B8A8_UNORM` procedural checker texture;
+- one persistent one-slot shader-visible CBV/SRV/UAV heap holding the checker
+  SRV;
 - three frame contexts, each containing one direct command allocator, one
   persistently mapped 64 KiB committed upload buffer, one 256-byte default-heap
   upload-probe destination, one CPU-only 64-slot CBV/SRV/UAV staging heap, a
@@ -61,6 +73,12 @@ has already retired.
 
 ## Frame acquisition, staging, and present
 
+Presentation creation records one direct-queue static upload submission for the
+cube vertex/index data and checker. It transitions the immutable resources to
+their final draw states, signals the normal monotonic fence, performs one
+bounded startup wait, and releases the temporary upload resources before the
+first frame. No static geometry or texture upload occurs in the frame loop.
+
 One frame performs the following work:
 
 1. read DXGI's current back-buffer index and select that context;
@@ -68,27 +86,31 @@ One frame performs the following work:
    still in flight;
 3. retire the completed submission and reset its allocator-facing upload and
    descriptor cursors;
-4. reserve and write one 256-byte diagnostic upload record, then create one CBV
-   in the context's CPU-only staging heap;
+4. reserve one 256-byte frame record, write the 64-byte `view_projection`
+   matrix followed by the retained diagnostic probe, create one CBV in the
+   context's CPU-only staging heap, and point the root CBV at the same GPU
+   upload address;
 5. reset that context's command allocator and the shared command list with the
-   immutable triangle PSO;
-6. copy the diagnostic record from the upload heap to the context's default-heap
-   probe destination on the direct queue;
+   immutable cube PSO;
+6. copy the 256-byte frame record from the upload heap to the context's
+   default-heap probe destination on the direct queue;
 7. transition the current back buffer from `PRESENT` to `RENDER_TARGET`, clear
-   it, bind the empty root signature, set the current physical viewport/scissor
-   and triangle-list topology, issue `DrawInstanced(3, 1, 0, 0)`, then
-   transition the buffer back to `PRESENT`;
+   it, clear the matching depth texture to `0.0F`, bind the RTV and DSV, bind
+   the root signature, checker heap/SRV, camera root CBV, current physical
+   viewport/scissor, cube vertex/index buffers, and triangle-list topology,
+   issue `DrawIndexedInstanced(36, 1, 0, 0, 0)`, then transition the buffer
+   back to `PRESENT`;
 8. close and execute the command list;
 9. immediately signal the next monotonic fence value and store it on the
    context; and
 10. call `Present` without an unconditional post-frame fence wait.
 
-The copy makes upload-memory reuse genuinely GPU-fence-sensitive. Probe content
-is not read back. The staged CBV exercises bounded descriptor addressing and
-exhaustion policy, but it is CPU-only, never bound to the G-004 triangle, and is
-not a shader-visible descriptor system. Its cursor follows the same
-conservative frame retirement boundary even though an unbound staging
-descriptor is not itself consumed by the GPU.
+The root CBV makes upload-memory reuse genuinely GPU-fence-sensitive, and the
+copy retains the G-003 default-heap probe. Probe content is not read back. The
+staged CBV continues to exercise bounded CPU descriptor addressing and
+exhaustion policy, but the shader binds the same record through the root CBV;
+the staged descriptor is not copied into the persistent checker heap. Its
+cursor follows the same conservative frame retirement boundary.
 
 Each probe destination is created in `D3D12_RESOURCE_STATE_COMMON`.
 `CopyBufferRegion` uses Direct3D 12 buffer promotion to `COPY_DEST`, and the
@@ -106,13 +128,14 @@ after every frame.
 
 The generated shader byte arrays are borrowed only while the root signature and
 PSO are created synchronously. Presentation owns neither source code nor shader
-artifacts after creation. The root signature and PSO remain valid across swap
-chain resize and are released only after shutdown drains and retires every
-submitted frame.
+artifacts after creation. The root signature, PSO, cube buffers, checker, and
+checker heap remain valid across swap-chain resize and are released only after
+shutdown drains and retires every submitted frame.
 
-Legacy transition barriers are intentional for explicit back-buffer state
-changes here. Enhanced-barrier selection is owned by the later render-graph
-work, not this first-pixel proof.
+Legacy transition barriers are intentional for the explicit back-buffer and
+static-upload transitions here. The depth target remains in `DEPTH_WRITE`.
+Enhanced-barrier selection is owned by the later render-graph work, not this
+focused presentation proof.
 
 ## Resize, minimize, and shutdown
 
@@ -121,17 +144,23 @@ differs from the swap chain, presentation:
 
 1. drains its direct queue;
 2. retires every context's completed frame submission;
-3. releases all three back-buffer references;
+3. releases all three back-buffer references and the old depth texture;
 4. calls `ResizeBuffers` with the new physical extent; and
-5. reacquires, renames, and recreates the three RTVs.
+5. reacquires, renames, and recreates the three RTVs, then creates and names a
+   matching `D32_FLOAT` depth texture and DSV.
 
 A minimized window publishes no zero render extent. The sandbox stops
-presenting while minimized and resumes from the restored resize event. A
-duplicate restore extent is a no-op. Shutdown drains the queue, retires every
-outstanding frame submission, verifies every submitted frame retired, releases
-every back buffer and all resources owned by the contexts, closes the fence
-event, and remains safe to call again. Resize and shutdown are the only
-unconditional full-queue drains in a successful fixed smoke run.
+updating or presenting the camera while minimized and resumes from the restored
+resize event. A duplicate restore extent is a no-op. Shutdown drains the queue,
+retires every outstanding frame submission, verifies every submitted frame
+retired, releases every back buffer, the depth texture, cube resources,
+checker heap, pipeline objects, and all context-owned resources, closes the
+fence event, and remains safe to call again.
+
+A successful fixed smoke has one bounded static-upload startup wait plus one
+full-queue drain per effective resize and one at shutdown. Normal frames still
+perform no unconditional wait. The startup fence wait is not a
+`full_queue_drains` event.
 
 ## Failure and diagnostics contract
 
@@ -167,21 +196,32 @@ The frame count is not user-configurable. A successful run:
 
 - shows a real nonactivating window;
 - presents 250 successful frames;
-- changes the physical client area to `960x540` and verifies the presentation
-  extent follows it;
+- changes the physical client area to `960x600`, verifies the presentation and
+  depth extents follow it, and proves the projection aspect changed from the
+  initial `1280x720`;
 - reaches 500 frames, minimizes, and proves the count does not advance;
 - observes restore followed by its resize event;
 - reaches exactly 1,000 successful presents;
 - proves all three DXGI-selected contexts were acquired and reused;
-- matches acquisitions, upload/descriptor allocations, and fence-tracked
-  submissions to successful plus occluded present attempts;
-- proves every submitted frame records exactly one triangle draw and three
-  vertices;
+- matches `frame_context_acquisitions`, `camera_constant_updates`,
+  `upload_allocations`, `descriptor_allocations`, and fence-tracked
+  `frame_submissions` to successful plus occluded present attempts;
+- proves `cube_draw_calls`, `depth_clear_count`, and `texture_bindings` each
+  equal `frame_submissions`, while `cube_indices == cube_draw_calls * 36`;
 - retires every submission by explicit shutdown;
 - verifies one 256-byte GPU-consumed upload and one CPU staging descriptor per
   attempt, with high-water marks of 256 bytes and one descriptor;
-- proves full queue drains equal effective resizes plus shutdown while reporting
-  the hardware-dependent context-reuse wait count without constraining it;
+- proves `static_upload_submissions == 1`,
+  `geometry_buffer_creations == 2`, `checker_texture_creations == 1`, and
+  `texture_srv_creations == 1`; the static upload completes its bounded wait
+  before the first frame;
+- proves `depth_resource_creations == resize_count + 1` and
+  `full_queue_drains == resize_count + 1` for effective resizes plus shutdown,
+  while reporting the hardware-dependent context-reuse wait count without
+  constraining it;
+- proves `camera_matrix_changes >= 3` for the initial matrix, the
+  aspect-changing resize, and the scripted `0.25`-radian yaw after frame 750;
+- verifies no cube draw, camera upload, or depth clear occurs while minimized;
 - explicitly shuts down and validates presentation children;
 - posts and accepts the native close request; and
 - observes final HWND destruction.
@@ -189,8 +229,9 @@ The frame count is not user-configurable. A successful run:
 Early close, dropped lifecycle events, occlusion that prevents progress,
 deadline expiry, a dimension mismatch, any graphics failure, incomplete close,
 or a final count other than 1,000 returns a nonzero process exit code.
-The smoke validates compilation, draw submission, lifetime, and diagnostics; it
-does not read back or compare the final pixels.
+The smoke validates compilation, resource binding, indexed draw and depth
+submission, aspect propagation, lifetime, and diagnostics; it does not read
+back or compare the final pixels.
 
 CTest runs hardware, packaged WARP, and packaged WARP with GPU-based validation
 as separate serial processes. Debug and Release must both pass those checks in
@@ -198,14 +239,16 @@ addition to the device-only, platform-only, and frame-resource unit tests.
 
 ## Explicit non-goals
 
-G-004 does not expose a public/general upload allocator, global upload ring,
-shader-visible descriptor heap, persistent descriptor allocator, generic
-deferred-destruction system, or readback/image validation. Its root signature
-and PSO are deliberately specific to the first triangle, not a general shader
-asset system, pipeline cache, or hot-reload boundary. It adds no vertex/index
-buffer, texture, shader-visible binding, camera, depth buffer, render graph,
-copy queue, asynchronous compute, fullscreen policy, or tearing mode. Camera
-math, reversed-Z depth, and the textured cube are G-005.
+G-005 does not expose a public/general upload allocator, global upload ring,
+persistent descriptor allocator, generic deferred-destruction system, or
+readback/image validation. Its one-slot shader-visible heap, root signature,
+geometry, checker, and PSO are deliberately specific to the cube proof, not a
+general asset system, mesh manager, material layout, pipeline cache, or
+hot-reload boundary. It adds no copy queue, asynchronous compute, render graph,
+fullscreen policy, tearing mode, asset texture loading, mip generation, or
+scene/ECS layer.
 
-See [the first HLSL pipeline contract](GRAPHICS_PIPELINE.md) for compilation,
-generated artifacts, root-signature/PSO state, and the draw contract.
+See [the HLSL pipeline contract](GRAPHICS_PIPELINE.md) for compilation,
+generated artifacts, root-signature/PSO state, and the indexed draw contract.
+See [the camera and textured-cube contract](CAMERA_AND_CUBE.md) for coordinate,
+input, depth, geometry, texture, and acceptance rules.

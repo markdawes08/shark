@@ -58,6 +58,9 @@ submission, fence, resize, and present operations query the device-removal
 reason and log bounded automatic-breadcrumb, breadcrumb-context, page-fault,
 existing-allocation, and recently-freed-allocation details. G-004 preserves the
 same path while adding root-signature/PSO creation and a real draw submission.
+G-005 keeps that diagnostic boundary while adding the camera constants,
+shader-visible checker binding, indexed geometry, static upload submission, and
+reversed-Z depth resource.
 
 If a debugger is attached, corruption and error messages also request a debug
 break. Unattended processes count and report those severities instead of
@@ -89,9 +92,9 @@ Selection rules are strict:
 `--gpu-smoke` and `--capabilities` create no window and exit after device
 verification. `--present-smoke` accepts the normal GPU selectors and optional
 GPU-based validation, creates a real window, presents exactly 1,000 successful
-triangle frames, verifies its lifecycle, and exits. The default interactive path
-keeps the device alive while first-triangle presentation runs until the window
-is closed.
+indexed-cube frames, verifies camera/depth/resource lifecycles, and exits. The
+default interactive path keeps the device alive while the G-005 free-fly camera
+and textured-cube presentation run until the window is closed.
 
 ## Required and optional capabilities
 
@@ -147,9 +150,9 @@ CTest keeps six independent integration processes:
 - the GPU-independent Win32 lifecycle smoke;
 - automatic hardware device creation;
 - packaged WARP device creation;
-- automatic hardware triangle/present;
-- packaged WARP triangle/present; and
-- packaged WARP triangle/present with GPU-based validation.
+- `integration.gpu.hardware_cube_present`;
+- `integration.gpu.warp_cube_present`; and
+- `integration.gpu.warp_cube_present_validation`.
 
 Three separate serial build checks verify shader include dependency rebuilding,
 malformed-source rejection, and warning-as-error rejection before the graphics
@@ -158,15 +161,20 @@ integration contract is considered complete.
 Unit tests cover the exact Feature Level/Shader Model baseline, the complete CLI
 conflict/malformed-index boundary, aligned frame-arena allocation and
 exhaustion, invalid lifecycle transitions, fence-gated retirement, and monotonic
-fence exhaustion. The presentation smoke additionally verifies all three frame
-contexts are reused and every submission retires during explicit shutdown,
-before frame resources are released.
+fence exhaustion. G-005 adds core matrix, finite reversed-Z camera,
+controller/focus lifecycle, 24/36 cube geometry, checker generation, input
+layout, and depth-state unit coverage. The presentation smoke additionally
+verifies all three frame contexts are reused and every submission retires
+during explicit shutdown, before frame resources are released.
 
-Presentation shutdown explicitly drains and releases its command list, PSO,
-root signature, swap-chain resources, and frame contexts before
+Presentation shutdown explicitly drains and releases its command list, cube
+PSO/root signature, checker descriptor heap and texture, vertex/index buffers,
+depth texture/DSV, swap-chain resources, and frame contexts before
 `Device::validate_debug_state` checks new D3D12 and DXGI messages plus live
 D3D12 child objects. Debug and Release must both build and pass all registered
 tests with zero DirectX corruption or error messages. See the
 [presentation and frame-resource contract](GRAPHICS_PRESENTATION.md) for the
 G-002/G-003 frame, staging, retirement, and resize rules, and the
-[first HLSL pipeline contract](GRAPHICS_PIPELINE.md) for G-004.
+[HLSL pipeline contract](GRAPHICS_PIPELINE.md) for the G-004/G-005 shader and
+draw path. See [the camera and textured-cube contract](CAMERA_AND_CUBE.md) for
+the G-005 input, math, depth, static-resource, and acceptance rules.

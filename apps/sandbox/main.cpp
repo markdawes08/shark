@@ -5,11 +5,13 @@
 #include <shark/platform/events.hpp>
 #include <shark/rhi/d3d12/device.hpp>
 #include <shark/rhi/d3d12/presentation.hpp>
+#include <shark/world/camera.hpp>
 
+#include "camera_controller.hpp"
 #include "options.hpp"
 
-#include <triangle.pixel.hpp>
-#include <triangle.vertex.hpp>
+#include <cube.pixel.hpp>
+#include <cube.vertex.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -149,6 +151,12 @@ void log_platform_event(const shark::platform::Event& event)
                     core::LogLevel::info,
                     "window",
                     std::string{"Restored client area at "} + extent);
+            },
+            [](const platform::WindowFocusChangedEvent& focus) {
+                core::log_message(
+                    core::LogLevel::debug,
+                    "window",
+                    focus.focused ? "Focused" : "Focus lost");
             },
             [](const platform::KeyEvent& key) {
                 auto message = std::string{"Virtual key "};
@@ -410,8 +418,9 @@ void log_platform_event(const shark::platform::Event& event)
 
     constexpr std::uint64_t resize_after_frames = 250;
     constexpr std::uint64_t minimize_after_frames = 500;
+    constexpr std::uint64_t change_camera_after_frames = 750;
     constexpr std::uint64_t required_smoke_frames = 1'000;
-    constexpr platform::WindowExtent smoke_resize_extent{960, 540};
+    constexpr platform::WindowExtent smoke_resize_extent{960, 600};
     const auto smoke_deadline_duration =
         device.gpu_based_validation_enabled()
         ? std::chrono::seconds{150}
@@ -441,18 +450,25 @@ void log_platform_event(const shark::platform::Event& event)
     presentation_config.extent = to_presentation_extent(
         application.client_extent());
     presentation_config.vertex_shader = {
-        shark_triangle_vertex_shader,
-        sizeof(shark_triangle_vertex_shader),
+        shark_cube_vertex_shader,
+        sizeof(shark_cube_vertex_shader),
     };
     presentation_config.pixel_shader = {
-        shark_triangle_pixel_shader,
-        sizeof(shark_triangle_pixel_shader),
+        shark_cube_pixel_shader,
+        sizeof(shark_cube_pixel_shader),
     };
     presentation_config.synchronize_to_vertical_refresh = !smoke_mode;
     auto presentation_result = rhi::d3d12::Presentation::create(
         device,
         presentation_config);
     if (!presentation_result) {
+        const auto validation_result = device.validate_debug_state();
+        if (!validation_result) {
+            core::log_message(
+                core::LogLevel::error,
+                "gpu.validation",
+                validation_result.error().message());
+        }
         return core::Result<void>::failure(
             std::move(presentation_result).error());
     }
@@ -462,9 +478,13 @@ void log_platform_event(const shark::platform::Event& event)
         core::LogLevel::info,
         "sandbox",
         smoke_mode
-            ? "Running fixed 1,000-frame triangle presentation smoke test"
-            : "Direct3D 12 first-triangle presentation initialized");
+            ? "Running fixed 1,000-frame textured-cube presentation "
+                "smoke test"
+            : "Direct3D 12 textured-cube presentation initialized");
 
+    world::Camera camera;
+    sandbox::CameraController camera_controller;
+    auto previous_frame_time = std::chrono::steady_clock::now();
     const auto smoke_deadline =
         std::chrono::steady_clock::now() + smoke_deadline_duration;
     bool resize_requested = false;
@@ -478,8 +498,13 @@ void log_platform_event(const shark::platform::Event& event)
     bool smoke_close_posted = false;
     bool observed_close_request = false;
     bool observed_closed = false;
+    bool smoke_camera_pose_changed = false;
     bool debug_state_validated = false;
     std::uint64_t frames_when_minimized = 0;
+    std::uint64_t submissions_when_minimized = 0;
+    std::uint64_t cube_draws_when_minimized = 0;
+    std::uint64_t camera_updates_when_minimized = 0;
+    std::uint64_t depth_clears_when_minimized = 0;
 
     for (;;) {
         auto pump_result = application.poll_events();
@@ -491,6 +516,12 @@ void log_platform_event(const shark::platform::Event& event)
         bool accept_close = false;
         std::optional<platform::WindowExtent> pending_resize;
         for (const auto& event : application.events()) {
+            if (const auto* const focus = std::get_if<
+                    platform::WindowFocusChangedEvent>(&event);
+                focus != nullptr) {
+                camera_controller.set_focused(focus->focused);
+            }
+            camera_controller.handle_event(event);
             log_platform_event(event);
             if (const auto* const resized =
                     std::get_if<platform::WindowResizedEvent>(&event);
@@ -524,6 +555,9 @@ void log_platform_event(const shark::platform::Event& event)
         }
 
         const auto dropped_events = application.dropped_event_count();
+        if (dropped_events != 0) {
+            camera_controller.reset();
+        }
         application.clear_events();
         if (smoke_mode && dropped_events != 0) {
             return core::Result<void>::failure(presentation_smoke_error(
@@ -622,7 +656,14 @@ void log_platform_event(const shark::platform::Event& event)
             if (observed_resize &&
                 !minimize_requested &&
                 presented_frames >= minimize_after_frames) {
-                frames_when_minimized = presented_frames;
+                const auto& stats = presentation.stats();
+                frames_when_minimized = stats.presented_frames;
+                submissions_when_minimized = stats.frame_submissions;
+                cube_draws_when_minimized = stats.cube_draw_calls;
+                camera_updates_when_minimized =
+                    stats.camera_constant_updates;
+                depth_clears_when_minimized =
+                    stats.depth_clear_count;
                 auto minimize_result = application.minimize_window();
                 if (!minimize_result) {
                     return core::Result<void>::failure(
@@ -634,11 +675,19 @@ void log_platform_event(const shark::platform::Event& event)
 
             if (application.minimized()) {
                 observed_minimized_iteration = true;
-                if (presentation.stats().presented_frames !=
-                    frames_when_minimized) {
+                const auto& stats = presentation.stats();
+                if (stats.presented_frames != frames_when_minimized ||
+                    stats.frame_submissions !=
+                        submissions_when_minimized ||
+                    stats.cube_draw_calls !=
+                        cube_draws_when_minimized ||
+                    stats.camera_constant_updates !=
+                        camera_updates_when_minimized ||
+                    stats.depth_clear_count !=
+                        depth_clears_when_minimized) {
                     return core::Result<void>::failure(
                         presentation_smoke_error(
-                            "A frame was presented while the window was "
+                            "Render work advanced while the window was "
                             "minimized"));
                 }
                 if (observed_minimized && !restore_requested) {
@@ -659,7 +708,8 @@ void log_platform_event(const shark::platform::Event& event)
                     !observed_minimized ||
                     !observed_minimized_iteration ||
                     !observed_restored ||
-                    !observed_restore_resize) {
+                    !observed_restore_resize ||
+                    !smoke_camera_pose_changed) {
                     return core::Result<void>::failure(
                         presentation_smoke_error(
                             "The presentation smoke lifecycle was incomplete"));
@@ -692,7 +742,41 @@ void log_platform_event(const shark::platform::Event& event)
             continue;
         }
 
-        auto present_result = presentation.present_frame();
+        const auto frame_time = std::chrono::steady_clock::now();
+        const auto elapsed_seconds =
+            std::chrono::duration<float>(
+                frame_time - previous_frame_time).count();
+        previous_frame_time = frame_time;
+        if (!smoke_mode) {
+            camera_controller.update(camera, elapsed_seconds);
+        }
+        else if (!smoke_camera_pose_changed &&
+                 presentation.stats().presented_frames >=
+                     change_camera_after_frames) {
+            world::advance_camera(
+                camera,
+                world::CameraMotion{.yaw_radians = 0.25F},
+                0.0F,
+                1.0F);
+            smoke_camera_pose_changed = true;
+        }
+
+        const auto presentation_extent = presentation.extent();
+        const auto aspect_ratio =
+            static_cast<float>(presentation_extent.width) /
+            static_cast<float>(presentation_extent.height);
+        auto matrices_result = world::build_camera_matrices(
+            camera,
+            aspect_ratio);
+        if (!matrices_result) {
+            return core::Result<void>::failure(
+                std::move(matrices_result).error());
+        }
+        const rhi::d3d12::PresentationFrameData frame_data{
+            .view_projection =
+                matrices_result.value().view_projection,
+        };
+        auto present_result = presentation.present_frame(frame_data);
         if (!present_result) {
             return core::Result<void>::failure(
                 std::move(present_result).error());
@@ -743,9 +827,20 @@ void log_platform_event(const shark::platform::Event& event)
             stats.upload_high_water_bytes != frame_probe_bytes ||
             stats.descriptor_allocations != stats.frame_submissions ||
             stats.descriptor_high_water_count != 1 ||
-            stats.triangle_draw_calls != stats.frame_submissions ||
-            stats.triangle_vertices !=
-                stats.triangle_draw_calls * 3 ||
+            stats.cube_draw_calls != stats.frame_submissions ||
+            stats.cube_indices !=
+                stats.cube_draw_calls * 36 ||
+            stats.camera_constant_updates !=
+                stats.frame_submissions ||
+            stats.camera_matrix_changes < 3 ||
+            stats.depth_clear_count != stats.frame_submissions ||
+            stats.depth_resource_creations !=
+                stats.resize_count + 1 ||
+            stats.texture_bindings != stats.frame_submissions ||
+            stats.static_upload_submissions != 1 ||
+            stats.geometry_buffer_creations != 2 ||
+            stats.checker_texture_creations != 1 ||
+            stats.texture_srv_creations != 1 ||
             stats.full_queue_drains != stats.resize_count + 1 ||
             stats.last_submission_fence == 0) {
             return core::Result<void>::failure(
@@ -771,8 +866,12 @@ void log_platform_event(const shark::platform::Event& event)
         summary.append(", descriptor-high-water=");
         summary.append(std::to_string(
             stats.descriptor_high_water_count));
-        summary.append(", triangle-draws=");
-        summary.append(std::to_string(stats.triangle_draw_calls));
+        summary.append(", cube-draws=");
+        summary.append(std::to_string(stats.cube_draw_calls));
+        summary.append(", camera-matrix-changes=");
+        summary.append(std::to_string(stats.camera_matrix_changes));
+        summary.append(", depth-creations=");
+        summary.append(std::to_string(stats.depth_resource_creations));
         core::log_message(
             core::LogLevel::info,
             "gpu.presentation",

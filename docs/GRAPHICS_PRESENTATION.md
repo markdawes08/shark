@@ -1,6 +1,6 @@
 # Direct3D 12 Presentation and Frame-Resource Contract
 
-- **Completed through:** `G-007`
+- **Completed through:** `S-001`
 - **Last verified:** July 16, 2026
 
 G-002 produced Shark's first pixels through a resize-safe Direct3D 12
@@ -12,15 +12,18 @@ SRV binding, and a resize-safe reversed-Z depth target. G-006 preserves the
 same visible frame while declaring its back-buffer/depth use and centralizing
 its attachment transitions through a frame-local render graph. G-007 adds
 named PIX command-list events and fence-delayed direct-queue timestamps without
-changing the visible frame or adding a normal-frame wait.
+changing the visible frame or adding a normal-frame wait. S-001 preserves that
+frame contract while loading and uploading the first file-backed DDS cubemap
+and reserving its persistent SRV for S-002.
 
 ## Public boundary and ownership
 
 `shark::rhi::d3d12::Presentation` is a move-only PIMPL. Its public header uses
 an opaque native-window pointer and engine-owned extent, color,
 `PresentationFrameData`, status, and statistics records plus pointer/size
-`ShaderBytecodeView` inputs; it exposes no Win32, DXGI, D3D12, WRL, or COM
-types. `PresentationFrameData` contains one finite engine-owned row-major
+shader and generic texture-cube upload views; it exposes no Win32, DXGI,
+D3D12, WRL, or COM types. `PresentationFrameData` contains one finite
+engine-owned row-major
 `math::Matrix4x4 view_projection` value, which the per-frame call borrows while
 recording the current identity-world cube frame.
 
@@ -56,8 +59,10 @@ The presentation object owns:
   `uint16_t` indices;
 - one committed default-heap `8x8` one-mip
   `DXGI_FORMAT_R8G8B8A8_UNORM` procedural checker texture;
-- one persistent one-slot shader-visible CBV/SRV/UAV heap holding the checker
-  SRV;
+- one committed default-heap `8x8`, one-mip, six-face
+  `DXGI_FORMAT_R8G8B8A8_UNORM_SRGB` startup cubemap;
+- one persistent two-slot shader-visible CBV/SRV/UAV heap holding the checker
+  2D SRV at slot 0 and cubemap SRV at slot 1;
 - three frame contexts, each containing one direct command allocator, one
   persistently mapped 64 KiB committed upload buffer, one 256-byte default-heap
   upload-probe destination, one CPU-only 64-slot CBV/SRV/UAV staging heap, a
@@ -81,10 +86,11 @@ has already retired.
 ## Frame acquisition, staging, and present
 
 Presentation creation records one direct-queue static upload submission for the
-cube vertex/index data and checker. It transitions the immutable resources to
-their final draw states, signals the normal monotonic fence, performs one
-bounded startup wait, and releases the temporary upload resources before the
-first frame. No static geometry or texture upload occurs in the frame loop.
+cube vertex/index data, checker, and every cubemap face/mip. It transitions the
+immutable resources to their final shader/input states, signals the normal
+monotonic fence, performs one bounded startup wait, and releases the temporary
+upload resources before the first frame. No static geometry or texture upload
+occurs in the frame loop.
 
 One frame performs the following work:
 
@@ -123,7 +129,7 @@ The root CBV makes upload-memory reuse genuinely GPU-fence-sensitive, and the
 copy retains the G-003 default-heap probe. Probe content is not read back. The
 staged CBV continues to exercise bounded CPU descriptor addressing and
 exhaustion policy, but the shader binds the same record through the root CBV;
-the staged descriptor is not copied into the persistent checker heap. Its
+the staged descriptor is not copied into the persistent texture heap. Its
 cursor follows the same conservative frame retirement boundary.
 
 Each probe destination is created in `D3D12_RESOURCE_STATE_COMMON`.
@@ -140,11 +146,12 @@ Vertical synchronization may block inside `Present`, and context reuse may
 perform a bounded fence wait; G-003 removes only the unconditional queue drain
 after every frame.
 
-The generated shader byte arrays are borrowed only while the root signature and
-PSO are created synchronously. Presentation owns neither source code nor shader
-artifacts after creation. The root signature, PSO, cube buffers, checker, and
-checker heap remain valid across swap-chain resize and are released only after
-shutdown drains and retires every submitted frame.
+The generated shader byte arrays and CPU cubemap subresource views are borrowed
+only during synchronous creation. Presentation owns neither source code,
+shader artifacts, nor caller CPU pixels afterward. The root signature, PSO,
+cube buffers, checker, cubemap, and persistent texture heap remain valid across
+swap-chain resize and are released only after shutdown drains and retires every
+submitted frame.
 
 G-006's graph executor owns the per-frame whole-resource legacy transition
 barriers. It resolves the current imported resources immediately before graph
@@ -165,8 +172,9 @@ Frame
   TexturedCube
 ```
 
-`StaticCubeUpload` surrounds the one-time vertex, index, checker copy, and their
-three initialization barriers. Each submitted `Frame` begins after command-list
+`StaticCubeUpload` surrounds the one-time vertex, index, checker, and six
+cubemap copies plus four initialization barriers. Each submitted `Frame` begins
+after command-list
 reset and encloses the diagnostic probe copy, graph barriers, `TexturedCube`,
 and timestamp resolve. `TexturedCube` begins after the graph's pre-pass color
 barrier and contains only the pass callback's clear, bind, and draw commands.
@@ -211,10 +219,10 @@ updating or presenting the camera while minimized and resumes from the restored
 resize event. A duplicate restore extent is a no-op. Shutdown drains the queue,
 consumes and retires every outstanding frame submission, verifies every
 submission retired, releases every back buffer, the depth texture, cube
-resources, checker heap, pipeline objects, timestamp query/readback storage,
-and all context-owned resources, closes the fence event, and remains safe to
-call again. The fixed smoke then verifies that every submission produced one
-timing sample.
+resources, checker/cubemap texture heap, pipeline objects, timestamp
+query/readback storage, and all context-owned resources, closes the fence
+event, and remains safe to call again. The fixed smoke then verifies that every
+submission produced one timing sample.
 
 A successful fixed smoke has one bounded static-upload startup wait plus one
 full-queue drain per effective resize and one at shutdown. Normal frames still
@@ -288,8 +296,11 @@ The frame count is not user-configurable. A successful run:
   attempt, with high-water marks of 256 bytes and one descriptor;
 - proves `static_upload_submissions == 1`,
   `geometry_buffer_creations == 2`, `checker_texture_creations == 1`, and
-  `texture_srv_creations == 1`; the static upload completes its bounded wait
-  before the first frame;
+  `cubemap_texture_creations == 1`;
+- proves six faces, one mip, six subresources, and 1,536 source bytes were
+  uploaded, with `texture_srv_creations == 2`,
+  `cubemap_srv_creations == 1`, and two persistent texture descriptors; the
+  static upload completes its bounded wait before the first frame;
 - proves `depth_resource_creations == resize_count + 1` and
   `full_queue_drains == resize_count + 1` for effective resizes plus shutdown,
   while reporting the hardware-dependent context-reuse wait count without
@@ -316,21 +327,21 @@ planner, and D3D12 graph-executor unit tests.
 
 ## Explicit non-goals
 
-G-007 does not expose a public/general upload allocator, global upload ring,
+S-001 does not expose a public/general upload allocator, global upload ring,
 persistent descriptor allocator, generic deferred-destruction system, or
 readback/image validation. Its timestamp query heap and readback buffer are a
 fixed presentation diagnostic, not a general query allocator or asynchronous
-readback service. Its one-slot shader-visible heap, root signature, geometry,
-checker, and PSO are deliberately specific to the cube proof, not a general
-asset system, mesh manager, material layout, pipeline cache, or hot-reload
-boundary.
+readback service. Its two-slot shader-visible heap, root signature, geometry,
+checker, reserved cubemap SRV, and PSO remain deliberately specific to this
+proof, not a general mesh manager, material layout, pipeline cache, or
+hot-reload boundary.
 
 The graph remains frame-local, direct-queue, serial, and limited to imported
 whole resources. It adds no graph-owned transients, lifetime/aliasing analysis,
 subresource tracking, automatic attachment binding, pass culling/merging,
 parallel recording, copy queue, asynchronous compute, enhanced barriers,
-fullscreen policy, tearing mode, asset texture loading, mip generation, or
-scene/ECS layer.
+fullscreen policy, tearing mode, general texture/material loading, mip
+generation, streaming, or scene/ECS layer.
 
 G-007 also adds no live HUD, Dear ImGui, capture automation, graph-owned
 automatic pass profiling, CPU/GPU clock calibration, stable-power-state
@@ -344,4 +355,6 @@ input, depth, geometry, texture, and acceptance rules. See
 [the minimal render-graph contract](RENDER_GRAPH.md) for declaration,
 compilation, execution, barrier, and accounting rules. See
 [the GPU diagnostics contract](GPU_DIAGNOSTICS.md) for marker and timing
-details plus manual PIX acceptance.
+details plus manual PIX acceptance. See
+[the DDS cubemap contract](DDS_CUBEMAP.md) for asset validation, orientation,
+deployment, upload, and persistent-SRV rules.

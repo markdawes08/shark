@@ -1,6 +1,6 @@
 # Camera, Reversed-Z Depth, and Textured Cube Contract
 
-- **Completed through:** `G-006`
+- **Completed through:** `S-001`
 - **Last verified:** July 16, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
@@ -102,12 +102,12 @@ deterministically in memory. Adjacent texels alternate between
 identifier, color-space metadata, compression, mip generation, or streaming
 behavior.
 
-Presentation records the vertex-buffer, index-buffer, and texture copies into
-one direct-queue static-upload submission during startup. It transitions the
-buffers to their input-assembler states and the texture to
-`PIXEL_SHADER_RESOURCE`, signals the normal monotonic direct fence, and performs
-one bounded startup wait before releasing the temporary upload storage. No copy
-queue, background transfer, or per-frame static upload exists.
+Presentation records the vertex-buffer, index-buffer, checker, and S-001
+cubemap copies into one direct-queue static-upload submission during startup.
+It transitions the buffers to their input-assembler states and both textures to
+`PIXEL_SHADER_RESOURCE`, signals the normal monotonic direct fence, and
+performs one bounded startup wait before releasing the temporary upload
+storage. No copy queue, background transfer, or per-frame static upload exists.
 
 ## Resource binding and shaders
 
@@ -119,8 +119,9 @@ The G-005 root signature contains:
 - one point-filtered wrap static sampler at `s0`.
 
 Unused hull, domain, and geometry shader root access remains denied. One
-persistent shader-visible CBV/SRV/UAV heap holds the checker SRV. It is a
-single-resource proof, not the stable-index persistent allocator or bindless
+persistent shader-visible CBV/SRV/UAV heap holds the checker SRV at slot 0 and
+the reserved cubemap SRV at slot 1. The current one-entry root table still
+binds only slot 0. This is not the stable-index persistent allocator or bindless
 heap planned for later renderer infrastructure.
 
 Each frame writes one 256-byte-aligned record into the acquired frame context's
@@ -183,9 +184,9 @@ The permanent accounting contract requires:
 - all three DXGI-selected frame contexts are acquired and reused;
 - every submission retires before shutdown;
 - `static_upload_submissions == 1`, `geometry_buffer_creations == 2`,
-  `checker_texture_creations == 1`, and `texture_srv_creations == 1`; the
-  startup submission completes through its bounded fence wait before the first
-  frame;
+  `checker_texture_creations == 1`, `cubemap_texture_creations == 1`, and
+  `texture_srv_creations == 2`; the startup submission completes through its
+  bounded fence wait before the first frame;
 - `depth_resource_creations == resize_count + 1`;
 - no draw, camera upload, or depth clear occurs while minimized;
 - `camera_matrix_changes >= 3`, covering the initial matrix, the
@@ -213,9 +214,10 @@ CPU coverage is discovered through the existing `unit.` CTest prefix from
 
 ## Explicit non-goals
 
-G-006 adds no general asset importer, DDS/WIC/glTF loader, DirectXTex runtime
-path, mip chain, compression, texture streaming, sRGB/HDR policy, material/PBR
-system, lighting, skybox, terrain, or content database.
+S-001 adds only one strict DX10 DDS cubemap path. It adds no general
+DDS/WIC/glTF importer, runtime mip generation, compression, texture streaming,
+HDR conversion, material/PBR system, lighting, visible skybox, terrain, or
+content database.
 
 It also adds no general mesh/resource/descriptor manager, typed GPU handles,
 placed-resource pool, copy queue, deferred uploader, shader reflection, runtime
@@ -229,4 +231,6 @@ The G-006 render graph is intentionally limited to one frame-local
 `TexturedCube` pass and imported whole-resource attachment state. It does not
 change the camera, cube, shader, depth, texture, or input behavior described
 here. See [the minimal render-graph contract](RENDER_GRAPH.md) for its exact
-declaration, ordering, barrier, and accounting boundaries.
+declaration, ordering, barrier, and accounting boundaries. See
+[the DDS cubemap contract](DDS_CUBEMAP.md) for the separate startup texture
+that remains unbound by this pass until S-002.

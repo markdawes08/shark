@@ -1,3 +1,4 @@
+find_package(directxtex CONFIG REQUIRED)
 find_package(directxmath CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(winpixevent CONFIG REQUIRED)
@@ -8,6 +9,8 @@ find_package(winpixevent CONFIG REQUIRED)
 set_property(TARGET spdlog::spdlog PROPERTY INTERFACE_COMPILE_OPTIONS "")
 
 add_library(SharkEngine STATIC
+    assets/include/shark/assets/dds_cubemap.hpp
+    assets/src/dds_cubemap.cpp
     core/include/shark/core/assertion.hpp
     core/include/shark/core/error.hpp
     core/include/shark/core/engine_info.hpp
@@ -41,6 +44,7 @@ add_library(SharkEngine STATIC
 
 target_include_directories(SharkEngine
     PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/core/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/platform/windows/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/render_graph/include"
@@ -60,6 +64,7 @@ target_compile_definitions(SharkEngine
 target_link_libraries(SharkEngine
     PRIVATE
         spdlog::spdlog
+        Microsoft::DirectXTex
         Microsoft::DirectX-Headers
         Microsoft::DirectX-Guids
         Microsoft::DirectXMath

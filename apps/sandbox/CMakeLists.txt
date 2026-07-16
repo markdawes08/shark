@@ -35,6 +35,8 @@ target_compile_definitions(SharkSandbox
 add_custom_command(TARGET SharkSandbox POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E make_directory
         "$<TARGET_FILE_DIR:SharkSandbox>/D3D12"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory
+        "$<TARGET_FILE_DIR:SharkSandbox>/content/sky"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "$<TARGET_FILE:Microsoft::DirectX12-Core>"
         "$<TARGET_FILE_DIR:SharkSandbox>/D3D12/D3D12Core.dll"
@@ -44,6 +46,9 @@ add_custom_command(TARGET SharkSandbox POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "$<TARGET_FILE:Microsoft::DirectX-WARP>"
         "$<TARGET_FILE_DIR:SharkSandbox>/d3d10warp.dll"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${PROJECT_SOURCE_DIR}/content/source/sky/shark_orientation_sky_srgb.dds"
+        "$<TARGET_FILE_DIR:SharkSandbox>/content/sky/shark_orientation_sky_srgb.dds"
     VERBATIM
 )
 

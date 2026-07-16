@@ -1,3 +1,4 @@
+#include <shark/assets/dds_cubemap.hpp>
 #include <shark/core/error.hpp>
 #include <shark/core/logging.hpp>
 #include <shark/core/result.hpp>
@@ -13,10 +14,14 @@
 #include <cube.pixel.hpp>
 #include <cube.vertex.hpp>
 
+#include <Windows.h>
+
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <iomanip>
 #include <optional>
 #include <sstream>
@@ -93,6 +98,68 @@ to_presentation_extent(
         shark::core::ErrorCode::operation_failed,
         std::move(message),
     };
+}
+
+[[nodiscard]] shark::core::Result<std::filesystem::path>
+executable_directory()
+{
+    using namespace shark;
+
+    std::vector<wchar_t> path_buffer(260);
+    for (;;) {
+        const auto length = GetModuleFileNameW(
+            nullptr,
+            path_buffer.data(),
+            static_cast<DWORD>(path_buffer.size()));
+        if (length == 0) {
+            return core::Result<std::filesystem::path>::failure(
+                core::Error{
+                    core::ErrorCategory::platform,
+                    core::ErrorCode::operation_failed,
+                    "GetModuleFileNameW failed while locating startup "
+                    "content",
+                });
+        }
+        if (length < path_buffer.size()) {
+            return core::Result<std::filesystem::path>::success(
+                std::filesystem::path{
+                    path_buffer.data(),
+                    path_buffer.data() + length}.parent_path());
+        }
+        if (path_buffer.size() >= 32'768U) {
+            return core::Result<std::filesystem::path>::failure(
+                core::Error{
+                    core::ErrorCategory::platform,
+                    core::ErrorCode::operation_failed,
+                    "The Shark executable path exceeds the supported "
+                    "Windows path length",
+                });
+        }
+        path_buffer.resize(
+            std::min<std::size_t>(
+                path_buffer.size() * 2U,
+                32'768U));
+    }
+}
+
+[[nodiscard]] shark::core::Result<shark::assets::DdsCubemap>
+load_startup_cubemap()
+{
+    using namespace shark;
+
+    auto directory_result = executable_directory();
+    if (!directory_result) {
+        return core::Result<assets::DdsCubemap>::failure(
+            std::move(directory_result).error());
+    }
+    const auto path =
+        directory_result.value() /
+        "content" /
+        "sky" /
+        "shark_orientation_sky_srgb.dds";
+    return assets::load_dds_cubemap_file(
+        path,
+        assets::TextureColorSpace::srgb);
 }
 
 [[nodiscard]] std::string_view key_action_name(
@@ -461,6 +528,41 @@ void log_platform_event(const shark::platform::Event& event)
         }
     }
 
+    auto cubemap_result = load_startup_cubemap();
+    if (!cubemap_result) {
+        return core::Result<void>::failure(
+            std::move(cubemap_result).error());
+    }
+    auto cubemap = std::move(cubemap_result).value();
+    std::vector<rhi::d3d12::TextureSubresourceDataView>
+        cubemap_subresources;
+    cubemap_subresources.reserve(cubemap.subresource_count());
+    for (std::size_t index = 0;
+         index < cubemap.subresource_count();
+         ++index) {
+        const auto subresource = cubemap.subresource(index);
+        if (!subresource.has_value()) {
+            return core::Result<void>::failure(core::Error{
+                core::ErrorCategory::assets,
+                core::ErrorCode::invalid_state,
+                "The loaded startup cubemap lost a validated "
+                "subresource",
+            });
+        }
+        cubemap_subresources.push_back({
+            .data = subresource->pixels.data(),
+            .data_size = subresource->pixels.size(),
+            .width = subresource->width,
+            .height = subresource->height,
+            .row_pitch = subresource->row_pitch,
+            .slice_pitch = subresource->slice_pitch,
+        });
+    }
+    const auto cubemap_format =
+        cubemap.format() == assets::TextureFormat::rgba8_unorm_srgb
+        ? rhi::d3d12::TextureDataFormat::rgba8_unorm_srgb
+        : rhi::d3d12::TextureDataFormat::rgba8_unorm;
+
     rhi::d3d12::PresentationConfig presentation_config;
     presentation_config.native_window =
         application.native_window_handle().value;
@@ -473,6 +575,14 @@ void log_platform_event(const shark::platform::Event& event)
     presentation_config.pixel_shader = {
         shark_cube_pixel_shader,
         sizeof(shark_cube_pixel_shader),
+    };
+    presentation_config.startup_cubemap = {
+        .width = cubemap.width(),
+        .height = cubemap.height(),
+        .mip_levels = cubemap.mip_levels(),
+        .format = cubemap_format,
+        .subresources = cubemap_subresources.data(),
+        .subresource_count = cubemap_subresources.size(),
     };
     presentation_config.synchronize_to_vertical_refresh = !smoke_mode;
     auto presentation_result = rhi::d3d12::Presentation::create(
@@ -490,6 +600,20 @@ void log_platform_event(const shark::platform::Event& event)
             std::move(presentation_result).error());
     }
     auto presentation = std::move(presentation_result).value();
+
+    core::log_message(
+        core::LogLevel::info,
+        "assets.cubemap",
+        std::string{"Loaded startup DDS cubemap: "} +
+            std::to_string(cubemap.width()) + "x" +
+            std::to_string(cubemap.height()) + ", faces=6, mips=" +
+            std::to_string(cubemap.mip_levels()) +
+            ", subresources=" +
+            std::to_string(cubemap.subresource_count()) +
+            ", color-space=" +
+            (cubemap.color_space() == assets::TextureColorSpace::srgb
+                ? "sRGB"
+                : "linear"));
 
     core::log_message(
         core::LogLevel::info,
@@ -927,7 +1051,15 @@ void log_platform_event(const shark::platform::Event& event)
             stats.static_upload_submissions != 1 ||
             stats.geometry_buffer_creations != 2 ||
             stats.checker_texture_creations != 1 ||
-            stats.texture_srv_creations != 1 ||
+            stats.cubemap_texture_creations != 1 ||
+            stats.texture_srv_creations != 2 ||
+            stats.cubemap_srv_creations != 1 ||
+            stats.cubemap_faces_uploaded != 6 ||
+            stats.cubemap_mip_levels != 1 ||
+            stats.cubemap_subresources_uploaded != 6 ||
+            stats.cubemap_source_bytes_uploaded != 1'536 ||
+            stats.persistent_texture_descriptors != 2 ||
+            stats.cubemap_srgb_resources != 1 ||
             stats.full_queue_drains != stats.resize_count + 1 ||
             stats.last_submission_fence == 0) {
             return core::Result<void>::failure(
@@ -997,6 +1129,16 @@ void log_platform_event(const shark::platform::Event& event)
         summary.append(std::to_string(stats.camera_matrix_changes));
         summary.append(", depth-creations=");
         summary.append(std::to_string(stats.depth_resource_creations));
+        summary.append(", cubemap(faces/mips/subresources/bytes)=");
+        summary.append(std::to_string(stats.cubemap_faces_uploaded));
+        summary.push_back('/');
+        summary.append(std::to_string(stats.cubemap_mip_levels));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.cubemap_subresources_uploaded));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.cubemap_source_bytes_uploaded));
         core::log_message(
             core::LogLevel::info,
             "gpu.presentation",

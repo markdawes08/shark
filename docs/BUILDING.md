@@ -44,8 +44,9 @@ dependency. G-001 consumes DirectX Headers/Guids and the Agility runtime;
 G-004 consumes DXC as a build-time host tool, G-005 consumes the header-only
 DirectXMath package for camera and transform math, and G-007 links the pinned
 WinPixEventRuntime so named command-list events remain available in Debug and
-Release. G-006's planner and executor remain engine-owned. DirectXTex stays
-restored for S-001.
+Release. G-006's planner and executor remain engine-owned. S-001 privately
+links the pinned DirectXTex runtime behind the engine-owned DDS cubemap
+boundary.
 
 The checked-in toolchain also scopes `UCRTContentRoot` to the complete Windows
 SDK payload for the CMake process. This avoids a Visual Studio 2026 installation
@@ -60,13 +61,17 @@ out/build/windows-vs2026/bin/Debug/SharkSandbox.exe
 out/build/windows-vs2026/bin/Debug/D3D12/D3D12Core.dll
 out/build/windows-vs2026/bin/Debug/D3D12/d3d12SDKLayers.dll
 out/build/windows-vs2026/bin/Debug/d3d10warp.dll
+out/build/windows-vs2026/bin/Debug/DirectXTex.dll
 out/build/windows-vs2026/bin/Debug/WinPixEventRuntime.dll
+out/build/windows-vs2026/bin/Debug/content/sky/shark_orientation_sky_srgb.dds
 out/build/windows-vs2026/bin/Debug/SharkTests.exe
 out/build/windows-vs2026/bin/Release/SharkSandbox.exe
 out/build/windows-vs2026/bin/Release/D3D12/D3D12Core.dll
 out/build/windows-vs2026/bin/Release/D3D12/d3d12SDKLayers.dll
 out/build/windows-vs2026/bin/Release/d3d10warp.dll
+out/build/windows-vs2026/bin/Release/DirectXTex.dll
 out/build/windows-vs2026/bin/Release/WinPixEventRuntime.dll
+out/build/windows-vs2026/bin/Release/content/sky/shark_orientation_sky_srgb.dds
 out/build/windows-vs2026/bin/Release/SharkTests.exe
 out/build/windows-vs2026/lib/Debug/SharkEngine.lib
 out/build/windows-vs2026/lib/Release/SharkEngine.lib
@@ -76,19 +81,21 @@ out/build/windows-vs2026/generated/shaders/Release/cube.vertex.dxil
 out/build/windows-vs2026/generated/shaders/Release/cube.pixel.dxil
 ```
 
-vcpkg deploys the spdlog/fmt and WinPixEventRuntime DLLs beside executables that
-need them. Shark's post-build rules place the pinned Agility Core and SDK Layers
-under `D3D12/` and the pinned development-only WARP DLL beside
-`SharkSandbox.exe`. All generated binaries stay under ignored `out/`. The WARP
-NuGet binary is for local development and testing only and must never enter a
-packaged product.
+vcpkg deploys the spdlog/fmt, DirectXTex, and WinPixEventRuntime DLLs beside
+executables that need them. Shark's post-build rules place the pinned Agility
+Core and SDK Layers under `D3D12/`, the pinned development-only WARP DLL beside
+`SharkSandbox.exe`, and the tracked orientation DDS under `content/sky/`. All
+generated binaries stay under ignored `out/`. The WARP NuGet binary is for
+local development and testing only and must never enter a packaged product.
 
 With no arguments, `SharkSandbox` initializes the highest-priority eligible
 hardware device, opens the native Win32 window, and continuously draws the
 G-005 procedural-checker cube as the G-006 graph's one `TexturedCube` pass,
 through the G-003 triple frame-resource lifecycle and resize-safe reversed-Z
 depth target. G-007 emits `Frame` and `TexturedCube` PIX events and resolves
-their GPU timestamp intervals asynchronously. Use `W`/`S` along the camera
+their GPU timestamp intervals asynchronously. S-001 also loads the app-local
+DDS and creates its persistent texture-cube resource/SRV during startup, but
+does not draw it yet. Use `W`/`S` along the camera
 forward axis, `A`/`D` to strafe, `Q`/`E` to move down/up, hold `Shift` to move
 faster, and hold the right mouse button while dragging to look around.
 `Control` and `Space` are down/up aliases. Resize or minimize/restore the
@@ -193,8 +200,9 @@ its preceding submission fence has not completed; that checkpoint protects the
 allocator, camera bytes, and probe destination.
 
 Creation records one `StaticCubeUpload` PIX event, one static direct-queue
-upload submission, and one bounded wait for the 24-vertex/36-index cube and
-deterministic `8x8` checker. Every submitted frame records one outer `Frame`
+upload submission, and one bounded wait for the 24-vertex/36-index cube,
+deterministic `8x8` checker, and all six faces of the app-local `8x8` sRGB DDS
+cubemap. Every submitted frame records one outer `Frame`
 event and one nested `TexturedCube` event, compiles one graph importing the
 current back buffer and depth texture, executes one pass, records the back
 buffer's two legacy transitions, one 36-index draw, and one reversed-Z depth
@@ -226,6 +234,7 @@ directly with:
 ```powershell
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[render-graph]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[timestamps]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[assets][dds][cubemap]"
 ```
 
 CTest registers hardware and WARP device and presentation paths as separate
@@ -266,7 +275,9 @@ See [the minimal render-graph contract](RENDER_GRAPH.md) for graph declaration,
 ordering, validation, barrier mapping, accounting, and non-goals.
 See [the GPU diagnostics contract](GPU_DIAGNOSTICS.md) for PIX names,
 timestamp boundaries, fence-delayed readback, smoke accounting, and manual
-capture acceptance.
+capture acceptance. See [the DDS cubemap contract](DDS_CUBEMAP.md) for the
+tracked fixture, strict loader, app-local deployment, startup upload, and
+persistent texture-cube SRV.
 
 ## Visual Studio
 

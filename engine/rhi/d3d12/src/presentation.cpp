@@ -30,6 +30,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace shark::rhi::d3d12 {
 namespace {
@@ -55,6 +56,8 @@ constexpr std::size_t camera_matrix_bytes = sizeof(math::Matrix4x4);
 constexpr std::size_t frame_probe_offset = camera_matrix_bytes;
 constexpr UINT root_camera_constants = 0;
 constexpr UINT root_checker_texture = 1;
+constexpr std::uint32_t cubemap_face_count = 6;
+constexpr std::size_t rgba8_bytes_per_pixel = 4;
 constexpr render_graph::ExternalResourceId graph_back_buffer_id{1};
 constexpr render_graph::ExternalResourceId graph_depth_buffer_id{2};
 
@@ -165,6 +168,96 @@ static_assert(
             bytecode.data,
             container_signature.data(),
             container_signature.size()) == 0;
+}
+
+[[nodiscard]] constexpr DXGI_FORMAT native_texture_format(
+    const TextureDataFormat format) noexcept
+{
+    switch (format) {
+    case TextureDataFormat::rgba8_unorm:
+        return DXGI_FORMAT_R8G8B8A8_UNORM;
+    case TextureDataFormat::rgba8_unorm_srgb:
+        return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+    }
+    return DXGI_FORMAT_UNKNOWN;
+}
+
+[[nodiscard]] core::Result<void> validate_cubemap_upload(
+    const TextureCubeUploadView& cubemap)
+{
+    if (!valid_extent({cubemap.width, cubemap.height}) ||
+        cubemap.width != cubemap.height) {
+        return core::Result<void>::failure(graphics_error(
+            core::ErrorCode::invalid_argument,
+            "The startup cubemap must have a nonzero square extent within "
+            "D3D12 limits"));
+    }
+    if (native_texture_format(cubemap.format) == DXGI_FORMAT_UNKNOWN) {
+        return core::Result<void>::failure(graphics_error(
+            core::ErrorCode::unsupported,
+            "The startup cubemap uses an unsupported texture format"));
+    }
+
+    std::uint32_t maximum_mip_levels = 1;
+    for (auto dimension = cubemap.width;
+         dimension > 1;
+         dimension >>= 1U) {
+        ++maximum_mip_levels;
+    }
+    if (cubemap.mip_levels == 0 ||
+        cubemap.mip_levels > maximum_mip_levels ||
+        cubemap.mip_levels > D3D12_REQ_MIP_LEVELS) {
+        return core::Result<void>::failure(graphics_error(
+            core::ErrorCode::invalid_argument,
+            "The startup cubemap mip count is outside its valid chain"));
+    }
+
+    const auto expected_subresources =
+        static_cast<std::size_t>(cubemap_face_count) *
+        cubemap.mip_levels;
+    if (cubemap.subresources == nullptr ||
+        cubemap.subresource_count != expected_subresources) {
+        return core::Result<void>::failure(graphics_error(
+            core::ErrorCode::invalid_argument,
+            "The startup cubemap must provide exactly six complete face "
+            "mip chains"));
+    }
+
+    for (std::uint32_t face = 0; face < cubemap_face_count; ++face) {
+        for (std::uint32_t mip = 0; mip < cubemap.mip_levels; ++mip) {
+            const auto index =
+                static_cast<std::size_t>(face) * cubemap.mip_levels + mip;
+            const auto& subresource = cubemap.subresources[index];
+            const auto expected_width =
+                std::max(std::uint32_t{1}, cubemap.width >> mip);
+            const auto expected_height =
+                std::max(std::uint32_t{1}, cubemap.height >> mip);
+            const auto minimum_row_pitch =
+                static_cast<std::size_t>(expected_width) *
+                rgba8_bytes_per_pixel;
+            if (subresource.data == nullptr ||
+                subresource.width != expected_width ||
+                subresource.height != expected_height ||
+                subresource.row_pitch < minimum_row_pitch ||
+                subresource.row_pitch >
+                    std::numeric_limits<std::size_t>::max() /
+                        expected_height) {
+                return core::Result<void>::failure(graphics_error(
+                    core::ErrorCode::invalid_argument,
+                    "The startup cubemap contains an invalid subresource "
+                    "layout"));
+            }
+            const auto minimum_slice_pitch =
+                subresource.row_pitch * expected_height;
+            if (subresource.slice_pitch < minimum_slice_pitch ||
+                subresource.data_size < subresource.slice_pitch) {
+                return core::Result<void>::failure(graphics_error(
+                    core::ErrorCode::invalid_argument,
+                    "The startup cubemap subresource storage is truncated"));
+            }
+        }
+    }
+    return core::Result<void>::success();
 }
 
 [[nodiscard]] bool valid_frame_data(
@@ -970,7 +1063,8 @@ public:
         return core::Result<void>::success();
     }
 
-    [[nodiscard]] core::Result<void> create_static_cube_resources()
+    [[nodiscard]] core::Result<void> create_static_cube_resources(
+        const TextureCubeUploadView& cubemap)
     {
         constexpr UINT64 vertex_bytes = sizeof(detail::cube_vertices);
         constexpr UINT64 index_bytes = sizeof(detail::cube_indices);
@@ -1088,6 +1182,76 @@ public:
         }
         ++statistics.checker_texture_creations;
 
+        const auto cubemap_format = native_texture_format(cubemap.format);
+        D3D12_FEATURE_DATA_FORMAT_SUPPORT format_support{};
+        format_support.Format = cubemap_format;
+        result = native_device->CheckFeatureSupport(
+            D3D12_FEATURE_FORMAT_SUPPORT,
+            &format_support,
+            sizeof(format_support));
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Device::CheckFeatureSupport(cubemap format)",
+                    result));
+        }
+        constexpr auto required_cubemap_support =
+            static_cast<D3D12_FORMAT_SUPPORT1>(
+                D3D12_FORMAT_SUPPORT1_TEXTURECUBE |
+                D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE);
+        if ((format_support.Support1 & required_cubemap_support) !=
+            required_cubemap_support) {
+            return core::Result<void>::failure(graphics_error(
+                core::ErrorCode::unsupported,
+                "The selected adapter cannot sample the startup cubemap "
+                "format as a texture cube"));
+        }
+
+        D3D12_RESOURCE_DESC cubemap_description{};
+        cubemap_description.Dimension =
+            D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        cubemap_description.Alignment = 0;
+        cubemap_description.Width = cubemap.width;
+        cubemap_description.Height = cubemap.height;
+        cubemap_description.DepthOrArraySize =
+            static_cast<UINT16>(cubemap_face_count);
+        cubemap_description.MipLevels =
+            static_cast<UINT16>(cubemap.mip_levels);
+        cubemap_description.Format = cubemap_format;
+        cubemap_description.SampleDesc = DXGI_SAMPLE_DESC{1, 0};
+        cubemap_description.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+        cubemap_description.Flags = D3D12_RESOURCE_FLAG_NONE;
+        result = native_device->CreateCommittedResource(
+            &default_heap,
+            D3D12_HEAP_FLAG_NONE,
+            &cubemap_description,
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            nullptr,
+            IID_PPV_ARGS(&startup_cubemap));
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Device::CreateCommittedResource(startup "
+                    "cubemap)",
+                    result));
+        }
+        result = startup_cubemap->SetName(
+            L"Shark Startup Environment Cubemap");
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Object::SetName(startup cubemap)",
+                    result));
+        }
+        ++statistics.cubemap_texture_creations;
+        statistics.cubemap_faces_uploaded = cubemap_face_count;
+        statistics.cubemap_mip_levels = cubemap.mip_levels;
+        statistics.cubemap_srgb_resources =
+            cubemap.format == TextureDataFormat::rgba8_unorm_srgb ? 1U : 0U;
+
         D3D12_PLACED_SUBRESOURCE_FOOTPRINT texture_footprint{};
         UINT texture_rows = 0;
         UINT64 texture_row_bytes = 0;
@@ -1102,6 +1266,28 @@ public:
             &texture_row_bytes,
             &upload_bytes);
         upload_bytes += texture_footprint.Offset;
+
+        const auto cubemap_subresource_count =
+            static_cast<UINT>(cubemap.subresource_count);
+        std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT>
+            cubemap_footprints(cubemap_subresource_count);
+        std::vector<UINT> cubemap_rows(cubemap_subresource_count);
+        std::vector<UINT64> cubemap_row_bytes(cubemap_subresource_count);
+        UINT64 cubemap_upload_bytes = 0;
+        native_device->GetCopyableFootprints(
+            &cubemap_description,
+            0,
+            cubemap_subresource_count,
+            0,
+            cubemap_footprints.data(),
+            cubemap_rows.data(),
+            cubemap_row_bytes.data(),
+            &cubemap_upload_bytes);
+        if (cubemap_upload_bytes == 0) {
+            return core::Result<void>::failure(graphics_error(
+                core::ErrorCode::operation_failed,
+                "D3D12 reported an empty startup cubemap upload"));
+        }
 
         D3D12_HEAP_PROPERTIES upload_heap{};
         upload_heap.Type = D3D12_HEAP_TYPE_UPLOAD;
@@ -1131,6 +1317,34 @@ public:
                 detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Object::SetName(static upload)",
+                    result));
+        }
+
+        const auto cubemap_upload_description =
+            buffer_description(cubemap_upload_bytes);
+        ComPtr<ID3D12Resource> cubemap_upload_buffer;
+        result = native_device->CreateCommittedResource(
+            &upload_heap,
+            D3D12_HEAP_FLAG_NONE,
+            &cubemap_upload_description,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr,
+            IID_PPV_ARGS(&cubemap_upload_buffer));
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Device::CreateCommittedResource(cubemap "
+                    "upload)",
+                    result));
+        }
+        result = cubemap_upload_buffer->SetName(
+            L"Shark Startup Cubemap Upload Buffer");
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Object::SetName(cubemap upload)",
                     result));
         }
 
@@ -1170,10 +1384,50 @@ public:
         }
         upload_buffer->Unmap(0, nullptr);
 
+        void* mapped_cubemap_data = nullptr;
+        result = cubemap_upload_buffer->Map(
+            0,
+            &no_cpu_reads,
+            &mapped_cubemap_data);
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Resource::Map(cubemap upload)",
+                    result));
+        }
+        auto* const cubemap_upload_data =
+            static_cast<std::byte*>(mapped_cubemap_data);
+        std::uint64_t source_bytes_uploaded = 0;
+        for (UINT index = 0; index < cubemap_subresource_count; ++index) {
+            const auto& source = cubemap.subresources[index];
+            const auto& footprint = cubemap_footprints[index];
+            const auto row_count = cubemap_rows[index];
+            const auto row_bytes =
+                static_cast<std::size_t>(cubemap_row_bytes[index]);
+            for (UINT row = 0; row < row_count; ++row) {
+                std::memcpy(
+                    cubemap_upload_data + footprint.Offset +
+                        static_cast<UINT64>(row) *
+                            footprint.Footprint.RowPitch,
+                    source.data +
+                        static_cast<std::size_t>(row) *
+                            source.row_pitch,
+                    row_bytes);
+            }
+            source_bytes_uploaded +=
+                static_cast<std::uint64_t>(row_bytes) * row_count;
+        }
+        cubemap_upload_buffer->Unmap(0, nullptr);
+        statistics.cubemap_subresources_uploaded =
+            cubemap_subresource_count;
+        statistics.cubemap_source_bytes_uploaded =
+            source_bytes_uploaded;
+
         D3D12_DESCRIPTOR_HEAP_DESC descriptor_heap_description{};
         descriptor_heap_description.Type =
             D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-        descriptor_heap_description.NumDescriptors = 1;
+        descriptor_heap_description.NumDescriptors = 2;
         descriptor_heap_description.Flags =
             D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
         descriptor_heap_description.NodeMask = 0;
@@ -1188,7 +1442,7 @@ public:
                     result));
         }
         result = checker_descriptor_heap->SetName(
-            L"Shark Persistent Checker Descriptor Heap");
+            L"Shark Persistent Texture Descriptor Heap");
         if (FAILED(result)) {
             return core::Result<void>::failure(
                 detail::DeviceAccess::graphics_failure(
@@ -1213,6 +1467,27 @@ public:
             &shader_resource_view,
             checker_descriptor_heap->GetCPUDescriptorHandleForHeapStart());
         ++statistics.texture_srv_creations;
+
+        auto cubemap_descriptor =
+            checker_descriptor_heap->GetCPUDescriptorHandleForHeapStart();
+        cubemap_descriptor.ptr +=
+            native_device->GetDescriptorHandleIncrementSize(
+                D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        D3D12_SHADER_RESOURCE_VIEW_DESC cubemap_view{};
+        cubemap_view.Format = cubemap_format;
+        cubemap_view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+        cubemap_view.Shader4ComponentMapping =
+            D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        cubemap_view.TextureCube.MostDetailedMip = 0;
+        cubemap_view.TextureCube.MipLevels = cubemap.mip_levels;
+        cubemap_view.TextureCube.ResourceMinLODClamp = 0.0F;
+        native_device->CreateShaderResourceView(
+            startup_cubemap.Get(),
+            &cubemap_view,
+            cubemap_descriptor);
+        ++statistics.texture_srv_creations;
+        ++statistics.cubemap_srv_creations;
+        statistics.persistent_texture_descriptors = 2;
 
         auto& upload_allocator = frame_contexts[0].command_allocator;
         result = upload_allocator->Reset();
@@ -1264,10 +1539,29 @@ public:
             0,
             &texture_source,
             nullptr);
+        for (UINT index = 0; index < cubemap_subresource_count; ++index) {
+            D3D12_TEXTURE_COPY_LOCATION cubemap_destination{};
+            cubemap_destination.pResource = startup_cubemap.Get();
+            cubemap_destination.Type =
+                D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            cubemap_destination.SubresourceIndex = index;
+            D3D12_TEXTURE_COPY_LOCATION cubemap_source{};
+            cubemap_source.pResource = cubemap_upload_buffer.Get();
+            cubemap_source.Type =
+                D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+            cubemap_source.PlacedFootprint = cubemap_footprints[index];
+            command_list->CopyTextureRegion(
+                &cubemap_destination,
+                0,
+                0,
+                0,
+                &cubemap_source,
+                nullptr);
+        }
 
         // G-006 manages frame color/depth attachments. These one-time
         // initialization transitions remain with the static upload batch.
-        std::array<D3D12_RESOURCE_BARRIER, 3> barriers{};
+        std::array<D3D12_RESOURCE_BARRIER, 4> barriers{};
         barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
         barriers[0].Transition.pResource = vertex_buffer.Get();
         barriers[0].Transition.Subresource =
@@ -1284,6 +1578,8 @@ public:
         barriers[2].Transition.pResource = checker_texture.Get();
         barriers[2].Transition.StateAfter =
             D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        barriers[3] = barriers[2];
+        barriers[3].Transition.pResource = startup_cubemap.Get();
         command_list->ResourceBarrier(
             static_cast<UINT>(barriers.size()),
             barriers.data());
@@ -1370,6 +1666,7 @@ public:
         cube_pipeline.Reset();
         cube_root_signature.Reset();
         checker_descriptor_heap.Reset();
+        startup_cubemap.Reset();
         checker_texture.Reset();
         index_buffer.Reset();
         vertex_buffer.Reset();
@@ -1459,6 +1756,7 @@ public:
     ComPtr<ID3D12Resource> vertex_buffer;
     ComPtr<ID3D12Resource> index_buffer;
     ComPtr<ID3D12Resource> checker_texture;
+    ComPtr<ID3D12Resource> startup_cubemap;
     ComPtr<ID3D12Resource> depth_buffer;
     ComPtr<ID3D12DescriptorHeap> checker_descriptor_heap;
     ComPtr<ID3D12DescriptorHeap> rtv_heap;
@@ -1516,6 +1814,12 @@ core::Result<Presentation> Presentation::create(
             core::ErrorCode::invalid_argument,
             "Presentation pixel shader bytecode is missing a DXIL "
             "container signature"));
+    }
+    auto cubemap_result = validate_cubemap_upload(
+        config.startup_cubemap);
+    if (!cubemap_result) {
+        return core::Result<Presentation>::failure(
+            std::move(cubemap_result).error());
     }
 
     const auto native_window = static_cast<HWND>(config.native_window);
@@ -2157,7 +2461,8 @@ core::Result<Presentation> Presentation::create(
     }
 
     auto static_resources_result =
-        implementation->create_static_cube_resources();
+        implementation->create_static_cube_resources(
+            config.startup_cubemap);
     if (!static_resources_result) {
         return core::Result<Presentation>::failure(
             std::move(static_resources_result).error());

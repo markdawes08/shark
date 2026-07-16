@@ -9,6 +9,7 @@ add_executable(SharkTests
     unit/camera_controller_tests.cpp
     unit/camera_tests.cpp
     unit/assertion_tests.cpp
+    unit/dds_cubemap_tests.cpp
     unit/d3d12_cube_scene_data_tests.cpp
     unit/d3d12_device_contract_tests.cpp
     unit/d3d12_frame_resource_tests.cpp
@@ -39,6 +40,7 @@ target_link_libraries(SharkTests
 target_compile_definitions(SharkTests
     PRIVATE
         NOMINMAX
+        SHARK_TEST_CUBEMAP_PATH=\"${PROJECT_SOURCE_DIR}/content/source/sky/shark_orientation_sky_srgb.dds\"
         UNICODE
         WIN32_LEAN_AND_MEAN
         _UNICODE

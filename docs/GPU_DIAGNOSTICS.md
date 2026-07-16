@@ -1,16 +1,17 @@
 # Direct3D 12 GPU Diagnostics Contract
 
-- **Completed through:** `G-007`
+- **Completed through:** `S-001`
 - **Last verified:** July 16, 2026
 
 G-007 adds the first bounded GPU diagnostics to the existing G-006
 presentation path. Every submitted frame and its `TexturedCube` render-graph
 pass now have stable PIX names and direct-queue timestamp intervals. The
-one-time geometry and checker-texture upload also has a PIX name.
+one-time geometry, checker-texture, and cubemap upload also has a PIX name.
 
-This increment does not change the visible scene, graph declarations, or exact
-two-transition frame contract. It makes the current work identifiable in a PIX
-capture and measurable in the deterministic 1,000-frame presentation smoke.
+S-001 does not change the visible scene, graph declarations, or exact
+two-transition frame contract. It extends only the already-named startup scope
+with the first DDS cubemap resource while retaining the deterministic
+1,000-frame diagnostics contract.
 
 ## PIX runtime and marker contract
 
@@ -25,7 +26,7 @@ The marker names and boundaries are part of the diagnostics contract:
 
 | Marker | Color index | Frequency | Command-list boundary |
 |---|---:|---:|---|
-| `StaticCubeUpload` | 3 | Once for the one static upload submission | Begins after the upload command list is reset; contains the vertex/index buffer copies, checker-texture copy, and three initialization transitions; ends before command-list close, execution, fence signal, and the required initialization wait |
+| `StaticCubeUpload` | 3 | Once for the one static upload submission | Begins after the upload command list is reset; contains the vertex/index buffer copies, checker-texture copy, six cubemap face/mip copies, and four initialization transitions; ends before command-list close, execution, fence signal, and the required initialization wait |
 | `Frame` | 1 | Once per submitted frame | Begins after the reusable frame command list is reset; contains the frame timestamp interval, diagnostic probe copy, complete render-graph execution, and timestamp resolve; ends before command-list close, execution, fence signal, and `Present` |
 | `TexturedCube` | 2 | Once per graph-pass execution | Begins inside the graph callback after declared resource access is validated; contains the pass timestamp interval, attachment binding and clears, pipeline/resource binding, and indexed draw; ends before the callback returns |
 
@@ -266,4 +267,6 @@ The render graph remains frame-local and serial, its resource declarations are
 unchanged, and the visible camera/checker-cube scene remains unchanged. See
 [the render-graph contract](RENDER_GRAPH.md) for pass/barrier ownership and
 [the presentation contract](GRAPHICS_PRESENTATION.md) for frame-context,
-resize, and shutdown ownership.
+resize, and shutdown ownership. See
+[the DDS cubemap contract](DDS_CUBEMAP.md) for the S-001 work enclosed by the
+startup marker without changing frame timing.

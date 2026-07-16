@@ -3,3 +3,4 @@
 # Preserve native Windows endings for command scripts if they are introduced.
 *.bat text eol=crlf
 *.cmd text eol=crlf
+*.dds binary

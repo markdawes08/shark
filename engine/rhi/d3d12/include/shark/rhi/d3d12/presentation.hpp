@@ -32,12 +32,39 @@ struct ShaderBytecodeView final {
     std::size_t size{};
 };
 
+enum class TextureDataFormat : std::uint8_t {
+    rgba8_unorm = 1,
+    rgba8_unorm_srgb,
+};
+
+struct TextureSubresourceDataView final {
+    const std::byte* data{};
+    std::size_t data_size{};
+    std::uint32_t width{};
+    std::uint32_t height{};
+    std::size_t row_pitch{};
+    std::size_t slice_pitch{};
+};
+
+// Subresources are ordered face-major, then mip-minor:
+// +X mips, -X mips, +Y mips, -Y mips, +Z mips, -Z mips.
+// Presentation consumes these borrowed views synchronously during create().
+struct TextureCubeUploadView final {
+    std::uint32_t width{};
+    std::uint32_t height{};
+    std::uint32_t mip_levels{};
+    TextureDataFormat format{};
+    const TextureSubresourceDataView* subresources{};
+    std::size_t subresource_count{};
+};
+
 struct PresentationConfig final {
     void* native_window{};
     PresentationExtent extent{1280, 720};
     ClearColor clear_color{};
     ShaderBytecodeView vertex_shader{};
     ShaderBytecodeView pixel_shader{};
+    TextureCubeUploadView startup_cubemap{};
     bool synchronize_to_vertical_refresh{true};
 };
 
@@ -99,7 +126,15 @@ struct PresentationStats final {
     std::uint64_t static_upload_submissions{};
     std::uint64_t geometry_buffer_creations{};
     std::uint64_t checker_texture_creations{};
+    std::uint64_t cubemap_texture_creations{};
     std::uint64_t texture_srv_creations{};
+    std::uint64_t cubemap_srv_creations{};
+    std::uint64_t cubemap_faces_uploaded{};
+    std::uint64_t cubemap_mip_levels{};
+    std::uint64_t cubemap_subresources_uploaded{};
+    std::uint64_t cubemap_source_bytes_uploaded{};
+    std::uint64_t persistent_texture_descriptors{};
+    std::uint64_t cubemap_srgb_resources{};
     std::uint64_t last_submission_fence{};
 };
 

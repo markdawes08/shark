@@ -1,6 +1,6 @@
 # HLSL Graphics Pipeline Contract
 
-- **Completed through:** `G-006`
+- **Completed through:** `S-001`
 - **Last verified:** July 16, 2026
 
 G-004 established one reproducible path from project-owned HLSL to a real
@@ -109,9 +109,11 @@ access, and contains:
 - one pixel-visible descriptor table covering a single SRV at `t0`; and
 - one pixel-visible point-filtered wrap static sampler at `s0`.
 
-The one-slot shader-visible CBV/SRV/UAV heap and static sampler are deliberately
-specific to the checker proof. They do not establish a persistent descriptor
-allocator, bindless convention, or general material layout.
+The shader-visible CBV/SRV/UAV heap now has two persistent slots: the current
+one-entry root table still begins at checker slot 0, while S-001 reserves its
+texture-cube SRV at slot 1 for S-002. The heap and static sampler do not
+establish a general persistent descriptor allocator, bindless convention, or
+material layout.
 
 One immutable, named cube graphics PSO is created during presentation startup
 with:
@@ -134,10 +136,11 @@ releasing the command list, PSO, and root signature.
 ## Draw contract
 
 The static cube upload occurs once before the first frame. One direct-queue
-submission copies the 24 vertices, 36 `uint16_t` indices, and deterministic
-`8x8` one-mip checker into immutable default-heap resources, transitions them
-to their draw states, signals the monotonic direct fence, and performs one
-bounded startup wait before temporary upload storage is released.
+submission copies the 24 vertices, 36 `uint16_t` indices, deterministic `8x8`
+one-mip checker, and all six startup-cubemap faces into immutable default-heap
+resources, transitions them to their shader/input states, signals the monotonic
+direct fence, and performs one bounded startup wait before temporary upload
+storage is released. The current shader still binds only checker slot 0.
 
 Every non-minimized frame then:
 
@@ -172,18 +175,21 @@ WARP provide the permanent automated contract.
 
 ## Explicit non-goals
 
-G-006 adds no general shader artifact database, reflection, root-signature
+S-001 adds no general shader artifact database, reflection, root-signature
 versioning system, persistent descriptor allocator, PSO hash/cache, runtime
-compilation, hot reload, asset texture loading, mip generation, material/PBR
-system, or image comparison. Its root signature, one-slot heap, static sampler,
-geometry, and PSO are specific to the cube proof. The new graph provides only
+compilation, hot reload, general texture/material loading, runtime mip
+generation, material/PBR system, or image comparison. Its root signature,
+two-slot proof heap, static sampler, geometry, and PSO remain specific to the
+cube/next-sky proof. The graph provides only
 frame-local pass/access/barrier orchestration; it is not a shader asset,
 pipeline-layout, or material abstraction.
 
 See [the camera and textured-cube contract](CAMERA_AND_CUBE.md) for the
 coordinate, input, geometry, texture, depth, resize, and acceptance rules. See
 [the minimal render-graph contract](RENDER_GRAPH.md) for the pass declaration
-and barrier execution around this pipeline.
+and barrier execution around this pipeline. See
+[the DDS cubemap contract](DDS_CUBEMAP.md) for the persistent slot reserved
+outside the current root table.
 
 ## Primary references
 

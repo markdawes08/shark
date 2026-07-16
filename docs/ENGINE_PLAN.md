@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 16, 2026
-- **Completed through:** `G-007` - GPU frame instrumentation
-- **Next increment:** `S-001` - DDS cubemap loading
+- **Completed through:** `S-001` - DDS cubemap loading
+- **Next increment:** `S-002` - cubemap skybox rendering
 
 ## 1. Project direction
 
@@ -310,9 +310,10 @@ unstable circular solve; iterative two-way coupling is a later milestone.
   until every relevant queue fence in their retirement set completes. G-003
   verifies whole-context transient reuse. G-005 creates one persistent root
   signature/PSO, cube vertex/index buffers, checker texture/SRV, and resize-owned
-  depth target; one bounded static-upload wait precedes the frame loop and
-  shutdown releases every persistent object after the final drain. Generic
-  fence-keyed deferred destruction remains later.
+  depth target. S-001 adds one persistent six-face cubemap and cube SRV to the
+  same bounded static-upload submission; shutdown releases every persistent
+  object after the final drain. Generic fence-keyed deferred destruction
+  remains later.
 
 ### Resources and descriptors
 
@@ -324,8 +325,9 @@ unstable circular solve; iterative two-way coupling is a later milestone.
 - Use one shader-visible CBV/SRV/UAV heap and one sampler heap with stable
   persistent indices; recycle slots only after their fences complete. Begin
   with conventional descriptor tables while keeping handles bindless-ready.
-  G-005 proves only one shader-visible SRV slot and one static sampler for its
-  procedural checker; the stable-index allocator remains future work.
+  G-005 proves the checker at shader-visible SRV slot 0 and one static sampler.
+  S-001 reserves cubemap slot 1 without changing the current root table; the
+  stable-index allocator remains future work.
 - Keep CPU-only RTV and DSV allocators separate.
 - Add upload and readback arenas, with a per-frame linear upload ring.
 - Expose descriptor use and DXGI video-memory budget in diagnostics before
@@ -556,7 +558,7 @@ This is the shortest responsible path to the first requested visual feature.
 | `G-005` | V | Add the `+Y`-up/`-Z`-forward row-vector camera and right-drag/`WASD`/`QE`/`Shift` controls; render one 24-vertex/36-index cube with an `8x8` procedural checker through a root CBV plus one SRV/static sampler; and recreate a `D32_FLOAT`, clear-`0`, `GREATER_EQUAL` reversed-Z target safely across resize | `feat(render): add camera and depth conventions` |
 | `G-006` | - | Add a frame-local, single-use direct-queue graph with move-safe owner-scoped imports/passes, explicit plus RAW/WAR/WAW dependencies, stable topological compilation, cycle and callback-access validation, and centralized whole-resource legacy barriers; run the existing cube as one `TexturedCube` pass with exactly two attachment transitions per submitted frame | `feat(render): add minimal render graph` |
 | `G-007` | - | Link the pinned WinPixEventRuntime for Debug and Release markers; name `StaticCubeUpload`, `Frame`, and `TexturedCube`; partition one 12-query/96-byte timestamp/readback allocation into three four-query frame-context slices; consume only fence-complete results; and report validated frame/pass samples plus bounded query accounting without adding a normal-frame drain | `feat(diagnostics): add GPU frame instrumentation` |
-| `S-001` | V | Load one licensed DDS cubemap through the texture/upload path with correct face orientation and sRGB handling | `feat(assets): load DDS cubemap textures` |
+| `S-001` | V | Load the project-owned `8x8` DX10 DDS orientation cube through a DirectXTex-isolated CPU boundary; reject ambiguous/malformed cube metadata, upload its six sRGB faces in the existing static submission, and create persistent cube SRV slot 1 without changing the visible frame | `feat(assets): load DDS cubemap textures` |
 | `S-002` | V | Render the skybox as a named graph pass; camera rotation changes it, translation does not, and resize stays clean | `feat(sky): render a cubemap skybox` |
 
 **M2 exit:** a camera moves through a stable cubemap sky scene; the frame is clean in
@@ -697,29 +699,27 @@ entity scale or query patterns make it useful.
 
 ## 14. Immediate next increment
 
-After `G-007` is reviewed and committed by the owner, implement only `S-001`:
+After `S-001` is reviewed and committed by the owner, implement only `S-002`:
 
-- add one small, clearly licensed DDS cubemap fixture and record its source,
-  license, conversion settings, face order, format, extent, and mip count;
-- consume the already pinned DirectXTex dependency through a narrow asset
-  boundary that loads the DDS into CPU-owned metadata and subresource views;
-- reject non-cubemaps, incomplete faces, mismatched dimensions, unsupported
-  formats, malformed mip chains, and ambiguous color-space metadata with
-  structured errors;
-- upload all six faces through the existing direct-queue static upload path,
-  create one persistent cube SRV, and preserve the source's deliberate
-  sRGB/linear interpretation;
-- add deterministic CPU tests for face order and validation plus hardware/WARP
-  smoke accounting for the uploaded texture, while preserving G-007 PIX and
-  timestamp invariants; and
-- stop before drawing the skybox, changing the root signature or frame graph,
-  HDR conversion, image-based lighting, runtime texture streaming, general
-  material loading, or a content database.
+- add a dedicated build-time HLSL skybox pipeline that samples the persistent
+  texture-cube SRV created by S-001;
+- render one named `Skybox` graph pass with a depth policy that fills untouched
+  far-depth pixels without obscuring the existing textured cube;
+- remove camera translation from the sky view while preserving camera
+  rotation, the right-handed `+Y`-up/`-Z`-forward convention, reversed-Z, and
+  the DDS face orientation proven by S-001;
+- extend PIX, timestamp, graph, draw, resize, minimize, hardware/WARP, and
+  GPU-validation accounting for exactly two visible passes while retaining
+  bounded frame-context storage and no normal-frame drain;
+- add focused CPU tests for translation invariance and sky matrix/depth
+  construction plus a clear manual face-orientation acceptance procedure; and
+- stop before HDR conversion, image-based lighting, procedural atmosphere,
+  clouds, terrain, rain, general material loading, texture streaming, or a
+  content database.
 
-`G-007` now makes the submitted frame and its only graph pass measurable with
-fence-delayed readback and stable capture names. `S-001` establishes the first
-file-backed texture asset and GPU cubemap resource; `S-002` will make it the
-second visible rendering feature.
+`S-001` now owns the first licensed file-backed texture path and persistent GPU
+cubemap resource without changing the visible checker-cube frame. `S-002` will
+turn that validated resource into Shark's second visible rendering feature.
 
 ## 15. Primary technical references
 
@@ -727,6 +727,7 @@ second visible rendering feature.
 - [Getting started with the Agility SDK](https://devblogs.microsoft.com/directx/gettingstarted-dx12agility/)
 - [Microsoft Direct3D WARP package](https://www.nuget.org/packages/Microsoft.Direct3D.WARP)
 - [Microsoft DirectX Shader Compiler](https://github.com/microsoft/DirectXShaderCompiler)
+- [Microsoft DirectXTex](https://github.com/microsoft/DirectXTex)
 - [DirectX Graphics Samples](https://github.com/microsoft/DirectX-Graphics-Samples)
 - [D3D12 feature support queries](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ne-d3d12-d3d12_feature)
 - [D3D12 enhanced barriers](https://learn.microsoft.com/en-us/windows-hardware/drivers/display/enhanced-barriers)

@@ -2,6 +2,7 @@
 
 #include <shark/core/result.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 
@@ -25,10 +26,17 @@ struct ClearColor final {
     float alpha{1.0F};
 };
 
+struct ShaderBytecodeView final {
+    const void* data{};
+    std::size_t size{};
+};
+
 struct PresentationConfig final {
     void* native_window{};
     PresentationExtent extent{1280, 720};
     ClearColor clear_color{};
+    ShaderBytecodeView vertex_shader{};
+    ShaderBytecodeView pixel_shader{};
     bool synchronize_to_vertical_refresh{true};
 };
 
@@ -54,6 +62,8 @@ struct PresentationStats final {
     std::uint64_t upload_high_water_bytes{};
     std::uint64_t descriptor_allocations{};
     std::uint64_t descriptor_high_water_count{};
+    std::uint64_t triangle_draw_calls{};
+    std::uint64_t triangle_vertices{};
     std::uint64_t last_submission_fence{};
 };
 
@@ -71,7 +81,7 @@ public:
         Device& device,
         const PresentationConfig& config);
 
-    [[nodiscard]] core::Result<PresentStatus> present_clear_frame();
+    [[nodiscard]] core::Result<PresentStatus> present_frame();
     [[nodiscard]] core::Result<void> resize(PresentationExtent extent);
     [[nodiscard]] core::Result<void> shutdown();
 

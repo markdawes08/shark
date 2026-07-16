@@ -56,7 +56,8 @@ G-001 arms DRED before device creation. G-002 consumes that setup and G-003
 preserves it across asynchronous frame-context reuse: failed
 submission, fence, resize, and present operations query the device-removal
 reason and log bounded automatic-breadcrumb, breadcrumb-context, page-fault,
-existing-allocation, and recently-freed-allocation details.
+existing-allocation, and recently-freed-allocation details. G-004 preserves the
+same path while adding root-signature/PSO creation and a real draw submission.
 
 If a debugger is attached, corruption and error messages also request a debug
 break. Unattended processes count and report those severities instead of
@@ -88,9 +89,9 @@ Selection rules are strict:
 `--gpu-smoke` and `--capabilities` create no window and exit after device
 verification. `--present-smoke` accepts the normal GPU selectors and optional
 GPU-based validation, creates a real window, presents exactly 1,000 successful
-clear frames, verifies its lifecycle, and exits. The default interactive path
-keeps the device alive while clear-color presentation runs until the window is
-closed.
+triangle frames, verifies its lifecycle, and exits. The default interactive path
+keeps the device alive while first-triangle presentation runs until the window
+is closed.
 
 ## Required and optional capabilities
 
@@ -146,9 +147,13 @@ CTest keeps six independent integration processes:
 - the GPU-independent Win32 lifecycle smoke;
 - automatic hardware device creation;
 - packaged WARP device creation;
-- automatic hardware clear/present;
-- packaged WARP clear/present; and
-- packaged WARP clear/present with GPU-based validation.
+- automatic hardware triangle/present;
+- packaged WARP triangle/present; and
+- packaged WARP triangle/present with GPU-based validation.
+
+Three separate serial build checks verify shader include dependency rebuilding,
+malformed-source rejection, and warning-as-error rejection before the graphics
+integration contract is considered complete.
 
 Unit tests cover the exact Feature Level/Shader Model baseline, the complete CLI
 conflict/malformed-index boundary, aligned frame-arena allocation and
@@ -157,9 +162,11 @@ fence exhaustion. The presentation smoke additionally verifies all three frame
 contexts are reused and every submission retires during explicit shutdown,
 before frame resources are released.
 
-Presentation shutdown explicitly drains and releases its children before
+Presentation shutdown explicitly drains and releases its command list, PSO,
+root signature, swap-chain resources, and frame contexts before
 `Device::validate_debug_state` checks new D3D12 and DXGI messages plus live
 D3D12 child objects. Debug and Release must both build and pass all registered
 tests with zero DirectX corruption or error messages. See the
 [presentation and frame-resource contract](GRAPHICS_PRESENTATION.md) for the
-G-002/G-003 frame, staging, retirement, and resize rules.
+G-002/G-003 frame, staging, retirement, and resize rules, and the
+[first HLSL pipeline contract](GRAPHICS_PIPELINE.md) for G-004.

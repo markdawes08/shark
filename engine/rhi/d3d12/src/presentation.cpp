@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -64,7 +65,12 @@ struct FrameProbe final {
 [[nodiscard]] bool valid_extent(
     const PresentationExtent extent) noexcept
 {
-    return extent.width != 0 && extent.height != 0;
+    constexpr std::uint32_t maximum_dimension =
+        D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION;
+    return extent.width != 0 &&
+        extent.height != 0 &&
+        extent.width <= maximum_dimension &&
+        extent.height <= maximum_dimension;
 }
 
 [[nodiscard]] bool valid_clear_color(
@@ -74,6 +80,107 @@ struct FrameProbe final {
         std::isfinite(color.green) &&
         std::isfinite(color.blue) &&
         std::isfinite(color.alpha);
+}
+
+[[nodiscard]] bool valid_shader_bytecode(
+    const ShaderBytecodeView bytecode) noexcept
+{
+    constexpr std::array<char, 4> container_signature{
+        'D',
+        'X',
+        'B',
+        'C',
+    };
+    return bytecode.data != nullptr &&
+        bytecode.size >= container_signature.size() &&
+        std::memcmp(
+            bytecode.data,
+            container_signature.data(),
+            container_signature.size()) == 0;
+}
+
+[[nodiscard]] D3D12_BLEND_DESC opaque_blend_description() noexcept
+{
+    D3D12_BLEND_DESC description{};
+    description.AlphaToCoverageEnable = FALSE;
+    description.IndependentBlendEnable = FALSE;
+    for (auto& target : description.RenderTarget) {
+        target.BlendEnable = FALSE;
+        target.LogicOpEnable = FALSE;
+        target.SrcBlend = D3D12_BLEND_ONE;
+        target.DestBlend = D3D12_BLEND_ZERO;
+        target.BlendOp = D3D12_BLEND_OP_ADD;
+        target.SrcBlendAlpha = D3D12_BLEND_ONE;
+        target.DestBlendAlpha = D3D12_BLEND_ZERO;
+        target.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        target.LogicOp = D3D12_LOGIC_OP_NOOP;
+        target.RenderTargetWriteMask = static_cast<UINT8>(
+            D3D12_COLOR_WRITE_ENABLE_ALL);
+    }
+    return description;
+}
+
+[[nodiscard]] D3D12_RASTERIZER_DESC triangle_rasterizer_description()
+    noexcept
+{
+    D3D12_RASTERIZER_DESC description{};
+    description.FillMode = D3D12_FILL_MODE_SOLID;
+    description.CullMode = D3D12_CULL_MODE_NONE;
+    description.FrontCounterClockwise = FALSE;
+    description.DepthBias = D3D12_DEFAULT_DEPTH_BIAS;
+    description.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP;
+    description.SlopeScaledDepthBias =
+        D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS;
+    description.DepthClipEnable = TRUE;
+    description.MultisampleEnable = FALSE;
+    description.AntialiasedLineEnable = FALSE;
+    description.ForcedSampleCount = 0;
+    description.ConservativeRaster =
+        D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
+    return description;
+}
+
+[[nodiscard]] D3D12_DEPTH_STENCIL_DESC disabled_depth_description()
+    noexcept
+{
+    D3D12_DEPTH_STENCILOP_DESC disabled_stencil{};
+    disabled_stencil.StencilFailOp = D3D12_STENCIL_OP_KEEP;
+    disabled_stencil.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
+    disabled_stencil.StencilPassOp = D3D12_STENCIL_OP_KEEP;
+    disabled_stencil.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+
+    D3D12_DEPTH_STENCIL_DESC description{};
+    description.DepthEnable = FALSE;
+    description.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+    description.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+    description.StencilEnable = FALSE;
+    description.StencilReadMask = D3D12_DEFAULT_STENCIL_READ_MASK;
+    description.StencilWriteMask = D3D12_DEFAULT_STENCIL_WRITE_MASK;
+    description.FrontFace = disabled_stencil;
+    description.BackFace = disabled_stencil;
+    return description;
+}
+
+[[nodiscard]] std::string root_signature_operation(
+    ID3DBlob* const diagnostic_blob)
+{
+    auto operation = std::string{"D3D12SerializeRootSignature"};
+    if (diagnostic_blob == nullptr ||
+        diagnostic_blob->GetBufferPointer() == nullptr ||
+        diagnostic_blob->GetBufferSize() == 0) {
+        return operation;
+    }
+
+    auto diagnostic_size = diagnostic_blob->GetBufferSize();
+    const auto* const diagnostic = static_cast<const char*>(
+        diagnostic_blob->GetBufferPointer());
+    while (diagnostic_size != 0 &&
+           diagnostic[diagnostic_size - 1] == '\0') {
+        --diagnostic_size;
+    }
+    operation.append(": ");
+    operation.append(diagnostic, diagnostic_size);
+    return operation;
 }
 
 [[nodiscard]] core::Error windows_failure(
@@ -489,6 +596,8 @@ public:
         release_back_buffers();
         swap_chain.Reset();
         command_list.Reset();
+        triangle_pipeline.Reset();
+        triangle_root_signature.Reset();
         for (auto& context : frame_contexts) {
             if (context.upload_buffer != nullptr &&
                 context.mapped_upload != nullptr) {
@@ -557,6 +666,8 @@ public:
     ComPtr<ID3D12CommandQueue> command_queue;
     std::array<FrameContext, back_buffer_count> frame_contexts;
     ComPtr<ID3D12GraphicsCommandList> command_list;
+    ComPtr<ID3D12PipelineState> triangle_pipeline;
+    ComPtr<ID3D12RootSignature> triangle_root_signature;
     ComPtr<ID3D12DescriptorHeap> rtv_heap;
     ComPtr<IDXGISwapChain4> swap_chain;
     std::array<ComPtr<ID3D12Resource>, back_buffer_count> back_buffers;
@@ -589,12 +700,24 @@ core::Result<Presentation> Presentation::create(
     if (!valid_extent(config.extent)) {
         return core::Result<Presentation>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
-            "Presentation extent must be nonzero"));
+            "Presentation extent must be nonzero and within D3D12 limits"));
     }
     if (!valid_clear_color(config.clear_color)) {
         return core::Result<Presentation>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
             "Presentation clear color components must be finite"));
+    }
+    if (!valid_shader_bytecode(config.vertex_shader)) {
+        return core::Result<Presentation>::failure(graphics_error(
+            core::ErrorCode::invalid_argument,
+            "Presentation vertex shader bytecode is missing a DXIL "
+            "container signature"));
+    }
+    if (!valid_shader_bytecode(config.pixel_shader)) {
+        return core::Result<Presentation>::failure(graphics_error(
+            core::ErrorCode::invalid_argument,
+            "Presentation pixel shader bytecode is missing a DXIL "
+            "container signature"));
     }
 
     const auto native_window = static_cast<HWND>(config.native_window);
@@ -760,11 +883,114 @@ core::Result<Presentation> Presentation::create(
         }
     }
 
+    D3D12_ROOT_SIGNATURE_DESC root_signature_description{};
+    root_signature_description.NumParameters = 0;
+    root_signature_description.pParameters = nullptr;
+    root_signature_description.NumStaticSamplers = 0;
+    root_signature_description.pStaticSamplers = nullptr;
+    root_signature_description.Flags =
+        D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
+        D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
+        D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
+        D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
+
+    ComPtr<ID3DBlob> serialized_root_signature;
+    ComPtr<ID3DBlob> root_signature_diagnostics;
+    result = D3D12SerializeRootSignature(
+        &root_signature_description,
+        D3D_ROOT_SIGNATURE_VERSION_1,
+        &serialized_root_signature,
+        &root_signature_diagnostics);
+    if (FAILED(result)) {
+        const auto operation = root_signature_operation(
+            root_signature_diagnostics.Get());
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                operation,
+                result));
+    }
+
+    result = native.device->CreateRootSignature(
+        0,
+        serialized_root_signature->GetBufferPointer(),
+        serialized_root_signature->GetBufferSize(),
+        IID_PPV_ARGS(&implementation->triangle_root_signature));
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Device::CreateRootSignature(first triangle)",
+                result));
+    }
+    result = implementation->triangle_root_signature->SetName(
+        L"Shark First Triangle Root Signature");
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Object::SetName(first triangle root signature)",
+                result));
+    }
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC pipeline_description{};
+    pipeline_description.pRootSignature =
+        implementation->triangle_root_signature.Get();
+    pipeline_description.VS = D3D12_SHADER_BYTECODE{
+        config.vertex_shader.data,
+        config.vertex_shader.size,
+    };
+    pipeline_description.PS = D3D12_SHADER_BYTECODE{
+        config.pixel_shader.data,
+        config.pixel_shader.size,
+    };
+    pipeline_description.DS = D3D12_SHADER_BYTECODE{};
+    pipeline_description.HS = D3D12_SHADER_BYTECODE{};
+    pipeline_description.GS = D3D12_SHADER_BYTECODE{};
+    pipeline_description.StreamOutput = D3D12_STREAM_OUTPUT_DESC{};
+    pipeline_description.BlendState = opaque_blend_description();
+    pipeline_description.SampleMask = std::numeric_limits<UINT>::max();
+    pipeline_description.RasterizerState =
+        triangle_rasterizer_description();
+    pipeline_description.DepthStencilState =
+        disabled_depth_description();
+    pipeline_description.InputLayout = D3D12_INPUT_LAYOUT_DESC{};
+    pipeline_description.IBStripCutValue =
+        D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
+    pipeline_description.PrimitiveTopologyType =
+        D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    pipeline_description.NumRenderTargets = 1;
+    pipeline_description.RTVFormats[0] = back_buffer_format;
+    pipeline_description.DSVFormat = DXGI_FORMAT_UNKNOWN;
+    pipeline_description.SampleDesc = DXGI_SAMPLE_DESC{1, 0};
+    pipeline_description.NodeMask = 0;
+    pipeline_description.CachedPSO = D3D12_CACHED_PIPELINE_STATE{};
+    pipeline_description.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
+    result = native.device->CreateGraphicsPipelineState(
+        &pipeline_description,
+        IID_PPV_ARGS(&implementation->triangle_pipeline));
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Device::CreateGraphicsPipelineState(first triangle)",
+                result));
+    }
+    result = implementation->triangle_pipeline->SetName(
+        L"Shark First Triangle Pipeline");
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Object::SetName(first triangle pipeline)",
+                result));
+    }
+
     result = native.device->CreateCommandList(
         0,
         D3D12_COMMAND_LIST_TYPE_DIRECT,
         implementation->frame_contexts[0].command_allocator.Get(),
-        nullptr,
+        implementation->triangle_pipeline.Get(),
         IID_PPV_ARGS(&implementation->command_list));
     if (FAILED(result)) {
         return core::Result<Presentation>::failure(
@@ -774,7 +1000,7 @@ core::Result<Presentation> Presentation::create(
                 result));
     }
     result = implementation->command_list->SetName(
-        L"Shark Clear Color Command List");
+        L"Shark First Triangle Command List");
     if (FAILED(result)) {
         return core::Result<Presentation>::failure(
             detail::DeviceAccess::graphics_failure(
@@ -968,12 +1194,13 @@ core::Result<Presentation> Presentation::create(
         std::string{"Created triple-buffered flip-discard swap chain at "} +
             std::to_string(config.extent.width) + "x" +
             std::to_string(config.extent.height) +
-            " with three fence-gated frame contexts");
+            " with three fence-gated frame contexts and the first "
+            "triangle pipeline");
     return core::Result<Presentation>::success(
         Presentation{std::move(implementation)});
 }
 
-core::Result<PresentStatus> Presentation::present_clear_frame()
+core::Result<PresentStatus> Presentation::present_frame()
 {
     if (implementation_ == nullptr) {
         return core::Result<PresentStatus>::failure(graphics_error(
@@ -981,7 +1208,7 @@ core::Result<PresentStatus> Presentation::present_clear_frame()
             "A moved-from Presentation cannot present"));
     }
     auto active_result = implementation_->require_active(
-        "Presentation::present_clear_frame");
+        "Presentation::present_frame");
     if (!active_result) {
         return core::Result<PresentStatus>::failure(
             std::move(active_result).error());
@@ -1020,7 +1247,7 @@ core::Result<PresentStatus> Presentation::present_clear_frame()
     }
     result = implementation_->command_list->Reset(
         context->command_allocator.Get(),
-        nullptr);
+        implementation_->triangle_pipeline.Get());
     if (FAILED(result)) {
         return core::Result<PresentStatus>::failure(
             detail::DeviceAccess::graphics_failure(
@@ -1072,6 +1299,30 @@ core::Result<PresentStatus> Presentation::present_clear_frame()
         0,
         nullptr);
 
+    const D3D12_VIEWPORT viewport{
+        0.0F,
+        0.0F,
+        static_cast<float>(implementation_->current_extent.width),
+        static_cast<float>(implementation_->current_extent.height),
+        0.0F,
+        1.0F,
+    };
+    const D3D12_RECT scissor_rectangle{
+        0,
+        0,
+        static_cast<LONG>(implementation_->current_extent.width),
+        static_cast<LONG>(implementation_->current_extent.height),
+    };
+    implementation_->command_list->SetGraphicsRootSignature(
+        implementation_->triangle_root_signature.Get());
+    implementation_->command_list->RSSetViewports(1, &viewport);
+    implementation_->command_list->RSSetScissorRects(
+        1,
+        &scissor_rectangle);
+    implementation_->command_list->IASetPrimitiveTopology(
+        D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    implementation_->command_list->DrawInstanced(3, 1, 0, 0);
+
     auto to_present = to_render_target;
     to_present.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
     to_present.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
@@ -1095,6 +1346,8 @@ core::Result<PresentStatus> Presentation::present_clear_frame()
         return core::Result<PresentStatus>::failure(
             std::move(submit_result).error());
     }
+    ++implementation_->statistics.triangle_draw_calls;
+    implementation_->statistics.triangle_vertices += 3;
 
     result = implementation_->swap_chain->Present(
         implementation_->synchronize_to_vertical_refresh ? 1 : 0,
@@ -1135,7 +1388,7 @@ core::Result<void> Presentation::resize(
     if (!valid_extent(extent)) {
         return core::Result<void>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
-            "Presentation extent must be nonzero"));
+            "Presentation extent must be nonzero and within D3D12 limits"));
     }
     auto active_result = implementation_->require_active(
         "Presentation::resize");

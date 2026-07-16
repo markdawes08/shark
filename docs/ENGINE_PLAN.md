@@ -2,9 +2,9 @@
 
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
-- **Last updated:** July 15, 2026
-- **Completed through:** `G-003` - frame-resource lifecycle
-- **Next increment:** `G-004` - build-time HLSL and first triangle
+- **Last updated:** July 16, 2026
+- **Completed through:** `G-004` - build-time HLSL and first triangle
+- **Next increment:** `G-005` - camera, reversed-Z depth, and textured cube
 
 ## 1. Project direction
 
@@ -304,8 +304,9 @@ unstable circular solve; iterative two-way coupling is a later milestone.
   arrive with the increments that use them.
 - Defer destruction of GPU resources, descriptors, pipelines, and upload storage
   until every relevant queue fence in their retirement set completes. G-003
-  verifies whole-context transient reuse; generic deferred destruction begins
-  only after typed resources and pipelines exist.
+  verifies whole-context transient reuse. G-004 creates one persistent root
+  signature and PSO at presentation startup and releases them only after the
+  shutdown queue drain; generic fence-keyed deferred destruction remains later.
 
 ### Resources and descriptors
 
@@ -324,16 +325,24 @@ unstable circular solve; iterative two-way coupling is a later milestone.
 
 ### Shaders and pipelines
 
-- Compile HLSL at build time with pinned DXC and treat warnings as errors.
-- Retain shader PDB/debug data in developer builds for PIX.
+- Compile HLSL at build time with pinned DXC and treat warnings as errors. G-004
+  resolves only the vcpkg-restored retail DXC `1.9.2602.24`, compiles explicit
+  `vs_6_0`/`ps_6_0` entry points with HLSL 2021, strict and row-major flags,
+  emits per-configuration DXIL/C++ headers/PDBs, and tracks shared includes
+  through depfiles.
+- Retain shader PDB/debug data in developer builds for PIX. G-004 embeds source
+  debug information while keeping Debug unoptimized and Release optimized.
 - Begin with a small shared root-signature convention using descriptor tables and
   frame/pass constants. Direct heap indexing becomes a separate capability-gated
   increment only after Shader Model 6.6, Binding Tier 3, and a real scale need are
-  confirmed.
+  confirmed. The G-004 proof uses an intentionally empty root signature because
+  its `SV_VertexID` triangle consumes no resources; descriptor conventions begin
+  when G-005 introduces the textured cube.
 - Key shader artifacts by source/include hashes, entry point, target, defines,
   flags, compiler version, and root-signature version.
 - Cache immutable PSOs by structural hash; never compile a surprise PSO in the
-  middle of a render pass.
+  middle of a render pass. G-004 creates one immutable PSO synchronously during
+  presentation startup; generalized artifact keys and PSO caching remain later.
 - Add development hot reload only after the offline build pipeline is reliable.
 
 ### Render graph growth
@@ -470,6 +479,7 @@ architecture folders are not committed merely to make the tree look complete.
 |   `-- diagnostics/
 |-- shaders/
 |   |-- shared/
+|   |-- triangle/             # First build-time HLSL proof
 |   |-- sky/
 |   |-- terrain/
 |   |-- rain/
@@ -479,10 +489,11 @@ architecture folders are not committed merely to make the tree look complete.
 |   `-- scenarios/             # Deterministic test scenes
 |-- tools/                     # Asset tools when justified
 |-- tests/
+|   |-- fixtures/shaders/     # Isolated compiler-failure/rebuild probes
 |   |-- unit/
 |   |-- integration/
 |   `-- gpu/
-|-- cmake/
+|-- cmake/                    # Toolchain, shader, and verification helpers
 |-- docs/
 |   |-- adr/
 |   `-- milestones/
@@ -526,7 +537,7 @@ This is the shortest responsible path to the first requested visual feature.
 | `G-001` | - | Initialize Agility/D3D12, choose the high-performance adapter, log capabilities, and start hardware/WARP with zero debug errors | `feat(gpu): initialize Direct3D 12 device` |
 | `G-002` | V | Create a resize-safe flip swap chain and present a clear color for 1,000 frames without validation or live-object errors | `feat(gpu): present a clear-color frame` |
 | `G-003` | - | Add three back-buffer-indexed frame contexts, a monotonic direct-queue fence, bounded per-context upload and CPU descriptor staging, and verify transient slots reset only after submission completes | `feat(gpu): add frame resource lifecycle` |
-| `G-004` | V | Use the project-pinned DXC to compile HLSL at build time and render a triangle; a broken shader fails the build | `feat(render): add the first HLSL pipeline` |
+| `G-004` | V | Resolve retail DXC `1.9.2602.24` only from the manifest host tools; compile tracked `vs_6_0`/`ps_6_0` HLSL with warnings as errors; reject malformed/warning fixtures; create one immutable PSO; and record one three-vertex triangle draw per submitted frame | `feat(render): add the first HLSL pipeline` |
 | `G-005` | V | Add camera math, input, reversed-Z depth, and a textured cube; rotation and translation behave consistently | `feat(render): add camera and depth conventions` |
 | `G-006` | - | Add the simple direct-queue render graph with declared back-buffer/depth use and centralized barriers | `feat(render): add minimal render graph` |
 | `G-007` | - | Add named PIX events and GPU timestamp queries; frame/pass timings are reproducible in logs with bounded query storage | `feat(diagnostics): add GPU frame instrumentation` |
@@ -670,23 +681,27 @@ entity scale or query patterns make it useful.
 
 ## 14. Immediate next increment
 
-After `G-003` is reviewed and committed by the owner, implement only `G-004`:
+After `G-004` is reviewed and committed by the owner, implement only `G-005`:
 
-- resolve the project-restored retail DXC `1.9.2602.24` host tool without using
-  an ambient `PATH` copy;
-- compile minimal vertex and pixel HLSL to DXIL at build time with explicit
-  entry points, targets, row-major convention, and warnings as errors;
-- add a negative build check proving malformed HLSL fails compilation;
-- create the minimal root signature and graphics PSO, then draw one triangle
-  through the existing direct queue and frame contexts;
-- preserve resize, frame retirement, DRED, DirectX validation, and the fixed
-  1,000-frame smoke; and
-- stop before camera/depth work, textures, generalized shader caching or hot
-  reload, descriptor tables, a render graph, copy queues, or asynchronous
-  compute.
+- add the first engine-owned camera transform and right-handed view/projection
+  math using the established `+Y` up, forward `-Z`, row-vector convention;
+- consume the existing keyboard and mouse event boundary for consistent
+  free-look rotation and translation;
+- add a resize-safe `D32_FLOAT` depth buffer and DSV using reversed-Z (`0`
+  clear and `GREATER`/`GREATER_EQUAL` comparison), with focused math and state
+  tests;
+- replace the screen-space triangle with one textured cube whose vertex/index
+  data, per-frame camera constants, tiny procedural/checker texture, first
+  narrowly scoped shader-visible SRV table/static sampler, and transforms
+  exercise the first resource-bound root signature;
+- preserve the pinned build-time shader path, frame-context retirement, resize,
+  hardware/WARP smoke, GPU validation, and zero DirectX errors; and
+- stop before a general asset system, DDS/cubemap loading, mip/streaming
+  infrastructure, a material/PBR system, persistent resource/descriptor
+  allocation, scene/ECS work, skybox, render graph, terrain, or lighting.
 
-`G-004` proves the reproducible shader-to-pixel path. Camera math, reversed-Z
-depth, and the textured cube remain the separate `G-005` increment.
+`G-005` proves camera and depth conventions on a real 3D object. The minimal
+direct-queue render graph remains the separate `G-006` increment.
 
 ## 15. Primary technical references
 

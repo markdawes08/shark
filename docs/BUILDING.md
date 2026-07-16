@@ -40,7 +40,8 @@ SDK 10.0.26100, MSVC 14.50 specifically rather than the newer default toolset,
 and the pinned vcpkg registry. Shark's overlay triplet applies that same MSVC
 14.50 toolset to built dependencies. The configure step restores every declared
 dependency. G-001 consumes DirectX Headers/Guids and the Agility runtime;
-DXC, DirectXTex, and WinPix remain restored for their later increments.
+G-004 consumes DXC as a build-time host tool. DirectXTex and WinPix remain
+restored for their later increments.
 
 The checked-in toolchain also scopes `UCRTContentRoot` to the complete Windows
 SDK payload for the CMake process. This avoids a Visual Studio 2026 installation
@@ -63,6 +64,10 @@ out/build/windows-vs2026/bin/Release/d3d10warp.dll
 out/build/windows-vs2026/bin/Release/SharkTests.exe
 out/build/windows-vs2026/lib/Debug/SharkEngine.lib
 out/build/windows-vs2026/lib/Release/SharkEngine.lib
+out/build/windows-vs2026/generated/shaders/Debug/triangle.vertex.dxil
+out/build/windows-vs2026/generated/shaders/Debug/triangle.pixel.dxil
+out/build/windows-vs2026/generated/shaders/Release/triangle.vertex.dxil
+out/build/windows-vs2026/generated/shaders/Release/triangle.pixel.dxil
 ```
 
 vcpkg deploys the spdlog/fmt runtime DLLs beside executables that need them.
@@ -72,11 +77,43 @@ All generated binaries stay under ignored `out/`. The WARP NuGet binary is for
 local development and testing only and must never enter a packaged product.
 
 With no arguments, `SharkSandbox` initializes the highest-priority eligible
-hardware device, opens the native Win32 window, and continuously presents the
-clear color through the G-003 triple frame-resource lifecycle. Resize, input,
-and window lifecycle records remain visible in the Debug console log. Resize or
-minimize/restore the window to exercise the swap-chain lifecycle, then close the
-title bar or press Alt+F4 to exit cleanly.
+hardware device, opens the native Win32 window, and continuously draws the
+G-004 color-interpolated triangle through the G-003 triple frame-resource
+lifecycle. Resize, input, and window lifecycle records remain visible in the
+Debug console log. Resize or minimize/restore the window to exercise the
+swap-chain lifecycle, then close the title bar or press Alt+F4 to exit cleanly.
+
+## Shader build contract
+
+Configuration resolves only the `dxc.exe` restored by the active vcpkg host
+triplet and verifies retail version `1.9.2602.24`. A global DXC on `PATH` is
+neither required nor accepted. The compiler's sidecar `dxcompiler.dll` and
+`dxil.dll` remain beside that host tool; Shark does not link them or copy them
+beside `SharkSandbox.exe`.
+
+The build compiles `VSMain` as `vs_6_0` and `PSMain` as `ps_6_0`, using HLSL
+2021, row-major layout, strict mode, and warnings as errors. DXIL, generated C++
+byte arrays, PDBs, and dependency files are configuration-specific and stay
+under ignored `out/build/windows-vs2026/generated/shaders/`. The dependency
+files make edits to the shared triangle include rebuild both stages.
+
+CTest adds three build checks: both shader depfiles must name the primary source
+and shared include, a build-tree include edit must actually regenerate the
+compiled shader, malformed HLSL must fail under the pinned compiler, and an
+HLSL warning must fail because `-WX` is active. The expected-failure checks also
+verify that the failure is the intended compiler diagnostic rather than a
+missing tool or broken build target.
+
+Run only the normal shader target and focused build checks with:
+
+```powershell
+& $cmake --build --preset windows-debug --target SharkTriangleShaders
+& $ctest --preset windows-debug -R '^build\.shader_'
+```
+
+For the visual acceptance check, run `SharkSandbox` without arguments. A
+centered red/green/blue interpolated triangle must remain correctly framed over
+the dark clear color before and after resizing the window.
 
 ## Graphics device checks
 
@@ -118,7 +155,7 @@ ownership, and runtime rules.
 
 ## Presentation checks
 
-Run the fixed clear/present contract on hardware and packaged WARP with:
+Run the fixed triangle/present contract on hardware and packaged WARP with:
 
 ```powershell
 & .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe --present-smoke
@@ -126,9 +163,9 @@ Run the fixed clear/present contract on hardware and packaged WARP with:
 ```
 
 Each command shows a real PMv2-aware window, presents exactly 1,000 successful
-clear frames, performs a physical client resize, proves no frame is presented
-while minimized, restores, shuts down the presentation objects before the
-window, and checks new D3D12/DXGI messages plus live D3D12 device children.
+triangle frames, performs a physical client resize, proves no frame is
+presented while minimized, restores, shuts down the presentation objects before
+the window, and checks new D3D12/DXGI messages plus live D3D12 device children.
 Submission or presentation removal failures also emit bounded DRED diagnostics.
 
 The run also exercises three contexts selected by DXGI's back-buffer index.
@@ -136,10 +173,11 @@ Each attempt writes and copies one 256-byte upload probe on the GPU and stages
 one descriptor in a CPU-only heap. A context waits only when its own allocator
 cannot yet be reused because its preceding submission fence has not completed;
 that checkpoint protects the allocator, upload bytes, and probe destination.
-Resize and shutdown perform the full queue drains. The summary reports context
-reuse, blocking reuse waits, queue drains, and upload/descriptor high-water
-marks. The wait count is deliberately not a performance gate because it depends
-on adapter speed and scheduling.
+Resize and shutdown perform the full queue drains. Every submitted frame must
+record one three-vertex draw. The summary reports triangle draws, context reuse,
+blocking reuse waits, queue drains, and upload/descriptor high-water marks. The
+wait count is deliberately not a performance gate because it depends on adapter
+speed and scheduling.
 
 CTest registers hardware and WARP device and presentation paths as separate
 serial processes, plus a focused packaged-WARP GPU-validation presentation
@@ -165,8 +203,9 @@ test. See [the platform contract](PLATFORM.md) for the event and ownership
 rules.
 
 See the [presentation and frame-resource contract](GRAPHICS_PRESENTATION.md)
-for context reuse, bounded staging, fence retirement, resize ownership, and the
-G-004 handoff.
+for context reuse, bounded staging, fence retirement, and resize ownership. See
+the [first HLSL pipeline contract](GRAPHICS_PIPELINE.md) for pinned compilation,
+generated artifacts, root-signature/PSO state, and draw behavior.
 
 ## Visual Studio
 

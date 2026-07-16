@@ -1,18 +1,21 @@
 # Direct3D 12 Presentation and Frame-Resource Contract
 
-- **Completed through:** `G-003`
-- **Last verified:** July 15, 2026
+- **Completed through:** `G-004`
+- **Last verified:** July 16, 2026
 
 G-002 produced Shark's first pixels through a resize-safe Direct3D 12
 flip-model swap chain. G-003 replaces its wait-after-every-present path with
-three fence-gated reusable frame contexts and bounded transient staging while
-preserving the same visible clear color and window lifecycle.
+three fence-gated reusable frame contexts and bounded transient staging. G-004
+adds the first build-time HLSL pipeline and draws one color-interpolated
+triangle while preserving the established window and frame lifecycles.
 
 ## Public boundary and ownership
 
 `shark::rhi::d3d12::Presentation` is a move-only PIMPL. Its public header uses
 an opaque native-window pointer and engine-owned extent, color, status, and
-statistics records; it exposes no Win32, DXGI, D3D12, WRL, or COM types.
+statistics records plus pointer/size `ShaderBytecodeView` inputs; it exposes no
+Win32, DXGI, D3D12, WRL, or COM types. `present_frame()` records the current
+first-triangle frame.
 
 The internal `detail::DeviceAccess` bridge borrows the authoritative D3D12
 device and DXGI factory from `Device`. It does not transfer ownership. The
@@ -36,6 +39,7 @@ The presentation object owns:
 - three `DXGI_FORMAT_R8G8B8A8_UNORM` back-buffer references;
 - one CPU-only RTV heap with three descriptors;
 - one reusable graphics command list;
+- one persistent empty root signature and one immutable triangle graphics PSO;
 - three frame contexts, each containing one direct command allocator, one
   persistently mapped 64 KiB committed upload buffer, one 256-byte default-heap
   upload-probe destination, one CPU-only 64-slot CBV/SRV/UAV staging heap, a
@@ -47,7 +51,8 @@ The DXGI factory is associated with the HWND using `DXGI_MWA_NO_ALT_ENTER`.
 Every significant D3D12 object is named. The platform manifests establish
 Per-Monitor DPI Awareness v2 before HWND creation, so the initial and resized
 swap-chain extents are the same physical client-pixel dimensions published by
-`Application`.
+`Application`. Presentation rejects zero extents and dimensions above the D3D12
+2D-resource limit before they can reach swap-chain or viewport state.
 
 DXGI's current back-buffer index selects the context; the CPU frame count is
 never used as a substitute. One monotonic fence timeline covers all direct-queue
@@ -65,22 +70,25 @@ One frame performs the following work:
    descriptor cursors;
 4. reserve and write one 256-byte diagnostic upload record, then create one CBV
    in the context's CPU-only staging heap;
-5. reset that context's command allocator and the shared command list;
+5. reset that context's command allocator and the shared command list with the
+   immutable triangle PSO;
 6. copy the diagnostic record from the upload heap to the context's default-heap
    probe destination on the direct queue;
 7. transition the current back buffer from `PRESENT` to `RENDER_TARGET`, clear
-   it, and transition it back to `PRESENT`;
+   it, bind the empty root signature, set the current physical viewport/scissor
+   and triangle-list topology, issue `DrawInstanced(3, 1, 0, 0)`, then
+   transition the buffer back to `PRESENT`;
 8. close and execute the command list;
 9. immediately signal the next monotonic fence value and store it on the
    context; and
 10. call `Present` without an unconditional post-frame fence wait.
 
 The copy makes upload-memory reuse genuinely GPU-fence-sensitive. Probe content
-is not read back in G-003. The staged CBV exercises bounded descriptor
-addressing and exhaustion policy, but it is CPU-only, never bound, and is not a
-shader-visible descriptor system. Its cursor follows the same conservative
-frame retirement boundary even though an unbound staging descriptor is not
-itself consumed by the GPU.
+is not read back. The staged CBV exercises bounded descriptor addressing and
+exhaustion policy, but it is CPU-only, never bound to the G-004 triangle, and is
+not a shader-visible descriptor system. Its cursor follows the same
+conservative frame retirement boundary even though an unbound staging
+descriptor is not itself consumed by the GPU.
 
 Each probe destination is created in `D3D12_RESOURCE_STATE_COMMON`.
 `CopyBufferRegion` uses Direct3D 12 buffer promotion to `COPY_DEST`, and the
@@ -91,10 +99,16 @@ Interactive presentation uses `Present(1, 0)` to synchronize to vertical
 refresh. The bounded smoke uses `Present(0, 0)` and requests no tearing flag.
 Only `S_OK` increments `presented_frames`; `DXGI_STATUS_OCCLUDED` is reported
 separately and never satisfies the 1,000-frame gate. An occluded attempt still
-has a signaled context checkpoint because its clear command list was submitted.
+has a signaled context checkpoint because its command list was submitted.
 Vertical synchronization may block inside `Present`, and context reuse may
 perform a bounded fence wait; G-003 removes only the unconditional queue drain
 after every frame.
+
+The generated shader byte arrays are borrowed only while the root signature and
+PSO are created synchronously. Presentation owns neither source code nor shader
+artifacts after creation. The root signature and PSO remain valid across swap
+chain resize and are released only after shutdown drains and retires every
+submitted frame.
 
 Legacy transition barriers are intentional for explicit back-buffer state
 changes here. Enhanced-barrier selection is owned by the later render-graph
@@ -161,6 +175,8 @@ The frame count is not user-configurable. A successful run:
 - proves all three DXGI-selected contexts were acquired and reused;
 - matches acquisitions, upload/descriptor allocations, and fence-tracked
   submissions to successful plus occluded present attempts;
+- proves every submitted frame records exactly one triangle draw and three
+  vertices;
 - retires every submission by explicit shutdown;
 - verifies one 256-byte GPU-consumed upload and one CPU staging descriptor per
   attempt, with high-water marks of 256 bytes and one descriptor;
@@ -173,6 +189,8 @@ The frame count is not user-configurable. A successful run:
 Early close, dropped lifecycle events, occlusion that prevents progress,
 deadline expiry, a dimension mismatch, any graphics failure, incomplete close,
 or a final count other than 1,000 returns a nonzero process exit code.
+The smoke validates compilation, draw submission, lifetime, and diagnostics; it
+does not read back or compare the final pixels.
 
 CTest runs hardware, packaged WARP, and packaged WARP with GPU-based validation
 as separate serial processes. Debug and Release must both pass those checks in
@@ -180,9 +198,14 @@ addition to the device-only, platform-only, and frame-resource unit tests.
 
 ## Explicit non-goals
 
-G-003 does not expose a public/general upload allocator, global upload ring,
+G-004 does not expose a public/general upload allocator, global upload ring,
 shader-visible descriptor heap, persistent descriptor allocator, generic
-deferred-destruction system, or readback validation. It also adds no shader
-compilation, root signature, pipeline state, draw call, depth buffer, render
-graph, copy queue, asynchronous compute, fullscreen policy, or tearing mode.
-The project-pinned build-time shader path and first triangle are G-004.
+deferred-destruction system, or readback/image validation. Its root signature
+and PSO are deliberately specific to the first triangle, not a general shader
+asset system, pipeline cache, or hot-reload boundary. It adds no vertex/index
+buffer, texture, shader-visible binding, camera, depth buffer, render graph,
+copy queue, asynchronous compute, fullscreen policy, or tearing mode. Camera
+math, reversed-Z depth, and the textured cube are G-005.
+
+See [the first HLSL pipeline contract](GRAPHICS_PIPELINE.md) for compilation,
+generated artifacts, root-signature/PSO state, and the draw contract.

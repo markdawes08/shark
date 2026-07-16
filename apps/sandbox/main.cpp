@@ -8,6 +8,9 @@
 
 #include "options.hpp"
 
+#include <triangle.pixel.hpp>
+#include <triangle.vertex.hpp>
+
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -437,6 +440,14 @@ void log_platform_event(const shark::platform::Event& event)
         application.native_window_handle().value;
     presentation_config.extent = to_presentation_extent(
         application.client_extent());
+    presentation_config.vertex_shader = {
+        shark_triangle_vertex_shader,
+        sizeof(shark_triangle_vertex_shader),
+    };
+    presentation_config.pixel_shader = {
+        shark_triangle_pixel_shader,
+        sizeof(shark_triangle_pixel_shader),
+    };
     presentation_config.synchronize_to_vertical_refresh = !smoke_mode;
     auto presentation_result = rhi::d3d12::Presentation::create(
         device,
@@ -451,8 +462,8 @@ void log_platform_event(const shark::platform::Event& event)
         core::LogLevel::info,
         "sandbox",
         smoke_mode
-            ? "Running fixed 1,000-frame clear/present smoke test"
-            : "Direct3D 12 clear-color presentation initialized");
+            ? "Running fixed 1,000-frame triangle presentation smoke test"
+            : "Direct3D 12 first-triangle presentation initialized");
 
     const auto smoke_deadline =
         std::chrono::steady_clock::now() + smoke_deadline_duration;
@@ -681,7 +692,7 @@ void log_platform_event(const shark::platform::Event& event)
             continue;
         }
 
-        auto present_result = presentation.present_clear_frame();
+        auto present_result = presentation.present_frame();
         if (!present_result) {
             return core::Result<void>::failure(
                 std::move(present_result).error());
@@ -732,6 +743,9 @@ void log_platform_event(const shark::platform::Event& event)
             stats.upload_high_water_bytes != frame_probe_bytes ||
             stats.descriptor_allocations != stats.frame_submissions ||
             stats.descriptor_high_water_count != 1 ||
+            stats.triangle_draw_calls != stats.frame_submissions ||
+            stats.triangle_vertices !=
+                stats.triangle_draw_calls * 3 ||
             stats.full_queue_drains != stats.resize_count + 1 ||
             stats.last_submission_fence == 0) {
             return core::Result<void>::failure(
@@ -757,6 +771,8 @@ void log_platform_event(const shark::platform::Event& event)
         summary.append(", descriptor-high-water=");
         summary.append(std::to_string(
             stats.descriptor_high_water_count));
+        summary.append(", triangle-draws=");
+        summary.append(std::to_string(stats.triangle_draw_calls));
         core::log_message(
             core::LogLevel::info,
             "gpu.presentation",

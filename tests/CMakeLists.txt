@@ -48,6 +48,70 @@ catch_discover_tests(SharkTests
 )
 
 add_test(
+    NAME build.shader_dependencies
+    COMMAND
+        "${CMAKE_COMMAND}"
+        "-DSHARK_BUILD_CONFIG=$<CONFIG>"
+        "-DSHARK_BUILD_DIRECTORY=${CMAKE_BINARY_DIR}"
+        "-DSHARK_DEPENDENCY_PROBE_HEADER=${SHARK_DEPENDENCY_PROBE_HEADER}"
+        "-DSHARK_DEPENDENCY_PROBE_INCLUDE=${SHARK_DEPENDENCY_PROBE_INCLUDE}"
+        "-DSHARK_DEPENDENCY_PROBE_INCLUDE_FIXTURE=${SHARK_DEPENDENCY_PROBE_INCLUDE_FIXTURE}"
+        "-DSHARK_DEPENDENCY_PROBE_TARGET=${SHARK_DEPENDENCY_PROBE_TARGET}"
+        "-DSHARK_SHADER_TARGET=${SHARK_TRIANGLE_SHADER_TARGET}"
+        "-DSHARK_PRIMARY_SHADER_NAME=triangle.hlsl"
+        "-DSHARK_SHARED_SHADER_NAME=triangle_data.hlsli"
+        "-DSHARK_VERTEX_DEPFILE=${SHARK_TRIANGLE_VERTEX_DEPFILE}"
+        "-DSHARK_PIXEL_DEPFILE=${SHARK_TRIANGLE_PIXEL_DEPFILE}"
+        -P "${PROJECT_SOURCE_DIR}/cmake/VerifyShaderDependencies.cmake"
+)
+
+add_test(
+    NAME build.shader_malformed_fails
+    COMMAND
+        "${CMAKE_COMMAND}"
+        "-DSHARK_BUILD_CONFIG=$<CONFIG>"
+        "-DSHARK_BUILD_DIRECTORY=${CMAKE_BINARY_DIR}"
+        "-DSHARK_DXC_TOOL=${SHARK_DXC_TOOL}"
+        "-DSHARK_EXPECTED_DXC_VERSION=${SHARK_DXC_VERSION}"
+        "-DSHARK_EXPECTED_SOURCE_NAME=malformed.hlsl"
+        "-DSHARK_EXPECTED_SENTINEL=SHARK_EXPECTED_MALFORMED_SHADER_FAILURE"
+        "-DSHARK_PROBE_HEADER=${SHARK_MALFORMED_SHADER_HEADER}"
+        "-DSHARK_PROBE_BINARY=${SHARK_MALFORMED_SHADER_BINARY}"
+        "-DSHARK_PROBE_PDB=${SHARK_MALFORMED_SHADER_PDB}"
+        "-DSHARK_PROBE_DEPFILE=${SHARK_MALFORMED_SHADER_DEPFILE}"
+        "-DSHARK_PROBE_TARGET=SharkMalformedShaderProbe"
+        -P "${PROJECT_SOURCE_DIR}/cmake/VerifyExpectedBuildFailure.cmake"
+)
+
+add_test(
+    NAME build.shader_warning_is_error
+    COMMAND
+        "${CMAKE_COMMAND}"
+        "-DSHARK_BUILD_CONFIG=$<CONFIG>"
+        "-DSHARK_BUILD_DIRECTORY=${CMAKE_BINARY_DIR}"
+        "-DSHARK_DXC_TOOL=${SHARK_DXC_TOOL}"
+        "-DSHARK_EXPECTED_DXC_VERSION=${SHARK_DXC_VERSION}"
+        "-DSHARK_EXPECTED_SOURCE_NAME=warning.hlsl"
+        "-DSHARK_EXPECTED_SENTINEL=SHARK_EXPECTED_WARNING_AS_ERROR"
+        "-DSHARK_PROBE_HEADER=${SHARK_WARNING_SHADER_HEADER}"
+        "-DSHARK_PROBE_BINARY=${SHARK_WARNING_SHADER_BINARY}"
+        "-DSHARK_PROBE_PDB=${SHARK_WARNING_SHADER_PDB}"
+        "-DSHARK_PROBE_DEPFILE=${SHARK_WARNING_SHADER_DEPFILE}"
+        "-DSHARK_PROBE_TARGET=SharkWarningShaderProbe"
+        -P "${PROJECT_SOURCE_DIR}/cmake/VerifyExpectedBuildFailure.cmake"
+)
+
+set_tests_properties(
+    build.shader_dependencies
+    build.shader_malformed_fails
+    build.shader_warning_is_error
+    PROPERTIES
+        LABELS "build;shader"
+        RUN_SERIAL TRUE
+        TIMEOUT 60
+)
+
+add_test(
     NAME integration.platform.window_shell
     COMMAND SharkSandbox --platform-smoke
 )
@@ -84,11 +148,11 @@ set_tests_properties(integration.gpu.warp_device
 )
 
 add_test(
-    NAME integration.gpu.hardware_clear_present
+    NAME integration.gpu.hardware_triangle_present
     COMMAND SharkSandbox --present-smoke
 )
 
-set_tests_properties(integration.gpu.hardware_clear_present
+set_tests_properties(integration.gpu.hardware_triangle_present
     PROPERTIES
         LABELS "integration;gpu;presentation;hardware"
         RUN_SERIAL TRUE
@@ -96,11 +160,11 @@ set_tests_properties(integration.gpu.hardware_clear_present
 )
 
 add_test(
-    NAME integration.gpu.warp_clear_present
+    NAME integration.gpu.warp_triangle_present
     COMMAND SharkSandbox --present-smoke --warp
 )
 
-set_tests_properties(integration.gpu.warp_clear_present
+set_tests_properties(integration.gpu.warp_triangle_present
     PROPERTIES
         LABELS "integration;gpu;presentation;warp"
         RUN_SERIAL TRUE
@@ -108,11 +172,11 @@ set_tests_properties(integration.gpu.warp_clear_present
 )
 
 add_test(
-    NAME integration.gpu.warp_clear_present_validation
+    NAME integration.gpu.warp_triangle_present_validation
     COMMAND SharkSandbox --present-smoke --warp --gpu-validation
 )
 
-set_tests_properties(integration.gpu.warp_clear_present_validation
+set_tests_properties(integration.gpu.warp_triangle_present_validation
     PROPERTIES
         LABELS "integration;gpu;presentation;warp;validation"
         RUN_SERIAL TRUE

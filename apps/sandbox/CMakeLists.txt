@@ -1,14 +1,19 @@
 add_executable(SharkSandbox
     "${PROJECT_SOURCE_DIR}/cmake/Shark.Windows.manifest"
+    "${SHARK_TRIANGLE_PIXEL_HEADER}"
+    "${SHARK_TRIANGLE_VERTEX_HEADER}"
     agility_sdk_exports.cpp
     main.cpp
     options.cpp
     options.hpp
 )
 
+add_dependencies(SharkSandbox "${SHARK_TRIANGLE_SHADER_TARGET}")
+
 target_include_directories(SharkSandbox
     PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${SHARK_TRIANGLE_SHADER_INCLUDE_DIRECTORY}"
 )
 
 target_link_libraries(SharkSandbox

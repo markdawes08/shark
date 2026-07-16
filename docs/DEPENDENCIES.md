@@ -54,12 +54,16 @@ public logging API, and vcpkg deploys its spdlog/fmt runtime DLLs only under
 ignored build output. G-001 links the DirectX Headers, GUIDs, Agility import
 library, and DXGI into the engine; the executable exports SDK version `619` and
 path `.\\D3D12\\`, then copies the matching Core and SDK Layers to that folder.
-WARP is copied and loaded but not linked. DXC, DirectXTex, and WinPix remain
-restored but unconsumed; their owning increments decide the final runtime
-boundaries. The vcpkg
-executable comes from Visual Studio 2026, `VCPKG_ROOT`, or a complete
-installation on `PATH`; its version is reported during setup but is not
-misrepresented as a project-pinned dependency.
+WARP is copied and loaded but not linked. G-004 consumes DXC only through the
+absolute `DIRECTX_DXC_TOOL` path from the active vcpkg host triplet, verifies
+retail version `1.9.2602.24`, and requires the compiler's `dxcompiler.dll` and
+`dxil.dll` sidecars in that tool directory. Those files run the compiler during
+the build; Shark neither links the DXC library nor deploys any DXC binary beside
+the executable. DirectXTex and WinPix remain restored but unconsumed; their
+owning increments decide the final runtime boundaries. The vcpkg executable
+comes from Visual Studio 2026, `VCPKG_ROOT`, or a complete installation on
+`PATH`; its version is reported during setup but is not misrepresented as a
+project-pinned dependency.
 
 Package versions change only in a dedicated dependency increment that updates
 the manifest, this record, performs a fresh restore, and rebuilds/tests Debug

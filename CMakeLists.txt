@@ -79,7 +79,87 @@ endif()
 
 find_package(directx12-agility CONFIG REQUIRED)
 find_package(directx-warp CONFIG REQUIRED)
+find_package(directx-dxc CONFIG REQUIRED)
 
+if(NOT VCPKG_INSTALLED_DIR OR NOT VCPKG_HOST_TRIPLET)
+    message(FATAL_ERROR
+        "Pinned DXC validation requires the manifest install directory and "
+        "host triplet.")
+endif()
+
+set(_shark_expected_dxc
+    "${VCPKG_INSTALLED_DIR}/${VCPKG_HOST_TRIPLET}/tools/directx-dxc/dxc.exe")
+file(REAL_PATH "${_shark_expected_dxc}" _shark_expected_dxc_real)
+file(REAL_PATH "${DIRECTX_DXC_TOOL}" _shark_resolved_dxc_real)
+string(TOLOWER "${_shark_expected_dxc_real}" _shark_expected_dxc_compare)
+string(TOLOWER "${_shark_resolved_dxc_real}" _shark_resolved_dxc_compare)
+if(NOT EXISTS "${_shark_resolved_dxc_real}" OR
+   NOT _shark_resolved_dxc_compare STREQUAL _shark_expected_dxc_compare)
+    message(FATAL_ERROR
+        "DXC must resolve from the active vcpkg host-tool install. Expected "
+        "${_shark_expected_dxc_real}; resolved ${_shark_resolved_dxc_real}.")
+endif()
+
+get_filename_component(
+    _shark_dxc_directory
+    "${_shark_resolved_dxc_real}"
+    DIRECTORY
+)
+set(_shark_dxc_runtime_files
+    "${_shark_dxc_directory}/dxcompiler.dll"
+    "${_shark_dxc_directory}/dxil.dll"
+)
+foreach(_shark_dxc_runtime IN LISTS _shark_dxc_runtime_files)
+    if(NOT EXISTS "${_shark_dxc_runtime}")
+        message(FATAL_ERROR
+            "The pinned DXC host tool is incomplete: "
+            "${_shark_dxc_runtime}")
+    endif()
+endforeach()
+
+execute_process(
+    COMMAND "${_shark_resolved_dxc_real}" --version
+    RESULT_VARIABLE _shark_dxc_version_result
+    OUTPUT_VARIABLE _shark_dxc_version_stdout
+    ERROR_VARIABLE _shark_dxc_version_stderr
+    ENCODING UTF-8
+)
+string(CONCAT _shark_dxc_version_text
+    "${_shark_dxc_version_stdout}"
+    "\n"
+    "${_shark_dxc_version_stderr}"
+)
+set(_shark_required_dxc_version "1.9.2602.24")
+string(REPLACE
+    "."
+    "[.]"
+    _shark_required_dxc_version_pattern
+    "${_shark_required_dxc_version}"
+)
+if(NOT _shark_dxc_version_result EQUAL 0 OR
+   NOT _shark_dxc_version_text MATCHES
+       "(^|[^0-9])${_shark_required_dxc_version_pattern}([^0-9]|$)")
+    message(FATAL_ERROR
+        "Shark requires retail DXC ${_shark_required_dxc_version}; "
+        "reported: ${_shark_dxc_version_text}")
+endif()
+
+set(SHARK_DXC_TOOL
+    "${_shark_resolved_dxc_real}"
+    CACHE INTERNAL "Validated project-restored DXC host tool"
+)
+set(SHARK_DXC_RUNTIME_FILES
+    "${_shark_dxc_runtime_files}"
+    CACHE INTERNAL "Runtime files required beside the DXC host tool"
+)
+set(SHARK_DXC_VERSION
+    "${_shark_required_dxc_version}"
+    CACHE INTERNAL "Validated retail DXC version"
+)
+
+include(cmake/SharkShaders.cmake)
+
+add_subdirectory(shaders)
 add_subdirectory(engine)
 add_subdirectory(apps/sandbox)
 
@@ -93,3 +173,4 @@ message(STATUS "Shark generator: ${CMAKE_GENERATOR}")
 message(STATUS "Shark MSVC toolset: ${CMAKE_VS_PLATFORM_TOOLSET_VERSION}")
 message(STATUS "Shark Windows SDK: ${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}")
 message(STATUS "Shark vcpkg root: ${SHARK_VCPKG_ROOT}")
+message(STATUS "Shark DXC ${SHARK_DXC_VERSION}: ${SHARK_DXC_TOOL}")

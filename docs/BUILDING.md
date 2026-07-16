@@ -73,9 +73,10 @@ local development and testing only and must never enter a packaged product.
 
 With no arguments, `SharkSandbox` initializes the highest-priority eligible
 hardware device, opens the native Win32 window, and continuously presents the
-G-002 clear color. Resize, input, and window lifecycle records remain visible
-in the Debug console log. Resize or minimize/restore the window to exercise the
-swap-chain lifecycle, then close the title bar or press Alt+F4 to exit cleanly.
+clear color through the G-003 triple frame-resource lifecycle. Resize, input,
+and window lifecycle records remain visible in the Debug console log. Resize or
+minimize/restore the window to exercise the swap-chain lifecycle, then close the
+title bar or press Alt+F4 to exit cleanly.
 
 ## Graphics device checks
 
@@ -130,6 +131,16 @@ while minimized, restores, shuts down the presentation objects before the
 window, and checks new D3D12/DXGI messages plus live D3D12 device children.
 Submission or presentation removal failures also emit bounded DRED diagnostics.
 
+The run also exercises three contexts selected by DXGI's back-buffer index.
+Each attempt writes and copies one 256-byte upload probe on the GPU and stages
+one descriptor in a CPU-only heap. A context waits only when its own allocator
+cannot yet be reused because its preceding submission fence has not completed;
+that checkpoint protects the allocator, upload bytes, and probe destination.
+Resize and shutdown perform the full queue drains. The summary reports context
+reuse, blocking reuse waits, queue drains, and upload/descriptor high-water
+marks. The wait count is deliberately not a performance gate because it depends
+on adapter speed and scheduling.
+
 CTest registers hardware and WARP device and presentation paths as separate
 serial processes, plus a focused packaged-WARP GPU-validation presentation
 path. To run all graphics integration checks for either configuration:
@@ -153,8 +164,9 @@ so the normal interactive executable is never allowed to block an automated
 test. See [the platform contract](PLATFORM.md) for the event and ownership
 rules.
 
-See the [presentation contract](GRAPHICS_PRESENTATION.md) for the temporary
-serialized synchronization, resize ownership, and G-003 handoff.
+See the [presentation and frame-resource contract](GRAPHICS_PRESENTATION.md)
+for context reuse, bounded staging, fence retirement, resize ownership, and the
+G-004 handoff.
 
 ## Visual Studio
 

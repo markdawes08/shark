@@ -41,6 +41,20 @@ struct PresentationStats final {
     std::uint64_t presented_frames{};
     std::uint64_t occluded_frames{};
     std::uint64_t resize_count{};
+    std::uint32_t frame_context_count{};
+    std::uint32_t used_frame_context_mask{};
+    std::uint64_t frame_context_acquisitions{};
+    std::uint64_t frame_context_reuses{};
+    std::uint64_t frame_submissions{};
+    std::uint64_t retired_frame_submissions{};
+    std::uint64_t blocking_reuse_waits{};
+    std::uint64_t full_queue_drains{};
+    std::uint64_t upload_allocations{};
+    std::uint64_t upload_bytes_written{};
+    std::uint64_t upload_high_water_bytes{};
+    std::uint64_t descriptor_allocations{};
+    std::uint64_t descriptor_high_water_count{};
+    std::uint64_t last_submission_fence{};
 };
 
 // Device and the native window must both outlive Presentation. All methods

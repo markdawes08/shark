@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 15, 2026
-- **Completed through:** `G-002` - clear-color swap chain and presentation
-- **Next increment:** `G-003` - frame resource lifecycle
+- **Completed through:** `G-003` - frame-resource lifecycle
+- **Next increment:** `G-004` - build-time HLSL and first triangle
 
 ## 1. Project direction
 
@@ -298,9 +298,14 @@ unstable circular solve; iterative two-way coupling is a later milestone.
   cross-queue fence handoffs and PIX demonstrates a benefit.
 - Use a `FrameContext` per back buffer for command allocators, transient uploads,
   descriptors, timestamps, and a completion set containing every queue fence
-  that guards reuse.
+  that guards reuse. G-003 establishes one allocator, bounded upload/CPU
+  descriptor staging, and one direct-fence checkpoint per context while sharing
+  one graphics command list. Timestamp storage and multi-queue completion sets
+  arrive with the increments that use them.
 - Defer destruction of GPU resources, descriptors, pipelines, and upload storage
-  until every relevant queue fence in their retirement set completes.
+  until every relevant queue fence in their retirement set completes. G-003
+  verifies whole-context transient reuse; generic deferred destruction begins
+  only after typed resources and pipelines exist.
 
 ### Resources and descriptors
 
@@ -520,7 +525,7 @@ This is the shortest responsible path to the first requested visual feature.
 |---|---:|---|---|
 | `G-001` | - | Initialize Agility/D3D12, choose the high-performance adapter, log capabilities, and start hardware/WARP with zero debug errors | `feat(gpu): initialize Direct3D 12 device` |
 | `G-002` | V | Create a resize-safe flip swap chain and present a clear color for 1,000 frames without validation or live-object errors | `feat(gpu): present a clear-color frame` |
-| `G-003` | - | Add triple-buffered frame contexts, fences, upload storage, and descriptor allocators with verified retirement | `feat(gpu): add frame resource lifecycle` |
+| `G-003` | - | Add three back-buffer-indexed frame contexts, a monotonic direct-queue fence, bounded per-context upload and CPU descriptor staging, and verify transient slots reset only after submission completes | `feat(gpu): add frame resource lifecycle` |
 | `G-004` | V | Use the project-pinned DXC to compile HLSL at build time and render a triangle; a broken shader fails the build | `feat(render): add the first HLSL pipeline` |
 | `G-005` | V | Add camera math, input, reversed-Z depth, and a textured cube; rotation and translation behave consistently | `feat(render): add camera and depth conventions` |
 | `G-006` | - | Add the simple direct-queue render graph with declared back-buffer/depth use and centralized barriers | `feat(render): add minimal render graph` |
@@ -665,23 +670,23 @@ entity scale or query patterns make it useful.
 
 ## 14. Immediate next increment
 
-After `G-002` is reviewed and committed by the owner, implement only `G-003`:
+After `G-003` is reviewed and committed by the owner, implement only `G-004`:
 
-- replace the temporary wait-after-every-present path with three reusable
-  `FrameContext` records keyed to the swap-chain back buffers;
-- give each context its own command allocator and completion fence value so it
-  is reset only after the direct queue has finished using it;
-- add bounded per-frame upload storage and CPU-visible descriptor allocation
-  foundations with explicit exhaustion behavior;
-- use one monotonic direct-queue fence timeline and verify resource/descriptor
-  retirement before reuse;
-- preserve G-002 resize, minimize, shutdown, DRED, and validation behavior; and
-- stop before HLSL compilation, a triangle pipeline, depth buffers, a render
-  graph, copy queues, or asynchronous compute.
+- resolve the project-restored retail DXC `1.9.2602.24` host tool without using
+  an ambient `PATH` copy;
+- compile minimal vertex and pixel HLSL to DXIL at build time with explicit
+  entry points, targets, row-major convention, and warnings as errors;
+- add a negative build check proving malformed HLSL fails compilation;
+- create the minimal root signature and graphics PSO, then draw one triangle
+  through the existing direct queue and frame contexts;
+- preserve resize, frame retirement, DRED, DirectX validation, and the fixed
+  1,000-frame smoke; and
+- stop before camera/depth work, textures, generalized shader caching or hot
+  reload, descriptor tables, a render graph, copy queues, or asynchronous
+  compute.
 
-`G-003` removes the deliberately serialized per-frame wait without introducing
-additional queues. Shader compilation and the first triangle remain the
-separate `G-004` increment.
+`G-004` proves the reproducible shader-to-pixel path. Camera math, reversed-Z
+depth, and the textured cube remain the separate `G-005` increment.
 
 ## 15. Primary technical references
 

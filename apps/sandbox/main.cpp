@@ -9,6 +9,7 @@
 #include "options.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <exception>
 #include <optional>
@@ -711,12 +712,51 @@ void log_platform_event(const shark::platform::Event& event)
                     "lifecycle"));
         }
 
+        constexpr std::uint32_t expected_context_count = 3;
+        constexpr std::uint32_t expected_context_mask =
+            (std::uint32_t{1} << expected_context_count) - 1;
+        constexpr std::uint64_t frame_probe_bytes = 256;
+        const auto attempted_presents =
+            stats.presented_frames + stats.occluded_frames;
+        if (stats.frame_context_count != expected_context_count ||
+            stats.used_frame_context_mask != expected_context_mask ||
+            stats.frame_context_acquisitions != attempted_presents ||
+            stats.frame_submissions != attempted_presents ||
+            stats.retired_frame_submissions !=
+                stats.frame_submissions ||
+            stats.frame_context_reuses + expected_context_count !=
+                stats.frame_context_acquisitions ||
+            stats.upload_allocations != stats.frame_submissions ||
+            stats.upload_bytes_written !=
+                stats.upload_allocations * frame_probe_bytes ||
+            stats.upload_high_water_bytes != frame_probe_bytes ||
+            stats.descriptor_allocations != stats.frame_submissions ||
+            stats.descriptor_high_water_count != 1 ||
+            stats.full_queue_drains != stats.resize_count + 1 ||
+            stats.last_submission_fence == 0) {
+            return core::Result<void>::failure(
+                presentation_smoke_error(
+                    "The presentation frame-resource lifecycle invariants "
+                    "were not satisfied"));
+        }
+
         auto summary = std::string{"Presentation smoke passed: frames="};
         summary.append(std::to_string(stats.presented_frames));
         summary.append(", occluded=");
         summary.append(std::to_string(stats.occluded_frames));
         summary.append(", resizes=");
         summary.append(std::to_string(stats.resize_count));
+        summary.append(", context-reuses=");
+        summary.append(std::to_string(stats.frame_context_reuses));
+        summary.append(", reuse-waits=");
+        summary.append(std::to_string(stats.blocking_reuse_waits));
+        summary.append(", queue-drains=");
+        summary.append(std::to_string(stats.full_queue_drains));
+        summary.append(", upload-high-water=");
+        summary.append(std::to_string(stats.upload_high_water_bytes));
+        summary.append(", descriptor-high-water=");
+        summary.append(std::to_string(
+            stats.descriptor_high_water_count));
         core::log_message(
             core::LogLevel::info,
             "gpu.presentation",

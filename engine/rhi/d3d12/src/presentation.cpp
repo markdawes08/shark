@@ -1,4 +1,5 @@
 #include "device_access.hpp"
+#include "frame_resource_state.hpp"
 
 #include <directx/d3d12.h>
 #include <dxgi1_6.h>
@@ -12,9 +13,12 @@
 
 #include <Windows.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -30,6 +34,21 @@ constexpr DXGI_FORMAT back_buffer_format =
     DXGI_FORMAT_R8G8B8A8_UNORM;
 constexpr DWORD fence_wait_slice_milliseconds = 250;
 constexpr std::uint32_t maximum_fence_wait_slices = 120;
+constexpr std::size_t upload_bytes_per_frame = 64U * 1024U;
+constexpr UINT transient_descriptors_per_frame = 64;
+constexpr std::size_t frame_probe_bytes =
+    D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT;
+
+static_assert(back_buffer_count <= 32);
+
+struct FrameProbe final {
+    std::uint64_t frame_ordinal{};
+    std::uint64_t context_generation{};
+    std::uint32_t back_buffer_index{};
+    std::uint32_t width{};
+    std::uint32_t height{};
+    std::uint32_t reserved{};
+};
 
 [[nodiscard]] core::Error graphics_error(
     const core::ErrorCode code,
@@ -76,6 +95,18 @@ constexpr std::uint32_t maximum_fence_wait_slices = 120;
 
 class Presentation::Implementation final {
 public:
+    struct FrameContext final {
+        detail::FrameResourceState state{
+            upload_bytes_per_frame,
+            transient_descriptors_per_frame};
+        ComPtr<ID3D12CommandAllocator> command_allocator;
+        ComPtr<ID3D12Resource> upload_buffer;
+        std::byte* mapped_upload{};
+        ComPtr<ID3D12Resource> probe_destination;
+        ComPtr<ID3D12DescriptorHeap> descriptor_heap;
+        std::size_t staged_probe_offset{};
+    };
+
     ~Implementation() noexcept
     {
         if (shutdown_complete) {
@@ -186,20 +217,193 @@ public:
                 HRESULT_FROM_WIN32(WAIT_TIMEOUT)));
     }
 
-    [[nodiscard]] core::Result<void> wait_for_idle()
+    [[nodiscard]] core::Result<UINT64> completed_fence_value()
     {
-        const auto value = next_fence_value++;
+        const auto completed_value = fence->GetCompletedValue();
+        if (completed_value == UINT64_MAX) {
+            return core::Result<UINT64>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Fence::GetCompletedValue",
+                    DXGI_ERROR_DEVICE_REMOVED));
+        }
+        return core::Result<UINT64>::success(completed_value);
+    }
+
+    [[nodiscard]] core::Result<UINT64> signal_queue(
+        const std::string_view operation)
+    {
+        auto value_result = fence_timeline.issue();
+        if (!value_result) {
+            return core::Result<UINT64>::failure(
+                std::move(value_result).error());
+        }
+        const auto value = value_result.value();
         const auto signal_result = command_queue->Signal(
             fence.Get(),
             value);
         if (FAILED(signal_result)) {
-            return core::Result<void>::failure(
+            return core::Result<UINT64>::failure(
                 detail::DeviceAccess::graphics_failure(
                     *owner_device,
-                    "ID3D12CommandQueue::Signal",
+                    operation,
                     signal_result));
         }
-        return wait_for_fence(value);
+        return core::Result<UINT64>::success(value);
+    }
+
+    [[nodiscard]] core::Result<void> retire_completed_contexts(
+        const UINT64 completed_value)
+    {
+        for (auto& context : frame_contexts) {
+            if (context.state.active()) {
+                context.state.discard_active_after_queue_drain();
+                continue;
+            }
+            auto retire_result = context.state.retire(completed_value);
+            if (!retire_result) {
+                return core::Result<void>::failure(
+                    std::move(retire_result).error());
+            }
+            if (retire_result.value()) {
+                ++statistics.retired_frame_submissions;
+            }
+        }
+        return core::Result<void>::success();
+    }
+
+    [[nodiscard]] core::Result<void> drain_queue()
+    {
+        auto value_result = signal_queue(
+            "ID3D12CommandQueue::Signal(queue drain)");
+        if (!value_result) {
+            return core::Result<void>::failure(
+                std::move(value_result).error());
+        }
+        const auto value = value_result.value();
+        ++statistics.full_queue_drains;
+        auto wait_result = wait_for_fence(value);
+        if (!wait_result) {
+            return wait_result;
+        }
+        return retire_completed_contexts(value);
+    }
+
+    [[nodiscard]] core::Result<FrameContext*> begin_frame(
+        const UINT back_buffer_index)
+    {
+        auto& context = frame_contexts[back_buffer_index];
+        auto completed_result = completed_fence_value();
+        if (!completed_result) {
+            return core::Result<FrameContext*>::failure(
+                std::move(completed_result).error());
+        }
+        auto completed_value = completed_result.value();
+        const auto required_value =
+            context.state.required_wait_fence_value(completed_value);
+        if (required_value != 0) {
+            ++statistics.blocking_reuse_waits;
+            auto wait_result = wait_for_fence(required_value);
+            if (!wait_result) {
+                return core::Result<FrameContext*>::failure(
+                    std::move(wait_result).error());
+            }
+            completed_value = required_value;
+        }
+
+        auto begin_result = context.state.begin(completed_value);
+        if (!begin_result) {
+            return core::Result<FrameContext*>::failure(
+                std::move(begin_result).error());
+        }
+        if (begin_result.value()) {
+            ++statistics.retired_frame_submissions;
+        }
+
+        ++statistics.frame_context_acquisitions;
+        if (context.state.generation() > 1) {
+            ++statistics.frame_context_reuses;
+        }
+        statistics.used_frame_context_mask |=
+            std::uint32_t{1} << back_buffer_index;
+        return core::Result<FrameContext*>::success(&context);
+    }
+
+    [[nodiscard]] core::Result<void> stage_frame_probe(
+        FrameContext& context,
+        const UINT back_buffer_index)
+    {
+        auto upload_result = context.state.allocate_upload(
+            frame_probe_bytes,
+            D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
+        if (!upload_result) {
+            return core::Result<void>::failure(
+                std::move(upload_result).error());
+        }
+        auto descriptor_result = context.state.allocate_descriptors(1);
+        if (!descriptor_result) {
+            return core::Result<void>::failure(
+                std::move(descriptor_result).error());
+        }
+
+        const auto upload = upload_result.value();
+        const auto descriptor = descriptor_result.value();
+        auto* const destination = context.mapped_upload + upload.offset;
+        std::memset(destination, 0, upload.size);
+        const FrameProbe probe{
+            statistics.frame_context_acquisitions,
+            context.state.generation(),
+            back_buffer_index,
+            current_extent.width,
+            current_extent.height,
+            0,
+        };
+        std::memcpy(destination, &probe, sizeof(probe));
+
+        auto descriptor_handle =
+            context.descriptor_heap->GetCPUDescriptorHandleForHeapStart();
+        descriptor_handle.ptr += descriptor.offset *
+            static_cast<std::size_t>(transient_descriptor_increment);
+        const D3D12_CONSTANT_BUFFER_VIEW_DESC view{
+            .BufferLocation =
+                context.upload_buffer->GetGPUVirtualAddress() +
+                upload.offset,
+            .SizeInBytes = static_cast<UINT>(upload.size),
+        };
+        native_device->CreateConstantBufferView(&view, descriptor_handle);
+        context.staged_probe_offset = upload.offset;
+
+        ++statistics.upload_allocations;
+        statistics.upload_bytes_written += upload.size;
+        statistics.upload_high_water_bytes = std::max(
+            statistics.upload_high_water_bytes,
+            static_cast<std::uint64_t>(
+                context.state.upload_high_watermark()));
+        ++statistics.descriptor_allocations;
+        statistics.descriptor_high_water_count = std::max(
+            statistics.descriptor_high_water_count,
+            static_cast<std::uint64_t>(
+                context.state.descriptor_high_watermark()));
+        return core::Result<void>::success();
+    }
+
+    [[nodiscard]] core::Result<void> submit_frame(
+        FrameContext& context)
+    {
+        auto signal_result = signal_queue(
+            "ID3D12CommandQueue::Signal(frame submission)");
+        if (!signal_result) {
+            return core::Result<void>::failure(
+                std::move(signal_result).error());
+        }
+        const auto value = signal_result.value();
+        auto submit_result = context.state.submit(value);
+        if (!submit_result) {
+            return submit_result;
+        }
+        ++statistics.frame_submissions;
+        statistics.last_submission_fence = value;
+        return core::Result<void>::success();
     }
 
     [[nodiscard]] core::Result<void> acquire_back_buffers()
@@ -285,7 +489,17 @@ public:
         release_back_buffers();
         swap_chain.Reset();
         command_list.Reset();
-        command_allocator.Reset();
+        for (auto& context : frame_contexts) {
+            if (context.upload_buffer != nullptr &&
+                context.mapped_upload != nullptr) {
+                context.upload_buffer->Unmap(0, nullptr);
+                context.mapped_upload = nullptr;
+            }
+            context.descriptor_heap.Reset();
+            context.probe_destination.Reset();
+            context.upload_buffer.Reset();
+            context.command_allocator.Reset();
+        }
         rtv_heap.Reset();
         command_queue.Reset();
         fence.Reset();
@@ -311,14 +525,23 @@ public:
             command_queue != nullptr &&
                 fence != nullptr &&
                 fence_event != nullptr
-            ? wait_for_idle()
+            ? drain_queue()
             : core::Result<void>::success();
+        const auto has_unretired_submissions = idle_result &&
+            statistics.retired_frame_submissions !=
+                statistics.frame_submissions;
         release_resources();
         shutdown_complete = true;
 
         if (!idle_result) {
             return core::Result<void>::failure(
                 std::move(idle_result).error());
+        }
+        if (has_unretired_submissions) {
+            return core::Result<void>::failure(graphics_error(
+                core::ErrorCode::invalid_state,
+                "Presentation shutdown found unretired frame "
+                "submissions after the queue drain"));
         }
         return core::Result<void>::success();
     }
@@ -332,7 +555,7 @@ public:
     bool shutdown_complete{true};
     PresentationStats statistics{};
     ComPtr<ID3D12CommandQueue> command_queue;
-    ComPtr<ID3D12CommandAllocator> command_allocator;
+    std::array<FrameContext, back_buffer_count> frame_contexts;
     ComPtr<ID3D12GraphicsCommandList> command_list;
     ComPtr<ID3D12DescriptorHeap> rtv_heap;
     ComPtr<IDXGISwapChain4> swap_chain;
@@ -340,7 +563,8 @@ public:
     ComPtr<ID3D12Fence> fence;
     HANDLE fence_event{};
     UINT rtv_descriptor_increment{};
-    UINT64 next_fence_value{1};
+    UINT transient_descriptor_increment{};
+    detail::FenceTimeline fence_timeline;
 };
 
 Presentation::Presentation(
@@ -512,30 +736,34 @@ core::Result<Presentation> Presentation::create(
         native.device->GetDescriptorHandleIncrementSize(
             D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
-    result = native.device->CreateCommandAllocator(
-        D3D12_COMMAND_LIST_TYPE_DIRECT,
-        IID_PPV_ARGS(&implementation->command_allocator));
-    if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
-                device,
-                "ID3D12Device::CreateCommandAllocator",
-                result));
-    }
-    result = implementation->command_allocator->SetName(
-        L"Shark Serialized Presentation Allocator");
-    if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
-                device,
-                "ID3D12Object::SetName(command allocator)",
-                result));
+    for (UINT index = 0; index < back_buffer_count; ++index) {
+        auto& context = implementation->frame_contexts[index];
+        result = native.device->CreateCommandAllocator(
+            D3D12_COMMAND_LIST_TYPE_DIRECT,
+            IID_PPV_ARGS(&context.command_allocator));
+        if (FAILED(result)) {
+            return core::Result<Presentation>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    device,
+                    "ID3D12Device::CreateCommandAllocator(frame)",
+                    result));
+        }
+        const auto name = std::wstring{L"Shark Frame Allocator "} +
+            std::to_wstring(index);
+        result = context.command_allocator->SetName(name.c_str());
+        if (FAILED(result)) {
+            return core::Result<Presentation>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    device,
+                    "ID3D12Object::SetName(frame allocator)",
+                    result));
+        }
     }
 
     result = native.device->CreateCommandList(
         0,
         D3D12_COMMAND_LIST_TYPE_DIRECT,
-        implementation->command_allocator.Get(),
+        implementation->frame_contexts[0].command_allocator.Get(),
         nullptr,
         IID_PPV_ARGS(&implementation->command_list));
     if (FAILED(result)) {
@@ -575,7 +803,7 @@ core::Result<Presentation> Presentation::create(
                 result));
     }
     result = implementation->fence->SetName(
-        L"Shark Serialized Presentation Fence");
+        L"Shark Direct Queue Timeline Fence");
     if (FAILED(result)) {
         return core::Result<Presentation>::failure(
             detail::DeviceAccess::graphics_failure(
@@ -595,6 +823,139 @@ core::Result<Presentation> Presentation::create(
             GetLastError()));
     }
 
+    implementation->transient_descriptor_increment =
+        native.device->GetDescriptorHandleIncrementSize(
+            D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    implementation->statistics.frame_context_count = back_buffer_count;
+
+    D3D12_HEAP_PROPERTIES upload_heap_properties{};
+    upload_heap_properties.Type = D3D12_HEAP_TYPE_UPLOAD;
+    upload_heap_properties.CPUPageProperty =
+        D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+    upload_heap_properties.MemoryPoolPreference =
+        D3D12_MEMORY_POOL_UNKNOWN;
+    upload_heap_properties.CreationNodeMask = 1;
+    upload_heap_properties.VisibleNodeMask = 1;
+
+    D3D12_RESOURCE_DESC upload_description{};
+    upload_description.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    upload_description.Alignment = 0;
+    upload_description.Width = upload_bytes_per_frame;
+    upload_description.Height = 1;
+    upload_description.DepthOrArraySize = 1;
+    upload_description.MipLevels = 1;
+    upload_description.Format = DXGI_FORMAT_UNKNOWN;
+    upload_description.SampleDesc = DXGI_SAMPLE_DESC{1, 0};
+    upload_description.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    upload_description.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+    D3D12_HEAP_PROPERTIES default_heap_properties{};
+    default_heap_properties.Type = D3D12_HEAP_TYPE_DEFAULT;
+    default_heap_properties.CPUPageProperty =
+        D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+    default_heap_properties.MemoryPoolPreference =
+        D3D12_MEMORY_POOL_UNKNOWN;
+    default_heap_properties.CreationNodeMask = 1;
+    default_heap_properties.VisibleNodeMask = 1;
+    auto probe_description = upload_description;
+    probe_description.Width = frame_probe_bytes;
+
+    for (UINT index = 0; index < back_buffer_count; ++index) {
+        auto& context = implementation->frame_contexts[index];
+        result = native.device->CreateCommittedResource(
+            &upload_heap_properties,
+            D3D12_HEAP_FLAG_NONE,
+            &upload_description,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr,
+            IID_PPV_ARGS(&context.upload_buffer));
+        if (FAILED(result)) {
+            return core::Result<Presentation>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    device,
+                    "ID3D12Device::CreateCommittedResource(frame upload)",
+                    result));
+        }
+        auto name = std::wstring{L"Shark Frame Upload Buffer "} +
+            std::to_wstring(index);
+        result = context.upload_buffer->SetName(name.c_str());
+        if (FAILED(result)) {
+            return core::Result<Presentation>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    device,
+                    "ID3D12Object::SetName(frame upload)",
+                    result));
+        }
+
+        const D3D12_RANGE no_cpu_reads{0, 0};
+        void* mapped_upload = nullptr;
+        result = context.upload_buffer->Map(
+            0,
+            &no_cpu_reads,
+            &mapped_upload);
+        if (FAILED(result)) {
+            return core::Result<Presentation>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    device,
+                    "ID3D12Resource::Map(frame upload)",
+                    result));
+        }
+        context.mapped_upload = static_cast<std::byte*>(mapped_upload);
+
+        result = native.device->CreateCommittedResource(
+            &default_heap_properties,
+            D3D12_HEAP_FLAG_NONE,
+            &probe_description,
+            D3D12_RESOURCE_STATE_COMMON,
+            nullptr,
+            IID_PPV_ARGS(&context.probe_destination));
+        if (FAILED(result)) {
+            return core::Result<Presentation>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    device,
+                    "ID3D12Device::CreateCommittedResource(frame probe)",
+                    result));
+        }
+        name = std::wstring{L"Shark Frame Upload Probe Destination "} +
+            std::to_wstring(index);
+        result = context.probe_destination->SetName(name.c_str());
+        if (FAILED(result)) {
+            return core::Result<Presentation>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    device,
+                    "ID3D12Object::SetName(frame probe)",
+                    result));
+        }
+
+        D3D12_DESCRIPTOR_HEAP_DESC descriptor_heap_description{};
+        descriptor_heap_description.Type =
+            D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        descriptor_heap_description.NumDescriptors =
+            transient_descriptors_per_frame;
+        descriptor_heap_description.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+        descriptor_heap_description.NodeMask = 0;
+        result = native.device->CreateDescriptorHeap(
+            &descriptor_heap_description,
+            IID_PPV_ARGS(&context.descriptor_heap));
+        if (FAILED(result)) {
+            return core::Result<Presentation>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    device,
+                    "ID3D12Device::CreateDescriptorHeap(frame staging)",
+                    result));
+        }
+        name = std::wstring{L"Shark Frame CPU Descriptor Heap "} +
+            std::to_wstring(index);
+        result = context.descriptor_heap->SetName(name.c_str());
+        if (FAILED(result)) {
+            return core::Result<Presentation>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    device,
+                    "ID3D12Object::SetName(frame descriptor heap)",
+                    result));
+        }
+    }
+
     auto buffer_result = implementation->acquire_back_buffers();
     if (!buffer_result) {
         return core::Result<Presentation>::failure(
@@ -606,7 +967,8 @@ core::Result<Presentation> Presentation::create(
         "gpu.presentation",
         std::string{"Created triple-buffered flip-discard swap chain at "} +
             std::to_string(config.extent.width) + "x" +
-            std::to_string(config.extent.height));
+            std::to_string(config.extent.height) +
+            " with three fence-gated frame contexts");
     return core::Result<Presentation>::success(
         Presentation{std::move(implementation)});
 }
@@ -634,7 +996,21 @@ core::Result<PresentStatus> Presentation::present_clear_frame()
             "The swap chain returned an invalid back-buffer index"));
     }
 
-    auto result = implementation_->command_allocator->Reset();
+    auto context_result = implementation_->begin_frame(back_buffer_index);
+    if (!context_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(context_result).error());
+    }
+    auto* const context = context_result.value();
+    auto probe_result = implementation_->stage_frame_probe(
+        *context,
+        back_buffer_index);
+    if (!probe_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(probe_result).error());
+    }
+
+    auto result = context->command_allocator->Reset();
     if (FAILED(result)) {
         return core::Result<PresentStatus>::failure(
             detail::DeviceAccess::graphics_failure(
@@ -643,7 +1019,7 @@ core::Result<PresentStatus> Presentation::present_clear_frame()
                 result));
     }
     result = implementation_->command_list->Reset(
-        implementation_->command_allocator.Get(),
+        context->command_allocator.Get(),
         nullptr);
     if (FAILED(result)) {
         return core::Result<PresentStatus>::failure(
@@ -652,6 +1028,16 @@ core::Result<PresentStatus> Presentation::present_clear_frame()
                 "ID3D12GraphicsCommandList::Reset",
                 result));
     }
+
+    // Buffer resources implicitly promote from COMMON for the copy and decay
+    // after execution; the context fence prevents either side being reused
+    // while this command is in flight.
+    implementation_->command_list->CopyBufferRegion(
+        context->probe_destination.Get(),
+        0,
+        context->upload_buffer.Get(),
+        context->staged_probe_offset,
+        frame_probe_bytes);
 
     D3D12_RESOURCE_BARRIER to_render_target{};
     to_render_target.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -704,6 +1090,12 @@ core::Result<PresentStatus> Presentation::present_clear_frame()
     };
     implementation_->command_queue->ExecuteCommandLists(1, command_lists);
 
+    auto submit_result = implementation_->submit_frame(*context);
+    if (!submit_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(submit_result).error());
+    }
+
     result = implementation_->swap_chain->Present(
         implementation_->synchronize_to_vertical_refresh ? 1 : 0,
         0);
@@ -713,12 +1105,6 @@ core::Result<PresentStatus> Presentation::present_clear_frame()
                 *implementation_->owner_device,
                 "IDXGISwapChain::Present",
                 result));
-    }
-
-    auto idle_result = implementation_->wait_for_idle();
-    if (!idle_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(idle_result).error());
     }
 
     if (result == DXGI_STATUS_OCCLUDED) {
@@ -760,7 +1146,7 @@ core::Result<void> Presentation::resize(
         return core::Result<void>::success();
     }
 
-    auto idle_result = implementation_->wait_for_idle();
+    auto idle_result = implementation_->drain_queue();
     if (!idle_result) {
         return idle_result;
     }

@@ -52,7 +52,8 @@ One device startup follows this fixed order:
 11. Inspect both DirectX queues, fail corruption or errors, then publish the
     immutable report.
 
-G-001 arms DRED before device creation. G-002 consumes that setup: failed
+G-001 arms DRED before device creation. G-002 consumes that setup and G-003
+preserves it across asynchronous frame-context reuse: failed
 submission, fence, resize, and present operations query the device-removal
 reason and log bounded automatic-breadcrumb, breadcrumb-context, page-fault,
 existing-allocation, and recently-freed-allocation details.
@@ -149,10 +150,16 @@ CTest keeps six independent integration processes:
 - packaged WARP clear/present; and
 - packaged WARP clear/present with GPU-based validation.
 
-Unit tests cover the exact Feature Level/Shader Model baseline and the complete
-CLI conflict/malformed-index boundary. Presentation shutdown explicitly drains
-and releases its children before `Device::validate_debug_state` checks new
-D3D12 and DXGI messages plus live D3D12 child objects. Debug and Release must
-both build and pass all registered tests with zero DirectX corruption or error
-messages. See the [presentation contract](GRAPHICS_PRESENTATION.md) for the
-G-002 frame and resize rules.
+Unit tests cover the exact Feature Level/Shader Model baseline, the complete CLI
+conflict/malformed-index boundary, aligned frame-arena allocation and
+exhaustion, invalid lifecycle transitions, fence-gated retirement, and monotonic
+fence exhaustion. The presentation smoke additionally verifies all three frame
+contexts are reused and every submission retires during explicit shutdown,
+before frame resources are released.
+
+Presentation shutdown explicitly drains and releases its children before
+`Device::validate_debug_state` checks new D3D12 and DXGI messages plus live
+D3D12 child objects. Debug and Release must both build and pass all registered
+tests with zero DirectX corruption or error messages. See the
+[presentation and frame-resource contract](GRAPHICS_PRESENTATION.md) for the
+G-002/G-003 frame, staging, retirement, and resize rules.

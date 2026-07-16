@@ -6,6 +6,7 @@ add_executable(SharkTests
     ../apps/sandbox/options.cpp
     unit/assertion_tests.cpp
     unit/d3d12_device_contract_tests.cpp
+    unit/d3d12_frame_resource_tests.cpp
     unit/engine_info_tests.cpp
     unit/logging_tests.cpp
     unit/result_tests.cpp
@@ -16,6 +17,7 @@ add_executable(SharkTests
 target_include_directories(SharkTests
     PRIVATE
         "${PROJECT_SOURCE_DIR}/apps/sandbox"
+        "${PROJECT_SOURCE_DIR}/engine/rhi/d3d12/src"
 )
 
 target_link_libraries(SharkTests

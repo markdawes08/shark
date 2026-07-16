@@ -22,6 +22,8 @@ add_library(SharkEngine STATIC
     rhi/d3d12/include/shark/rhi/d3d12/presentation.hpp
     rhi/d3d12/src/device.cpp
     rhi/d3d12/src/device_access.hpp
+    rhi/d3d12/src/frame_resource_state.cpp
+    rhi/d3d12/src/frame_resource_state.hpp
     rhi/d3d12/src/presentation.cpp
 )
 

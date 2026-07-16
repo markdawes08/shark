@@ -12,6 +12,7 @@ add_executable(SharkTests
     unit/d3d12_cube_scene_data_tests.cpp
     unit/d3d12_device_contract_tests.cpp
     unit/d3d12_frame_resource_tests.cpp
+    unit/d3d12_gpu_timestamp_tests.cpp
     unit/d3d12_render_graph_executor_tests.cpp
     unit/engine_info_tests.cpp
     unit/logging_tests.cpp

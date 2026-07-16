@@ -1,6 +1,7 @@
 # Minimal Render-Graph Contract
 
 - **Completed through:** `G-006`
+- **Presentation integration verified through:** `G-007`
 - **Last verified:** July 16, 2026
 
 G-006 moves the existing textured-cube frame behind Shark's first render graph
@@ -180,6 +181,13 @@ uploads also remain in the startup upload path. G-006 centralizes the two
 per-frame attachment barriers; it does not claim every command or resource in
 Presentation.
 
+G-007 leaves the planner and executor APIs unchanged. Presentation writes the
+outer frame timestamps and `Frame` PIX event outside graph execution. The
+`TexturedCube` callback writes its own begin/end timestamps and nested PIX event
+inside the pass, after the graph's pre-pass barrier and before its final
+barrier. Query allocation, resolution, readback, and statistics remain
+presentation-owned rather than automatic graph behavior.
+
 ## Accounting and verification
 
 `PresentationStats` adds:
@@ -223,13 +231,15 @@ copy/compute queue activation, async compute, cross-queue fences, or enhanced
 barriers.
 
 It also adds no renderer scene extraction, public scene API, material system,
-typed RHI resource handles, PSO cache, shader reflection, PIX markers, GPU
-timestamps, or timing HUD. Graph compilation is intentionally frame-local and
-serial. `G-007` adds the first named GPU diagnostics and bounded timestamp
-query lifecycle.
+typed RHI resource handles, PSO cache, shader reflection, timing HUD, or
+automatic graph-owned PIX/timestamp instrumentation. Graph compilation is
+intentionally frame-local and serial. G-007's first named GPU diagnostics use
+the existing presentation and callback boundaries without broadening this graph
+contract.
 
 See [the presentation and frame-resource contract](GRAPHICS_PRESENTATION.md)
 for submission and resize ownership, [the HLSL pipeline contract](GRAPHICS_PIPELINE.md)
 for the commands recorded by `TexturedCube`, and
 [the camera and textured-cube contract](CAMERA_AND_CUBE.md) for the unchanged
-visible scene.
+visible scene. See [the GPU diagnostics contract](GPU_DIAGNOSTICS.md) for the
+presentation-owned marker and query lifecycle.

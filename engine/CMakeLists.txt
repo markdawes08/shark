@@ -1,5 +1,6 @@
 find_package(directxmath CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
+find_package(winpixevent CONFIG REQUIRED)
 
 # The pinned shared spdlog target disables MSVC 4251/4275 in every consumer.
 # Its headers are already imported as external, so keep Shark-owned warning
@@ -29,6 +30,8 @@ add_library(SharkEngine STATIC
     rhi/d3d12/src/device_access.hpp
     rhi/d3d12/src/frame_resource_state.cpp
     rhi/d3d12/src/frame_resource_state.hpp
+    rhi/d3d12/src/gpu_timestamp_state.cpp
+    rhi/d3d12/src/gpu_timestamp_state.hpp
     rhi/d3d12/src/presentation.cpp
     rhi/d3d12/src/render_graph_executor.cpp
     rhi/d3d12/src/render_graph_executor.hpp
@@ -51,6 +54,7 @@ target_compile_definitions(SharkEngine
         UNICODE
         WIN32_LEAN_AND_MEAN
         _UNICODE
+        USE_PIX_RETAIL
 )
 
 target_link_libraries(SharkEngine
@@ -60,6 +64,7 @@ target_link_libraries(SharkEngine
         Microsoft::DirectX-Guids
         Microsoft::DirectXMath
         Microsoft::DirectX12-Agility
+        Microsoft::WinPixEventRuntime
         dxgi
         dxguid
         user32

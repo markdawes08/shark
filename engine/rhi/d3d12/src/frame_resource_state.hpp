@@ -38,7 +38,8 @@ class FrameResourceState final {
 public:
     FrameResourceState(
         std::size_t upload_capacity,
-        std::size_t descriptor_capacity) noexcept;
+        std::size_t descriptor_capacity,
+        std::size_t timestamp_capacity) noexcept;
 
     [[nodiscard]] core::Result<bool> begin(
         std::uint64_t completed_fence_value);
@@ -49,6 +50,8 @@ public:
         std::size_t size,
         std::size_t alignment);
     [[nodiscard]] core::Result<LinearAllocation> allocate_descriptors(
+        std::size_t count);
+    [[nodiscard]] core::Result<LinearAllocation> allocate_timestamps(
         std::size_t count);
     [[nodiscard]] core::Result<void> submit(
         std::uint64_t completion_fence_value);
@@ -62,10 +65,13 @@ public:
     [[nodiscard]] std::size_t upload_high_watermark() const noexcept;
     [[nodiscard]] std::size_t descriptor_used() const noexcept;
     [[nodiscard]] std::size_t descriptor_high_watermark() const noexcept;
+    [[nodiscard]] std::size_t timestamp_used() const noexcept;
+    [[nodiscard]] std::size_t timestamp_high_watermark() const noexcept;
 
 private:
     LinearArenaState upload_;
     LinearArenaState descriptors_;
+    LinearArenaState timestamps_;
     std::uint64_t completion_fence_value_{};
     std::uint64_t last_submitted_fence_value_{};
     std::uint64_t generation_{};

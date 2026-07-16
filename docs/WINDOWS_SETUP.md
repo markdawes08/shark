@@ -107,18 +107,24 @@ Add-WindowsCapability -Online -Name 'Tools.Graphics.DirectX~~~~0.0.1.0'
 The checker only calls the corresponding read operation; it never calls
 `Add-WindowsCapability`.
 
-### PIX on Windows - required before `G-007`
+### PIX on Windows - required for manual G-007 capture inspection
 
 PIX is Microsoft's Direct3D 12 frame-debugging and profiling application. Use
 the current non-preview main release; at the time of this contract that is
 `2603.25`. Preview PIX releases are reserved for isolated DirectX preview
-experiments.
+experiments. Shark builds and runs G-007 without the desktop application
+because the pinned WinPixEventRuntime is project-restored; PIX itself is needed
+only to open a capture and inspect `StaticCubeUpload`, `Frame`, and
+`TexturedCube`.
 
 An optional user-run installation command is:
 
 ```powershell
 winget install --id Microsoft.PIX --exact
 ```
+
+See [the GPU diagnostics contract](GPU_DIAGNOSTICS.md) for the manual capture
+acceptance check.
 
 ### Ninja - optional
 
@@ -191,7 +197,8 @@ The July 12, 2026 checker run reports:
   the pinned Windows SDK 10.0.26100.0 (with 10.0.28000.0 also installed), the
   D3D12 runtime, Graphics Tools, Ninja, and both detected graphics adapters;
 - **FAIL:** none;
-- **WARN:** PIX is still required before `G-007`; and
+- **WARN:** PIX is not installed, so manual G-007 capture inspection remains
+  unavailable; and
 - **EXPECTED:** no global DXC is needed because the manifest restores the pinned
   retail compiler.
 

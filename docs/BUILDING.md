@@ -8,8 +8,9 @@ Run the prerequisite checker before configuring:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-prerequisites.ps1
 ```
 
-The `F-002 gate` must report `READY`. PIX is a later graphics-diagnostics
-requirement and does not block this build scaffold.
+The `F-002 gate` must report `READY`. The PIX desktop application is not needed
+to compile or run Shark, but it is required to inspect G-007 captures manually.
+The pinned WinPixEventRuntime used by the executable is restored by vcpkg.
 
 ## Fresh command-line build
 
@@ -40,11 +41,11 @@ SDK 10.0.26100, MSVC 14.50 specifically rather than the newer default toolset,
 and the pinned vcpkg registry. Shark's overlay triplet applies that same MSVC
 14.50 toolset to built dependencies. The configure step restores every declared
 dependency. G-001 consumes DirectX Headers/Guids and the Agility runtime;
-G-004 consumes DXC as a build-time host tool, and G-005 consumes the
-header-only DirectXMath package for camera and transform math. G-006 adds no
-third-party dependency; its planner is engine-owned and its executor uses the
-existing D3D12 headers. DirectXTex and WinPix remain restored for their later
-increments.
+G-004 consumes DXC as a build-time host tool, G-005 consumes the header-only
+DirectXMath package for camera and transform math, and G-007 links the pinned
+WinPixEventRuntime so named command-list events remain available in Debug and
+Release. G-006's planner and executor remain engine-owned. DirectXTex stays
+restored for S-001.
 
 The checked-in toolchain also scopes `UCRTContentRoot` to the complete Windows
 SDK payload for the CMake process. This avoids a Visual Studio 2026 installation
@@ -59,11 +60,13 @@ out/build/windows-vs2026/bin/Debug/SharkSandbox.exe
 out/build/windows-vs2026/bin/Debug/D3D12/D3D12Core.dll
 out/build/windows-vs2026/bin/Debug/D3D12/d3d12SDKLayers.dll
 out/build/windows-vs2026/bin/Debug/d3d10warp.dll
+out/build/windows-vs2026/bin/Debug/WinPixEventRuntime.dll
 out/build/windows-vs2026/bin/Debug/SharkTests.exe
 out/build/windows-vs2026/bin/Release/SharkSandbox.exe
 out/build/windows-vs2026/bin/Release/D3D12/D3D12Core.dll
 out/build/windows-vs2026/bin/Release/D3D12/d3d12SDKLayers.dll
 out/build/windows-vs2026/bin/Release/d3d10warp.dll
+out/build/windows-vs2026/bin/Release/WinPixEventRuntime.dll
 out/build/windows-vs2026/bin/Release/SharkTests.exe
 out/build/windows-vs2026/lib/Debug/SharkEngine.lib
 out/build/windows-vs2026/lib/Release/SharkEngine.lib
@@ -73,22 +76,25 @@ out/build/windows-vs2026/generated/shaders/Release/cube.vertex.dxil
 out/build/windows-vs2026/generated/shaders/Release/cube.pixel.dxil
 ```
 
-vcpkg deploys the spdlog/fmt runtime DLLs beside executables that need them.
-Shark's post-build rules place the pinned Agility Core and SDK Layers under
-`D3D12/` and the pinned development-only WARP DLL beside `SharkSandbox.exe`.
-All generated binaries stay under ignored `out/`. The WARP NuGet binary is for
-local development and testing only and must never enter a packaged product.
+vcpkg deploys the spdlog/fmt and WinPixEventRuntime DLLs beside executables that
+need them. Shark's post-build rules place the pinned Agility Core and SDK Layers
+under `D3D12/` and the pinned development-only WARP DLL beside
+`SharkSandbox.exe`. All generated binaries stay under ignored `out/`. The WARP
+NuGet binary is for local development and testing only and must never enter a
+packaged product.
 
 With no arguments, `SharkSandbox` initializes the highest-priority eligible
 hardware device, opens the native Win32 window, and continuously draws the
 G-005 procedural-checker cube as the G-006 graph's one `TexturedCube` pass,
 through the G-003 triple frame-resource lifecycle and resize-safe reversed-Z
-depth target. Use `W`/`S` along the camera forward axis, `A`/`D` to strafe,
-`Q`/`E` to move down/up, hold `Shift` to move faster, and hold the right mouse
-button while dragging to look around. `Control` and `Space` are down/up
-aliases. Resize or minimize/restore the window to exercise the projection,
-swap-chain, depth, and frame-local graph imports, then close the title bar or
-press Alt+F4 to exit cleanly.
+depth target. G-007 emits `Frame` and `TexturedCube` PIX events and resolves
+their GPU timestamp intervals asynchronously. Use `W`/`S` along the camera
+forward axis, `A`/`D` to strafe, `Q`/`E` to move down/up, hold `Shift` to move
+faster, and hold the right mouse button while dragging to look around.
+`Control` and `Space` are down/up aliases. Resize or minimize/restore the
+window to exercise the projection, swap-chain, depth, frame-local graph
+imports, and fence-delayed timing reuse, then close the title bar or press
+Alt+F4 to exit cleanly.
 
 ## Shader build contract
 
@@ -186,31 +192,45 @@ heap. A context waits only when its own allocator cannot yet be reused because
 its preceding submission fence has not completed; that checkpoint protects the
 allocator, camera bytes, and probe destination.
 
-Creation records one static direct-queue upload submission and bounded wait for
-the 24-vertex/36-index cube and deterministic `8x8` checker. Every submitted
-frame compiles one graph importing the current back buffer and depth texture,
-executes one `TexturedCube` pass, records the back buffer's two legacy
-transitions, one 36-index draw, and one reversed-Z depth clear. Resize and
-shutdown perform the full queue drains. The summary reports graph pass/barrier
-counts, `cube_draw_calls`/`cube_indices`, `camera_constant_updates` and
-`camera_matrix_changes`, `depth_clear_count`/`depth_resource_creations`,
-`texture_bindings`, `static_upload_submissions`, resource/SRV creation counts,
-context reuse, blocking reuse waits, queue drains, and upload/descriptor
-high-water marks. The fixed graph invariants require one compilation,
-execution, and pass execution per frame submission, two imports and two
-transition barriers per submission, and one cube draw per graph pass. The reuse
-wait count is deliberately not a performance gate because it depends on
-adapter speed and scheduling.
+Creation records one `StaticCubeUpload` PIX event, one static direct-queue
+upload submission, and one bounded wait for the 24-vertex/36-index cube and
+deterministic `8x8` checker. Every submitted frame records one outer `Frame`
+event and one nested `TexturedCube` event, compiles one graph importing the
+current back buffer and depth texture, executes one pass, records the back
+buffer's two legacy transitions, one 36-index draw, and one reversed-Z depth
+clear.
 
-Run the focused planner and D3D12 executor unit coverage directly with:
+The direct queue reports its timestamp frequency once. One 12-entry query heap
+and one 96-byte persistently mapped readback buffer are split into three
+four-query frame-context slices: frame begin, pass begin, pass end, and frame
+end. The frame interval includes the diagnostic probe copy, graph barriers, and
+pass work but excludes its own query resolve. The pass interval covers only the
+`TexturedCube` callback commands and excludes graph barriers. Results are read
+only after the owning context fence completes, using an existing reuse wait or
+resize/shutdown drain; timing adds no normal-frame drain.
+
+The summary reports graph pass/barrier counts, PIX event counts, query
+high-water/capacity, timing sample count, average/maximum frame and
+`TexturedCube` milliseconds, `cube_draw_calls`/`cube_indices`,
+`camera_constant_updates` and `camera_matrix_changes`,
+`depth_clear_count`/`depth_resource_creations`, resource creation counts,
+context reuse, blocking reuse waits, queue drains, and upload/descriptor
+high-water marks. The fixed diagnostics invariants require four queries and one
+resolve per frame, one completed timing sample per retired submission, and a
+four-query per-context high-water. Duration magnitude is deliberately not a
+performance gate because adapter speed and timestamp resolution vary.
+
+Run the focused planner, D3D12 executor, and GPU timestamp-state unit coverage
+directly with:
 
 ```powershell
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[render-graph]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[timestamps]"
 ```
 
 CTest registers hardware and WARP device and presentation paths as separate
 serial processes, plus a focused packaged-WARP GPU-validation presentation
-path. The G-006 presentation cases remain
+path. The unchanged presentation case names now cover G-007:
 `integration.gpu.hardware_cube_present`,
 `integration.gpu.warp_cube_present`, and
 `integration.gpu.warp_cube_present_validation`. To run all graphics integration
@@ -244,6 +264,9 @@ draw behavior. See the
 coordinate conventions, reversed-Z, geometry, texture, and explicit limits.
 See [the minimal render-graph contract](RENDER_GRAPH.md) for graph declaration,
 ordering, validation, barrier mapping, accounting, and non-goals.
+See [the GPU diagnostics contract](GPU_DIAGNOSTICS.md) for PIX names,
+timestamp boundaries, fence-delayed readback, smoke accounting, and manual
+capture acceptance.
 
 ## Visual Studio
 

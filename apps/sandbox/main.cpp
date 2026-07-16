@@ -17,7 +17,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <iomanip>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -56,6 +58,21 @@ public:
     message.push_back('x');
     message.append(std::to_string(extent.height));
     return message;
+}
+
+[[nodiscard]] std::string format_gpu_milliseconds(
+    const std::uint64_t ticks,
+    const std::uint64_t frequency,
+    const std::uint64_t sample_count = 1)
+{
+    const auto milliseconds =
+        static_cast<long double>(ticks) * 1'000.0L /
+        static_cast<long double>(frequency) /
+        static_cast<long double>(sample_count);
+    std::ostringstream output;
+    output << std::fixed << std::setprecision(3)
+           << milliseconds;
+    return output.str();
 }
 
 [[nodiscard]] constexpr shark::rhi::d3d12::PresentationExtent
@@ -503,6 +520,11 @@ void log_platform_event(const shark::platform::Event& event)
     std::uint64_t frames_when_minimized = 0;
     std::uint64_t submissions_when_minimized = 0;
     std::uint64_t graph_executions_when_minimized = 0;
+    std::uint64_t pix_frame_events_when_minimized = 0;
+    std::uint64_t pix_pass_events_when_minimized = 0;
+    std::uint64_t timestamp_queries_when_minimized = 0;
+    std::uint64_t timestamp_resolves_when_minimized = 0;
+    std::uint64_t timing_samples_when_minimized = 0;
     std::uint64_t cube_draws_when_minimized = 0;
     std::uint64_t camera_updates_when_minimized = 0;
     std::uint64_t depth_clears_when_minimized = 0;
@@ -662,6 +684,16 @@ void log_platform_event(const shark::platform::Event& event)
                 submissions_when_minimized = stats.frame_submissions;
                 graph_executions_when_minimized =
                     stats.render_graph_executions;
+                pix_frame_events_when_minimized =
+                    stats.pix_frame_events;
+                pix_pass_events_when_minimized =
+                    stats.pix_pass_events;
+                timestamp_queries_when_minimized =
+                    stats.timestamp_queries_written;
+                timestamp_resolves_when_minimized =
+                    stats.timestamp_resolve_batches;
+                timing_samples_when_minimized =
+                    stats.gpu_timing_samples;
                 cube_draws_when_minimized = stats.cube_draw_calls;
                 camera_updates_when_minimized =
                     stats.camera_constant_updates;
@@ -684,6 +716,16 @@ void log_platform_event(const shark::platform::Event& event)
                         submissions_when_minimized ||
                     stats.render_graph_executions !=
                         graph_executions_when_minimized ||
+                    stats.pix_frame_events !=
+                        pix_frame_events_when_minimized ||
+                    stats.pix_pass_events !=
+                        pix_pass_events_when_minimized ||
+                    stats.timestamp_queries_written !=
+                        timestamp_queries_when_minimized ||
+                    stats.timestamp_resolve_batches !=
+                        timestamp_resolves_when_minimized ||
+                    stats.gpu_timing_samples !=
+                        timing_samples_when_minimized ||
                     stats.cube_draw_calls !=
                         cube_draws_when_minimized ||
                     stats.camera_constant_updates !=
@@ -816,6 +858,7 @@ void log_platform_event(const shark::platform::Event& event)
         constexpr std::uint32_t expected_context_mask =
             (std::uint32_t{1} << expected_context_count) - 1;
         constexpr std::uint64_t frame_probe_bytes = 256;
+        constexpr std::uint64_t timestamp_queries_per_frame = 4;
         const auto attempted_presents =
             stats.presented_frames + stats.occluded_frames;
         if (stats.frame_context_count != expected_context_count ||
@@ -842,6 +885,33 @@ void log_platform_event(const shark::platform::Event& event)
                 stats.frame_submissions ||
             stats.render_graph_transition_barriers !=
                 stats.frame_submissions * 2 ||
+            stats.pix_static_upload_events !=
+                stats.static_upload_submissions ||
+            stats.pix_frame_events != stats.frame_submissions ||
+            stats.pix_pass_events !=
+                stats.render_graph_pass_executions ||
+            stats.gpu_timestamp_frequency_hz == 0 ||
+            stats.timestamp_query_capacity !=
+                expected_context_count *
+                    timestamp_queries_per_frame ||
+            stats.timestamp_query_high_water !=
+                timestamp_queries_per_frame ||
+            stats.timestamp_queries_written !=
+                stats.frame_submissions *
+                    timestamp_queries_per_frame ||
+            stats.timestamp_resolve_batches !=
+                stats.frame_submissions ||
+            stats.gpu_timing_samples != stats.frame_submissions ||
+            stats.gpu_frame_total_ticks <
+                stats.gpu_pass_total_ticks ||
+            stats.gpu_frame_last_ticks <
+                stats.gpu_pass_last_ticks ||
+            stats.gpu_frame_max_ticks <
+                stats.gpu_pass_max_ticks ||
+            stats.gpu_frame_min_ticks >
+                stats.gpu_frame_max_ticks ||
+            stats.gpu_pass_min_ticks >
+                stats.gpu_pass_max_ticks ||
             stats.cube_draw_calls != stats.frame_submissions ||
             stats.cube_draw_calls !=
                 stats.render_graph_pass_executions ||
@@ -889,6 +959,38 @@ void log_platform_event(const shark::platform::Event& event)
         summary.append(", graph-barriers=");
         summary.append(std::to_string(
             stats.render_graph_transition_barriers));
+        summary.append(", pix-events(static/frame/pass)=");
+        summary.append(std::to_string(
+            stats.pix_static_upload_events));
+        summary.push_back('/');
+        summary.append(std::to_string(stats.pix_frame_events));
+        summary.push_back('/');
+        summary.append(std::to_string(stats.pix_pass_events));
+        summary.append(", timestamp-queries(high/capacity)=");
+        summary.append(std::to_string(
+            stats.timestamp_query_high_water));
+        summary.push_back('/');
+        summary.append(std::to_string(stats.timestamp_query_capacity));
+        summary.append(", gpu-samples=");
+        summary.append(std::to_string(stats.gpu_timing_samples));
+        summary.append(", gpu-frame-ms(avg/max)=");
+        summary.append(format_gpu_milliseconds(
+            stats.gpu_frame_total_ticks,
+            stats.gpu_timestamp_frequency_hz,
+            stats.gpu_timing_samples));
+        summary.push_back('/');
+        summary.append(format_gpu_milliseconds(
+            stats.gpu_frame_max_ticks,
+            stats.gpu_timestamp_frequency_hz));
+        summary.append(", gpu-TexturedCube-ms(avg/max)=");
+        summary.append(format_gpu_milliseconds(
+            stats.gpu_pass_total_ticks,
+            stats.gpu_timestamp_frequency_hz,
+            stats.gpu_timing_samples));
+        summary.push_back('/');
+        summary.append(format_gpu_milliseconds(
+            stats.gpu_pass_max_ticks,
+            stats.gpu_timestamp_frequency_hz));
         summary.append(", cube-draws=");
         summary.append(std::to_string(stats.cube_draw_calls));
         summary.append(", camera-matrix-changes=");

@@ -1,6 +1,7 @@
 #include "device_access.hpp"
 #include "cube_scene_data.hpp"
 #include "frame_resource_state.hpp"
+#include "gpu_timestamp_state.hpp"
 #include "render_graph_executor.hpp"
 
 #include <directx/d3d12.h>
@@ -15,6 +16,7 @@
 #include <shark/rhi/d3d12/presentation.hpp>
 
 #include <Windows.h>
+#include <pix3.h>
 
 #include <algorithm>
 #include <array>
@@ -24,6 +26,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -40,6 +43,12 @@ constexpr DWORD fence_wait_slice_milliseconds = 250;
 constexpr std::uint32_t maximum_fence_wait_slices = 120;
 constexpr std::size_t upload_bytes_per_frame = 64U * 1024U;
 constexpr UINT transient_descriptors_per_frame = 64;
+constexpr UINT timestamp_queries_per_frame =
+    static_cast<UINT>(detail::gpu_timestamp_queries_per_frame);
+constexpr UINT timestamp_query_count =
+    back_buffer_count * timestamp_queries_per_frame;
+constexpr UINT64 timestamp_readback_bytes =
+    back_buffer_count * detail::gpu_timestamp_result_bytes_per_frame;
 constexpr std::size_t frame_probe_bytes =
     D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT;
 constexpr std::size_t camera_matrix_bytes = sizeof(math::Matrix4x4);
@@ -51,6 +60,52 @@ constexpr render_graph::ExternalResourceId graph_depth_buffer_id{2};
 
 static_assert(back_buffer_count <= 32);
 static_assert(camera_matrix_bytes == 64);
+static_assert(timestamp_query_count == 12);
+static_assert(timestamp_readback_bytes == 96);
+
+class PixCommandListEvent final {
+public:
+    PixCommandListEvent(
+        ID3D12GraphicsCommandList* const command_list,
+        const UINT8 color_index,
+        const char* const name) noexcept
+        : command_list_(command_list)
+    {
+        PIXBeginRetailEvent(
+            command_list_,
+            PIX_COLOR_INDEX(color_index),
+            name);
+    }
+
+    ~PixCommandListEvent()
+    {
+        end();
+    }
+
+    PixCommandListEvent(const PixCommandListEvent&) = delete;
+    PixCommandListEvent& operator=(const PixCommandListEvent&) = delete;
+    PixCommandListEvent(PixCommandListEvent&&) = delete;
+    PixCommandListEvent& operator=(PixCommandListEvent&&) = delete;
+
+    void end() noexcept
+    {
+        if (command_list_ == nullptr) {
+            return;
+        }
+        PIXEndRetailEvent(command_list_);
+        command_list_ = nullptr;
+    }
+
+private:
+    ID3D12GraphicsCommandList* command_list_{};
+};
+
+[[nodiscard]] constexpr UINT timestamp_query_index(
+    const UINT base,
+    const detail::GpuTimestampQuery query) noexcept
+{
+    return base + static_cast<UINT>(query);
+}
 
 struct FrameProbe final {
     std::uint64_t frame_ordinal{};
@@ -224,13 +279,17 @@ public:
     struct FrameContext final {
         detail::FrameResourceState state{
             upload_bytes_per_frame,
-            transient_descriptors_per_frame};
+            transient_descriptors_per_frame,
+            detail::gpu_timestamp_queries_per_frame};
         ComPtr<ID3D12CommandAllocator> command_allocator;
         ComPtr<ID3D12Resource> upload_buffer;
         std::byte* mapped_upload{};
         ComPtr<ID3D12Resource> probe_destination;
         ComPtr<ID3D12DescriptorHeap> descriptor_heap;
         std::size_t staged_probe_offset{};
+        detail::GpuTimestampSlice timestamp_slice{};
+        UINT timestamp_query_base{};
+        bool timestamp_results_pending{};
     };
 
     ~Implementation() noexcept
@@ -378,13 +437,123 @@ public:
         return core::Result<UINT64>::success(value);
     }
 
+    [[nodiscard]] core::Result<UINT> allocate_timestamp_queries(
+        FrameContext& context)
+    {
+        if (context.timestamp_results_pending) {
+            return core::Result<UINT>::failure(graphics_error(
+                core::ErrorCode::invalid_state,
+                "A frame context cannot overwrite pending GPU timestamp "
+                "results"));
+        }
+
+        auto allocation_result = context.state.allocate_timestamps(
+            detail::gpu_timestamp_queries_per_frame);
+        if (!allocation_result) {
+            return core::Result<UINT>::failure(
+                std::move(allocation_result).error());
+        }
+        const auto allocation = allocation_result.value();
+        if (allocation.offset >
+                detail::gpu_timestamp_queries_per_frame ||
+            allocation.size !=
+                detail::gpu_timestamp_queries_per_frame ||
+            allocation.size >
+                detail::gpu_timestamp_queries_per_frame -
+                    allocation.offset) {
+            return core::Result<UINT>::failure(graphics_error(
+                core::ErrorCode::invalid_state,
+                "The frame timestamp allocator returned an invalid "
+                "four-query slice"));
+        }
+
+        context.timestamp_query_base =
+            context.timestamp_slice.query_base +
+            static_cast<UINT>(allocation.offset);
+        statistics.timestamp_query_high_water = std::max(
+            statistics.timestamp_query_high_water,
+            static_cast<std::uint64_t>(
+                context.state.timestamp_high_watermark()));
+        return core::Result<UINT>::success(
+            context.timestamp_query_base);
+    }
+
+    [[nodiscard]] core::Result<void> consume_completed_timestamps(
+        FrameContext& context,
+        const UINT64 completed_value)
+    {
+        if (!context.timestamp_results_pending) {
+            return core::Result<void>::success();
+        }
+
+        const auto completion_value =
+            context.state.completion_fence_value();
+        if (completion_value == 0 ||
+            completed_value < completion_value) {
+            return core::Result<void>::failure(graphics_error(
+                core::ErrorCode::invalid_state,
+                "GPU timestamp results cannot be consumed before their "
+                "frame completion fence"));
+        }
+        if (mapped_timestamp_results == nullptr ||
+            statistics.gpu_timestamp_frequency_hz == 0) {
+            return core::Result<void>::failure(graphics_error(
+                core::ErrorCode::invalid_state,
+                "GPU timestamp readback storage is unavailable"));
+        }
+
+        const auto* const raw_timestamps =
+            mapped_timestamp_results + context.timestamp_query_base;
+        auto sample_result = gpu_timing.consume(
+            std::span<const std::uint64_t>{
+                raw_timestamps,
+                detail::gpu_timestamp_queries_per_frame,
+            });
+        if (!sample_result) {
+            return core::Result<void>::failure(
+                std::move(sample_result).error());
+        }
+
+        statistics.gpu_timing_samples = gpu_timing.sample_count();
+        statistics.gpu_frame_total_ticks =
+            gpu_timing.frame_total_ticks();
+        statistics.gpu_frame_min_ticks =
+            gpu_timing.frame_min_ticks();
+        statistics.gpu_frame_max_ticks =
+            gpu_timing.frame_max_ticks();
+        statistics.gpu_frame_last_ticks =
+            gpu_timing.frame_last_ticks();
+        statistics.gpu_pass_total_ticks =
+            gpu_timing.pass_total_ticks();
+        statistics.gpu_pass_min_ticks =
+            gpu_timing.pass_min_ticks();
+        statistics.gpu_pass_max_ticks =
+            gpu_timing.pass_max_ticks();
+        statistics.gpu_pass_last_ticks =
+            gpu_timing.pass_last_ticks();
+        context.timestamp_results_pending = false;
+        return core::Result<void>::success();
+    }
+
     [[nodiscard]] core::Result<void> retire_completed_contexts(
         const UINT64 completed_value)
     {
         for (auto& context : frame_contexts) {
             if (context.state.active()) {
+                if (context.timestamp_results_pending) {
+                    return core::Result<void>::failure(graphics_error(
+                        core::ErrorCode::invalid_state,
+                        "An active frame context cannot own submitted GPU "
+                        "timestamp results"));
+                }
                 context.state.discard_active_after_queue_drain();
                 continue;
+            }
+            auto timing_result = consume_completed_timestamps(
+                context,
+                completed_value);
+            if (!timing_result) {
+                return timing_result;
             }
             auto retire_result = context.state.retire(completed_value);
             if (!retire_result) {
@@ -437,6 +606,13 @@ public:
             completed_value = required_value;
         }
 
+        auto timing_result = consume_completed_timestamps(
+            context,
+            completed_value);
+        if (!timing_result) {
+            return core::Result<FrameContext*>::failure(
+                std::move(timing_result).error());
+        }
         auto begin_result = context.state.begin(completed_value);
         if (!begin_result) {
             return core::Result<FrameContext*>::failure(
@@ -539,7 +715,8 @@ public:
         const render_graph::ResourceHandle back_buffer_resource,
         const render_graph::ResourceHandle depth_buffer_resource,
         FrameContext& context,
-        const UINT back_buffer_index)
+        const UINT back_buffer_index,
+        const UINT timestamp_query_base)
     {
         auto back_buffer_access =
             pass_context.write(back_buffer_resource);
@@ -560,6 +737,17 @@ public:
                 "The textured-cube pass resolved unexpected graph "
                 "resource bindings"));
         }
+
+        PixCommandListEvent pass_event{
+            command_list.Get(),
+            2,
+            "TexturedCube"};
+        command_list->EndQuery(
+            timestamp_query_heap.Get(),
+            D3D12_QUERY_TYPE_TIMESTAMP,
+            timestamp_query_index(
+                timestamp_query_base,
+                detail::GpuTimestampQuery::pass_begin));
 
         auto render_target =
             rtv_heap->GetCPUDescriptorHandleForHeapStart();
@@ -639,6 +827,13 @@ public:
             0,
             0,
             0);
+        command_list->EndQuery(
+            timestamp_query_heap.Get(),
+            D3D12_QUERY_TYPE_TIMESTAMP,
+            timestamp_query_index(
+                timestamp_query_base,
+                detail::GpuTimestampQuery::pass_end));
+        pass_event.end();
 
         return core::Result<void>::success();
     }
@@ -657,6 +852,12 @@ public:
         if (!submit_result) {
             return submit_result;
         }
+        context.timestamp_results_pending = true;
+        ++statistics.pix_frame_events;
+        ++statistics.pix_pass_events;
+        statistics.timestamp_queries_written +=
+            timestamp_queries_per_frame;
+        ++statistics.timestamp_resolve_batches;
         ++statistics.frame_submissions;
         statistics.last_submission_fence = value;
         return core::Result<void>::success();
@@ -1031,6 +1232,10 @@ public:
                     result));
         }
 
+        PixCommandListEvent static_upload_event{
+            command_list.Get(),
+            3,
+            "StaticCubeUpload"};
         command_list->CopyBufferRegion(
             vertex_buffer.Get(),
             0,
@@ -1082,6 +1287,7 @@ public:
         command_list->ResourceBarrier(
             static_cast<UINT>(barriers.size()),
             barriers.data());
+        static_upload_event.end();
 
         result = command_list->Close();
         if (FAILED(result)) {
@@ -1093,6 +1299,7 @@ public:
         }
         ID3D12CommandList* command_lists[]{command_list.Get()};
         command_queue->ExecuteCommandLists(1, command_lists);
+        ++statistics.pix_static_upload_events;
         ++statistics.static_upload_submissions;
         auto fence_result = signal_queue(
             "ID3D12CommandQueue::Signal(static cube upload)");
@@ -1177,6 +1384,14 @@ public:
             context.upload_buffer.Reset();
             context.command_allocator.Reset();
         }
+        if (timestamp_readback != nullptr &&
+            mapped_timestamp_results != nullptr) {
+            const D3D12_RANGE no_cpu_writes{0, 0};
+            timestamp_readback->Unmap(0, &no_cpu_writes);
+            mapped_timestamp_results = nullptr;
+        }
+        timestamp_readback.Reset();
+        timestamp_query_heap.Reset();
         dsv_heap.Reset();
         rtv_heap.Reset();
         command_queue.Reset();
@@ -1233,6 +1448,10 @@ public:
     bool shutdown_complete{true};
     PresentationStats statistics{};
     ComPtr<ID3D12CommandQueue> command_queue;
+    ComPtr<ID3D12QueryHeap> timestamp_query_heap;
+    ComPtr<ID3D12Resource> timestamp_readback;
+    const std::uint64_t* mapped_timestamp_results{};
+    detail::GpuTimingAccumulator gpu_timing;
     std::array<FrameContext, back_buffer_count> frame_contexts;
     ComPtr<ID3D12GraphicsCommandList> command_list;
     ComPtr<ID3D12PipelineState> cube_pipeline;
@@ -1357,6 +1576,118 @@ core::Result<Presentation> Presentation::create(
                 result));
     }
 
+    UINT64 timestamp_frequency = 0;
+    result = implementation->command_queue->GetTimestampFrequency(
+        &timestamp_frequency);
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12CommandQueue::GetTimestampFrequency",
+                result));
+    }
+    if (timestamp_frequency == 0) {
+        return core::Result<Presentation>::failure(graphics_error(
+            core::ErrorCode::unsupported,
+            "The direct queue reported a zero GPU timestamp frequency"));
+    }
+    implementation->statistics.gpu_timestamp_frequency_hz =
+        timestamp_frequency;
+    implementation->statistics.timestamp_query_capacity =
+        timestamp_query_count;
+
+    D3D12_QUERY_HEAP_DESC timestamp_heap_description{};
+    timestamp_heap_description.Type =
+        D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+    timestamp_heap_description.Count = timestamp_query_count;
+    timestamp_heap_description.NodeMask = 0;
+    result = native.device->CreateQueryHeap(
+        &timestamp_heap_description,
+        IID_PPV_ARGS(&implementation->timestamp_query_heap));
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Device::CreateQueryHeap(frame timestamps)",
+                result));
+    }
+    result = implementation->timestamp_query_heap->SetName(
+        L"Shark Frame Timestamp Query Heap");
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Object::SetName(timestamp query heap)",
+                result));
+    }
+
+    D3D12_HEAP_PROPERTIES readback_heap_properties{};
+    readback_heap_properties.Type = D3D12_HEAP_TYPE_READBACK;
+    readback_heap_properties.CPUPageProperty =
+        D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+    readback_heap_properties.MemoryPoolPreference =
+        D3D12_MEMORY_POOL_UNKNOWN;
+    readback_heap_properties.CreationNodeMask = 1;
+    readback_heap_properties.VisibleNodeMask = 1;
+
+    D3D12_RESOURCE_DESC timestamp_readback_description{};
+    timestamp_readback_description.Dimension =
+        D3D12_RESOURCE_DIMENSION_BUFFER;
+    timestamp_readback_description.Alignment = 0;
+    timestamp_readback_description.Width = timestamp_readback_bytes;
+    timestamp_readback_description.Height = 1;
+    timestamp_readback_description.DepthOrArraySize = 1;
+    timestamp_readback_description.MipLevels = 1;
+    timestamp_readback_description.Format = DXGI_FORMAT_UNKNOWN;
+    timestamp_readback_description.SampleDesc =
+        DXGI_SAMPLE_DESC{1, 0};
+    timestamp_readback_description.Layout =
+        D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    timestamp_readback_description.Flags = D3D12_RESOURCE_FLAG_NONE;
+    result = native.device->CreateCommittedResource(
+        &readback_heap_properties,
+        D3D12_HEAP_FLAG_NONE,
+        &timestamp_readback_description,
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        nullptr,
+        IID_PPV_ARGS(&implementation->timestamp_readback));
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Device::CreateCommittedResource(timestamp "
+                "readback)",
+                result));
+    }
+    result = implementation->timestamp_readback->SetName(
+        L"Shark Frame Timestamp Readback Buffer");
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Object::SetName(timestamp readback)",
+                result));
+    }
+
+    const D3D12_RANGE timestamp_cpu_read_range{
+        0,
+        static_cast<SIZE_T>(timestamp_readback_bytes),
+    };
+    void* mapped_timestamp_results = nullptr;
+    result = implementation->timestamp_readback->Map(
+        0,
+        &timestamp_cpu_read_range,
+        &mapped_timestamp_results);
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Resource::Map(timestamp readback)",
+                result));
+    }
+    implementation->mapped_timestamp_results =
+        static_cast<const std::uint64_t*>(mapped_timestamp_results);
+
     DXGI_SWAP_CHAIN_DESC1 swap_chain_description{};
     swap_chain_description.Width = config.extent.width;
     swap_chain_description.Height = config.extent.height;
@@ -1462,6 +1793,7 @@ core::Result<Presentation> Presentation::create(
 
     for (UINT index = 0; index < back_buffer_count; ++index) {
         auto& context = implementation->frame_contexts[index];
+        context.timestamp_slice = detail::gpu_timestamp_slice(index);
         result = native.device->CreateCommandAllocator(
             D3D12_COMMAND_LIST_TYPE_DIRECT,
             IID_PPV_ARGS(&context.command_allocator));
@@ -1897,6 +2229,13 @@ core::Result<PresentStatus> Presentation::present_frame(
         return core::Result<PresentStatus>::failure(
             std::move(probe_result).error());
     }
+    auto timestamp_result =
+        implementation_->allocate_timestamp_queries(*context);
+    if (!timestamp_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(timestamp_result).error());
+    }
+    const auto timestamp_query_base = timestamp_result.value();
 
     render_graph::GraphBuilder graph_builder;
     auto back_buffer_resource_result = graph_builder.import_resource(
@@ -1929,14 +2268,16 @@ core::Result<PresentStatus> Presentation::present_frame(
          context,
          back_buffer_index,
          back_buffer_resource,
-         depth_buffer_resource](
+         depth_buffer_resource,
+         timestamp_query_base](
             const render_graph::PassContext& pass_context) {
             return implementation->record_textured_cube_pass(
                 pass_context,
                 back_buffer_resource,
                 depth_buffer_resource,
                 *context,
-                back_buffer_index);
+                back_buffer_index,
+                timestamp_query_base);
         });
     if (!cube_pass_result) {
         return core::Result<PresentStatus>::failure(
@@ -1991,6 +2332,17 @@ core::Result<PresentStatus> Presentation::present_frame(
                 result));
     }
 
+    PixCommandListEvent frame_event{
+        implementation_->command_list.Get(),
+        1,
+        "Frame"};
+    implementation_->command_list->EndQuery(
+        implementation_->timestamp_query_heap.Get(),
+        D3D12_QUERY_TYPE_TIMESTAMP,
+        timestamp_query_index(
+            timestamp_query_base,
+            detail::GpuTimestampQuery::frame_begin));
+
     // Buffer resources implicitly promote from COMMON for the copy and decay
     // after execution; the context fence prevents either side being reused
     // while this command is in flight.
@@ -2044,6 +2396,21 @@ core::Result<PresentStatus> Presentation::present_frame(
     implementation_->statistics.render_graph_transition_barriers +=
         static_cast<std::uint64_t>(
             graph_execution.transitions_recorded);
+
+    implementation_->command_list->EndQuery(
+        implementation_->timestamp_query_heap.Get(),
+        D3D12_QUERY_TYPE_TIMESTAMP,
+        timestamp_query_index(
+            timestamp_query_base,
+            detail::GpuTimestampQuery::frame_end));
+    implementation_->command_list->ResolveQueryData(
+        implementation_->timestamp_query_heap.Get(),
+        D3D12_QUERY_TYPE_TIMESTAMP,
+        timestamp_query_base,
+        timestamp_queries_per_frame,
+        implementation_->timestamp_readback.Get(),
+        context->timestamp_slice.readback_offset_bytes);
+    frame_event.end();
 
     result = implementation_->command_list->Close();
     if (FAILED(result)) {

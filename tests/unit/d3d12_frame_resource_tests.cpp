@@ -65,13 +65,14 @@ TEST_CASE(
 {
     using shark::rhi::d3d12::detail::FrameResourceState;
 
-    FrameResourceState frame{1024, 4};
+    FrameResourceState frame{1024, 4, 4};
     const auto first_begin = frame.begin(0);
     REQUIRE(first_begin);
     REQUIRE_FALSE(first_begin.value());
     REQUIRE(frame.generation() == 1);
     REQUIRE(frame.allocate_upload(256, 256));
     REQUIRE(frame.allocate_descriptors(2));
+    REQUIRE(frame.allocate_timestamps(4));
     REQUIRE(frame.submit(5));
     REQUIRE(frame.completion_fence_value() == 5);
     REQUIRE(frame.required_wait_fence_value(0) == 5);
@@ -83,6 +84,7 @@ TEST_CASE(
     REQUIRE_FALSE(early_begin);
     REQUIRE(frame.upload_used() == 256);
     REQUIRE(frame.descriptor_used() == 2);
+    REQUIRE(frame.timestamp_used() == 4);
     REQUIRE(frame.generation() == 1);
 
     const auto retired_begin = frame.begin(5);
@@ -91,6 +93,7 @@ TEST_CASE(
     REQUIRE(frame.completion_fence_value() == 0);
     REQUIRE(frame.upload_used() == 0);
     REQUIRE(frame.descriptor_used() == 0);
+    REQUIRE(frame.timestamp_used() == 0);
     REQUIRE(frame.generation() == 2);
     REQUIRE(frame.active());
 }
@@ -101,29 +104,34 @@ TEST_CASE(
 {
     using shark::rhi::d3d12::detail::FrameResourceState;
 
-    FrameResourceState frame{512, 2};
+    FrameResourceState frame{512, 2, 4};
     REQUIRE_FALSE(frame.allocate_upload(1, 1));
     REQUIRE_FALSE(frame.allocate_descriptors(1));
+    REQUIRE_FALSE(frame.allocate_timestamps(1));
     REQUIRE_FALSE(frame.submit(1));
     REQUIRE(frame.generation() == 0);
     REQUIRE(frame.upload_used() == 0);
     REQUIRE(frame.descriptor_used() == 0);
+    REQUIRE(frame.timestamp_used() == 0);
 
     REQUIRE(frame.begin(0));
     REQUIRE(frame.allocate_upload(64, 16));
     REQUIRE(frame.allocate_descriptors(1));
+    REQUIRE(frame.allocate_timestamps(4));
     REQUIRE_FALSE(frame.begin(0));
     REQUIRE_FALSE(frame.retire(0));
     REQUIRE(frame.active());
     REQUIRE(frame.generation() == 1);
     REQUIRE(frame.upload_used() == 64);
     REQUIRE(frame.descriptor_used() == 1);
+    REQUIRE(frame.timestamp_used() == 4);
 
     frame.discard_active_after_queue_drain();
     REQUIRE_FALSE(frame.active());
     REQUIRE(frame.completion_fence_value() == 0);
     REQUIRE(frame.upload_used() == 0);
     REQUIRE(frame.descriptor_used() == 0);
+    REQUIRE(frame.timestamp_used() == 0);
 }
 
 TEST_CASE(
@@ -132,7 +140,7 @@ TEST_CASE(
 {
     using shark::rhi::d3d12::detail::FrameResourceState;
 
-    FrameResourceState frame{256, 3};
+    FrameResourceState frame{256, 3, 4};
     REQUIRE(frame.begin(0));
     const auto all_descriptors = frame.allocate_descriptors(3);
     REQUIRE(all_descriptors);
@@ -172,7 +180,7 @@ TEST_CASE(
     REQUIRE(eight.value() == 8);
     REQUIRE(timeline.last_issued() == 8);
 
-    FrameResourceState frame{256, 1};
+    FrameResourceState frame{256, 1, 4};
     REQUIRE(frame.begin(0));
     REQUIRE(frame.submit(seven.value()));
     REQUIRE(frame.begin(seven.value()));
@@ -184,4 +192,32 @@ TEST_CASE(
     FenceTimeline exhausted{
         std::numeric_limits<std::uint64_t>::max()};
     REQUIRE_FALSE(exhausted.issue());
+}
+
+TEST_CASE(
+    "frame timestamp allocation is fixed capacity and fence retired",
+    "[gpu][frame-resources][timestamps]")
+{
+    using shark::rhi::d3d12::detail::FrameResourceState;
+
+    FrameResourceState frame{256, 1, 4};
+    REQUIRE(frame.begin(0));
+
+    const auto timestamps = frame.allocate_timestamps(4);
+    REQUIRE(timestamps);
+    REQUIRE(timestamps.value().offset == 0);
+    REQUIRE(timestamps.value().size == 4);
+    REQUIRE(frame.timestamp_used() == 4);
+    REQUIRE(frame.timestamp_high_watermark() == 4);
+    REQUIRE_FALSE(frame.allocate_timestamps(1));
+
+    REQUIRE(frame.submit(23));
+    REQUIRE_FALSE(frame.begin(22));
+    REQUIRE(frame.timestamp_used() == 4);
+
+    const auto reused = frame.begin(23);
+    REQUIRE(reused);
+    REQUIRE(reused.value());
+    REQUIRE(frame.timestamp_used() == 0);
+    REQUIRE(frame.timestamp_high_watermark() == 4);
 }

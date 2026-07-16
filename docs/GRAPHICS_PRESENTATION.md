@@ -1,6 +1,6 @@
 # Direct3D 12 Presentation and Frame-Resource Contract
 
-- **Completed through:** `G-006`
+- **Completed through:** `G-007`
 - **Last verified:** July 16, 2026
 
 G-002 produced Shark's first pixels through a resize-safe Direct3D 12
@@ -10,7 +10,9 @@ adds the first build-time HLSL pipeline. G-005 preserves those lifecycles while
 adding the engine camera, one indexed textured cube, the first shader-visible
 SRV binding, and a resize-safe reversed-Z depth target. G-006 preserves the
 same visible frame while declaring its back-buffer/depth use and centralizing
-its attachment transitions through a frame-local render graph.
+its attachment transitions through a frame-local render graph. G-007 adds
+named PIX command-list events and fence-delayed direct-queue timestamps without
+changing the visible frame or adding a normal-frame wait.
 
 ## Public boundary and ownership
 
@@ -40,6 +42,8 @@ failure but cannot replace explicit validation.
 The presentation object owns:
 
 - one direct command queue;
+- one 12-entry timestamp query heap and one persistently mapped 96-byte
+  readback buffer partitioned into three fixed context slices;
 - one three-buffer `DXGI_SWAP_EFFECT_FLIP_DISCARD` swap chain;
 - three `DXGI_FORMAT_R8G8B8A8_UNORM` back-buffer references;
 - one CPU-only RTV heap with three descriptors;
@@ -57,8 +61,9 @@ The presentation object owns:
 - three frame contexts, each containing one direct command allocator, one
   persistently mapped 64 KiB committed upload buffer, one 256-byte default-heap
   upload-probe destination, one CPU-only 64-slot CBV/SRV/UAV staging heap, a
-  checked upload cursor, a checked descriptor cursor, a generation, and one
-  direct-fence completion value; and
+  checked upload cursor, a checked descriptor cursor, a checked four-query
+  timestamp cursor, a generation, one direct-fence completion value, and
+  pending-result metadata; and
 - one fence plus one auto-reset Windows event.
 
 The DXGI factory is associated with the HWND using `DXGI_MWA_NO_ALT_ENTER`.
@@ -86,27 +91,33 @@ One frame performs the following work:
 1. read DXGI's current back-buffer index and select that context;
 2. inspect its preceding completion value and wait only when that context is
    still in flight;
-3. retire the completed submission and reset its allocator-facing upload and
-   descriptor cursors;
+3. consume its pending GPU timing sample only if the preceding completion
+   fence is complete, then retire the submission and reset its allocator-facing
+   upload, descriptor, and timestamp cursors;
 4. reserve one 256-byte frame record, write the 64-byte `view_projection`
    matrix followed by the retained diagnostic probe, create one CBV in the
    context's CPU-only staging heap, and point the root CBV at the same GPU
    upload address;
-5. build and compile one frame-local graph that imports the current back buffer
+5. reserve the context's exact four-query timestamp slice;
+6. build and compile one frame-local graph that imports the current back buffer
    in `PRESENT`, imports the depth texture in `DEPTH_WRITE`, and declares one
    `TexturedCube` pass writing both attachments;
-6. reset that context's command allocator and the shared command list with the
+7. reset that context's command allocator and the shared command list with the
    immutable cube PSO;
-7. copy the 256-byte frame record from the upload heap to the context's
+8. begin the `Frame` PIX event, write the frame-begin timestamp, and copy the
+   256-byte frame record from the upload heap to the context's
    default-heap probe destination on the direct queue, outside the graph;
-8. execute the graph, which records `PRESENT -> RENDER_TARGET`, invokes the
-   pass to clear/bind/draw, and records `RENDER_TARGET -> PRESENT`; the depth
-   target remains in `DEPTH_WRITE`, so both of its equal-state transitions are
-   elided;
-9. close and execute the command list;
-10. immediately signal the next monotonic fence value and store it on the
+9. execute the graph, which records `PRESENT -> RENDER_TARGET`, invokes the
+   pass inside a nested `TexturedCube` PIX event and pass timestamp pair, and
+   records `RENDER_TARGET -> PRESENT`; the depth target remains in
+   `DEPTH_WRITE`, so both of its equal-state transitions are elided;
+10. write the frame-end timestamp, resolve all four query values to the
+    context's readback slice, end `Frame`, then close and execute the command
+    list;
+11. immediately signal the next monotonic fence value, store it on the
    context; and
-11. call `Present` without an unconditional post-frame fence wait.
+12. mark that context's timing results pending and call `Present` without an
+    unconditional post-frame fence wait.
 
 The root CBV makes upload-memory reuse genuinely GPU-fence-sensitive, and the
 copy retains the G-003 default-heap probe. Probe content is not read back. The
@@ -142,13 +153,54 @@ agree. Static-upload barriers remain in the focused startup upload path, and
 the diagnostic probe continues to use D3D12 buffer promotion/decay. Enhanced
 barriers remain a later capability-gated graph backend.
 
+## PIX events and GPU timestamps
+
+G-007 privately links the pinned WinPixEventRuntime and enables its retail event
+path in both Debug and Release. The command list contains three balanced,
+stable names:
+
+```text
+StaticCubeUpload
+Frame
+  TexturedCube
+```
+
+`StaticCubeUpload` surrounds the one-time vertex, index, checker copy, and their
+three initialization barriers. Each submitted `Frame` begins after command-list
+reset and encloses the diagnostic probe copy, graph barriers, `TexturedCube`,
+and timestamp resolve. `TexturedCube` begins after the graph's pre-pass color
+barrier and contains only the pass callback's clear, bind, and draw commands.
+
+The direct queue's GPU tick frequency is queried once. The global query/readback
+allocation is split exactly:
+
+```text
+context index       0       1       2
+query base          0       4       8
+readback bytes      0      32      64
+```
+
+Each four-query slice stores frame begin, pass begin, pass end, and frame end.
+Frame duration includes the probe copy, both graph color barriers, and pass
+work, but excludes `ResolveQueryData`. Pass duration excludes graph barriers.
+Resolved samples must satisfy
+`frameBegin <= passBegin <= passEnd <= frameEnd`; equal timestamps are valid.
+
+The persistently mapped readback memory is never inspected immediately after
+submission. A context is marked pending only after its direct-queue submission
+is fence tracked. Its results are consumed immediately before normal context
+retirement/reset, either when that context is reused after its existing
+completion check or when resize/shutdown drains the queue. No timing-only wait,
+drain, readback allocation, or resource barrier is added.
+
 ## Resize, minimize, and shutdown
 
 `WindowResizedEvent` carries the latest usable nonzero client extent. If it
 differs from the swap chain, presentation:
 
 1. drains its direct queue;
-2. retires every context's completed frame submission;
+2. consumes every fence-complete pending GPU timing sample, then retires every
+   context's completed frame submission;
 3. releases all three back-buffer references and the old depth texture;
 4. calls `ResizeBuffers` with the new physical extent; and
 5. reacquires, renames, and recreates the three RTVs, then creates and names a
@@ -157,10 +209,12 @@ differs from the swap chain, presentation:
 A minimized window publishes no zero render extent. The sandbox stops
 updating or presenting the camera while minimized and resumes from the restored
 resize event. A duplicate restore extent is a no-op. Shutdown drains the queue,
-retires every outstanding frame submission, verifies every submitted frame
-retired, releases every back buffer, the depth texture, cube resources,
-checker heap, pipeline objects, and all context-owned resources, closes the
-fence event, and remains safe to call again.
+consumes and retires every outstanding frame submission, verifies every
+submission retired, releases every back buffer, the depth texture, cube
+resources, checker heap, pipeline objects, timestamp query/readback storage,
+and all context-owned resources, closes the fence event, and remains safe to
+call again. The fixed smoke then verifies that every submission produced one
+timing sample.
 
 A successful fixed smoke has one bounded static-upload startup wait plus one
 full-queue drain per effective resize and one at shutdown. Normal frames still
@@ -176,10 +230,13 @@ HRESULT and removal reason, then emits bounded DRED automatic-breadcrumb nodes,
 breadcrumb contexts, page-fault address, existing allocations, and recently
 freed allocations.
 
-Upload and descriptor allocation is linear and fixed-capacity. Zero-size,
-invalid-alignment, overflow, and exhaustion requests return structured errors
-without advancing a cursor. Unit tests also prove an incomplete context refuses
-retirement or reset and that the fence timeline fails before wraparound.
+Upload, descriptor, and timestamp allocation is linear and fixed-capacity.
+Zero-size, invalid-alignment, overflow, and exhaustion requests return
+structured errors without advancing a cursor. Timestamp decoding rejects an
+incomplete or non-nested sample, accepts zero-length intervals, and checks
+aggregate overflow before mutation. Unit tests also prove an incomplete
+context refuses retirement or reset and that the fence timeline fails before
+wraparound.
 
 After explicit presentation shutdown, `Device::validate_debug_state` reports
 live D3D12 device children and inspects D3D12 and DXGI info-queue messages added
@@ -218,6 +275,14 @@ The frame count is not user-configurable. A successful run:
 - proves two frame-local imports and exactly two recorded graph transition
   barriers per frame submission, with the cube draw count equal to the graph
   pass-execution count;
+- proves one `StaticCubeUpload` PIX event, one `Frame` event per submission,
+  and one `TexturedCube` event per graph-pass execution;
+- proves global timestamp capacity is 12, per-context high-water is four,
+  exactly four queries and one resolve are recorded per submission, and
+  shutdown consumes one nested frame/pass timing sample per retired
+  submission;
+- reports average and maximum frame/pass milliseconds using the direct queue's
+  nonzero GPU timestamp frequency without imposing a duration threshold;
 - retires every submission by explicit shutdown;
 - verifies one 256-byte GPU-consumed upload and one CPU staging descriptor per
   attempt, with high-water marks of 256 bytes and one descriptor;
@@ -231,7 +296,8 @@ The frame count is not user-configurable. A successful run:
   constraining it;
 - proves `camera_matrix_changes >= 3` for the initial matrix, the
   aspect-changing resize, and the scripted `0.25`-radian yaw after frame 750;
-- verifies no cube draw, camera upload, or depth clear occurs while minimized;
+- verifies no cube draw, camera upload, depth clear, PIX frame/pass event,
+  timestamp write/resolve, or timing-sample consumption occurs while minimized;
 - explicitly shuts down and validates presentation children;
 - posts and accepts the native close request; and
 - observes final HWND destruction.
@@ -250,12 +316,14 @@ planner, and D3D12 graph-executor unit tests.
 
 ## Explicit non-goals
 
-G-006 does not expose a public/general upload allocator, global upload ring,
+G-007 does not expose a public/general upload allocator, global upload ring,
 persistent descriptor allocator, generic deferred-destruction system, or
-readback/image validation. Its one-slot shader-visible heap, root signature,
-geometry, checker, and PSO are deliberately specific to the cube proof, not a
-general asset system, mesh manager, material layout, pipeline cache, or
-hot-reload boundary.
+readback/image validation. Its timestamp query heap and readback buffer are a
+fixed presentation diagnostic, not a general query allocator or asynchronous
+readback service. Its one-slot shader-visible heap, root signature, geometry,
+checker, and PSO are deliberately specific to the cube proof, not a general
+asset system, mesh manager, material layout, pipeline cache, or hot-reload
+boundary.
 
 The graph remains frame-local, direct-queue, serial, and limited to imported
 whole resources. It adds no graph-owned transients, lifetime/aliasing analysis,
@@ -264,9 +332,16 @@ parallel recording, copy queue, asynchronous compute, enhanced barriers,
 fullscreen policy, tearing mode, asset texture loading, mip generation, or
 scene/ECS layer.
 
+G-007 also adds no live HUD, Dear ImGui, capture automation, graph-owned
+automatic pass profiling, CPU/GPU clock calibration, stable-power-state
+control, pipeline statistics, occlusion queries, multi-queue timing, async
+compute, performance thresholds, or timing for the static upload.
+
 See [the HLSL pipeline contract](GRAPHICS_PIPELINE.md) for compilation,
 generated artifacts, root-signature/PSO state, and the indexed draw contract.
 See [the camera and textured-cube contract](CAMERA_AND_CUBE.md) for coordinate,
 input, depth, geometry, texture, and acceptance rules. See
 [the minimal render-graph contract](RENDER_GRAPH.md) for declaration,
-compilation, execution, barrier, and accounting rules.
+compilation, execution, barrier, and accounting rules. See
+[the GPU diagnostics contract](GPU_DIAGNOSTICS.md) for marker and timing
+details plus manual PIX acceptance.

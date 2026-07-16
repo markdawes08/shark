@@ -795,12 +795,12 @@ try {
             }) -join '; '
             'No non-preview PIX {0} or newer was found. Detected: {1}' -f $MinimumPix, $detectedPix
         }
-        Add-CheckResult -Status WARN -Phase 'G-007' -Name 'PIX on Windows' `
+        Add-CheckResult -Status WARN -Phase 'Manual' -Name 'PIX capture inspection' `
             -Detail $pixDetail `
-            -Remediation 'Before G-007, install the current non-preview PIX release (winget install Microsoft.PIX).'
+            -Remediation 'Before manually inspecting G-007 captures, install the current non-preview PIX release (winget install Microsoft.PIX).'
     }
     else {
-        Add-CheckResult -Status PASS -Phase 'G-007' -Name 'PIX on Windows' `
+        Add-CheckResult -Status PASS -Phase 'Manual' -Name 'PIX capture inspection' `
             -Detail ('PIX {0}; {1}' -f $usablePix.Version, $usablePix.Path)
     }
 

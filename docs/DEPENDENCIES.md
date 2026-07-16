@@ -12,7 +12,7 @@ Preview packages are excluded.
 | `Microsoft.Direct3D.D3D12` | `1.619.4` | NuGet | Retail DirectX 12 Agility SDK runtime and headers |
 | `Microsoft.Direct3D.DXC` | `1.9.2602.24` | GitHub release archive | Retail DirectX Shader Compiler and headers |
 | `Microsoft.Direct3D.WARP` | `1.0.20` | NuGet | Retail software rasterizer for development smoke tests |
-| `WinPixEventRuntime` | `1.0.240308001` | NuGet | PIX marker runtime for later GPU instrumentation |
+| `WinPixEventRuntime` | `1.0.240308001` | NuGet | G-007 command-list PIX marker runtime |
 
 The curated `directx12-agility` and `winpixevent` ports consume Microsoft's
 official NuGet packages. DXC is overridden to the `2026-05-27` port revision,
@@ -63,11 +63,18 @@ the executable. G-005 consumes the header-only DirectXMath target privately for
 the engine-owned camera, view/projection, and cube transform implementation; it
 adds no DirectXMath runtime file and exposes no DirectXMath type through the
 public camera or presentation boundary. The procedural `8x8` checker is
-generated directly in memory, so DirectXTex remains restored but unconsumed.
-WinPix also remains restored for G-007. Those owning increments decide their
-final runtime boundaries. The vcpkg executable comes from Visual Studio 2026,
-`VCPKG_ROOT`, or a complete installation on `PATH`; its version is reported
-during setup but is not misrepresented as a project-pinned dependency.
+generated directly in memory, so DirectXTex remains restored but unconsumed
+until S-001. G-007 privately links `Microsoft::WinPixEventRuntime`, defines the
+retail marker path for both supported configurations, and relies on vcpkg
+app-local deployment to place `WinPixEventRuntime.dll` beside
+`SharkSandbox.exe` and `SharkTests.exe`. The desktop PIX application remains a
+separate machine tool used only to inspect captures. The vcpkg executable comes
+from Visual Studio 2026, `VCPKG_ROOT`, or a complete installation on `PATH`;
+its version is reported during setup but is not misrepresented as a
+project-pinned dependency.
+
+See [the GPU diagnostics contract](GPU_DIAGNOSTICS.md) for the runtime's exact
+marker boundary and deployment role.
 
 Package versions change only in a dedicated dependency increment that updates
 the manifest, this record, performs a fresh restore, and rebuilds/tests Debug

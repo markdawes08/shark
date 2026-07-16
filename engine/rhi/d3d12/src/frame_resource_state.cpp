@@ -97,9 +97,11 @@ std::size_t LinearArenaState::high_watermark() const noexcept
 
 FrameResourceState::FrameResourceState(
     const std::size_t upload_capacity,
-    const std::size_t descriptor_capacity) noexcept
+    const std::size_t descriptor_capacity,
+    const std::size_t timestamp_capacity) noexcept
     : upload_(upload_capacity)
     , descriptors_(descriptor_capacity)
+    , timestamps_(timestamp_capacity)
 {
 }
 
@@ -125,6 +127,7 @@ core::Result<bool> FrameResourceState::begin(
 
     upload_.reset();
     descriptors_.reset();
+    timestamps_.reset();
     ++generation_;
     active_ = true;
     return core::Result<bool>::success(retire_result.value());
@@ -150,6 +153,7 @@ core::Result<bool> FrameResourceState::retire(
     completion_fence_value_ = 0;
     upload_.reset();
     descriptors_.reset();
+    timestamps_.reset();
     return core::Result<bool>::success(true);
 }
 
@@ -159,6 +163,7 @@ void FrameResourceState::discard_active_after_queue_drain() noexcept
     completion_fence_value_ = 0;
     upload_.reset();
     descriptors_.reset();
+    timestamps_.reset();
 }
 
 core::Result<LinearAllocation> FrameResourceState::allocate_upload(
@@ -184,6 +189,19 @@ core::Result<LinearAllocation> FrameResourceState::allocate_descriptors(
                 "Descriptors can only be allocated by an active frame"));
     }
     return descriptors_.allocate(count, 1);
+}
+
+core::Result<LinearAllocation> FrameResourceState::allocate_timestamps(
+    const std::size_t count)
+{
+    if (!active_) {
+        return core::Result<LinearAllocation>::failure(
+            frame_resource_error(
+                core::ErrorCode::invalid_state,
+                "Timestamp queries can only be allocated by an active "
+                "frame"));
+    }
+    return timestamps_.allocate(count, 1);
 }
 
 core::Result<void> FrameResourceState::submit(
@@ -249,6 +267,16 @@ std::size_t FrameResourceState::descriptor_used() const noexcept
 std::size_t FrameResourceState::descriptor_high_watermark() const noexcept
 {
     return descriptors_.high_watermark();
+}
+
+std::size_t FrameResourceState::timestamp_used() const noexcept
+{
+    return timestamps_.used();
+}
+
+std::size_t FrameResourceState::timestamp_high_watermark() const noexcept
+{
+    return timestamps_.high_watermark();
 }
 
 FenceTimeline::FenceTimeline(const std::uint64_t next_value) noexcept

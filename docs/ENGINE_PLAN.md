@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 16, 2026
-- **Completed through:** `G-006` - minimal direct-queue render graph
-- **Next increment:** `G-007` - GPU frame instrumentation
+- **Completed through:** `G-007` - GPU frame instrumentation
+- **Next increment:** `S-001` - DDS cubemap loading
 
 ## 1. Project direction
 
@@ -141,8 +141,10 @@ not performance validation.
 The July 12 prerequisite check reports the `F-002` gate ready with no blocking
 failures. Visual Studio 2026, MSVC 14.50 LTS, CMake 4.3.1, vcpkg, Windows SDK,
 Graphics Tools, and Ninja are available. PIX remains a non-blocking requirement
-for `G-007`. Global DXC is intentionally unnecessary because Shark restores a
-pinned project-local copy. See [Windows development setup](WINDOWS_SETUP.md).
+only for manually inspecting G-007 captures; the marker runtime is restored by
+the project. Global DXC is intentionally unnecessary because Shark restores a
+pinned project-local copy. See
+[Windows development setup](WINDOWS_SETUP.md).
 
 ## 5. World, math, and color conventions
 
@@ -300,8 +302,10 @@ unstable circular solve; iterative two-way coupling is a later milestone.
   descriptors, timestamps, and a completion set containing every queue fence
   that guards reuse. G-003 establishes one allocator, bounded upload/CPU
   descriptor staging, and one direct-fence checkpoint per context while sharing
-  one graphics command list. Timestamp storage and multi-queue completion sets
-  arrive with the increments that use them.
+  one graphics command list. G-007 adds one fixed four-query timestamp/readback
+  slice per context, backed by one 12-query heap and one 96-byte buffer, and
+  reuses each slice only after the same direct-fence checkpoint completes.
+  Multi-queue completion sets remain later.
 - Defer destruction of GPU resources, descriptors, pipelines, and upload storage
   until every relevant queue fence in their retirement set completes. G-003
   verifies whole-context transient reuse. G-005 creates one persistent root
@@ -378,9 +382,11 @@ across resources or frames.
 ### Diagnostics from the first executable
 
 - check every `HRESULT` and name every significant D3D12 object;
-- add PIX markers around every pass and major upload;
-- expose per-pass CPU/GPU timestamps, draws, dispatches, descriptors, memory, and
-  queue waits;
+- add PIX markers around every pass and major upload; G-007 names the current
+  `StaticCubeUpload`, `Frame`, and `TexturedCube` boundaries;
+- expose per-pass CPU/GPU timestamps, draws, dispatches, descriptors, memory,
+  and queue waits; G-007 begins with direct-queue GPU intervals for the frame
+  and its only pass, while CPU timings and broader counters remain later;
 - keep a WARP smoke path for device creation and a deterministic basic frame;
 - treat zero debug-layer errors as an acceptance gate; and
 - test real graphics on both the discrete and integrated adapters when their
@@ -549,7 +555,7 @@ This is the shortest responsible path to the first requested visual feature.
 | `G-004` | V | Resolve retail DXC `1.9.2602.24` only from the manifest host tools; compile tracked `vs_6_0`/`ps_6_0` HLSL with warnings as errors; reject malformed/warning fixtures; create one immutable PSO; and record one three-vertex triangle draw per submitted frame | `feat(render): add the first HLSL pipeline` |
 | `G-005` | V | Add the `+Y`-up/`-Z`-forward row-vector camera and right-drag/`WASD`/`QE`/`Shift` controls; render one 24-vertex/36-index cube with an `8x8` procedural checker through a root CBV plus one SRV/static sampler; and recreate a `D32_FLOAT`, clear-`0`, `GREATER_EQUAL` reversed-Z target safely across resize | `feat(render): add camera and depth conventions` |
 | `G-006` | - | Add a frame-local, single-use direct-queue graph with move-safe owner-scoped imports/passes, explicit plus RAW/WAR/WAW dependencies, stable topological compilation, cycle and callback-access validation, and centralized whole-resource legacy barriers; run the existing cube as one `TexturedCube` pass with exactly two attachment transitions per submitted frame | `feat(render): add minimal render graph` |
-| `G-007` | - | Add named PIX events and GPU timestamp queries; frame/pass timings are reproducible in logs with bounded query storage | `feat(diagnostics): add GPU frame instrumentation` |
+| `G-007` | - | Link the pinned WinPixEventRuntime for Debug and Release markers; name `StaticCubeUpload`, `Frame`, and `TexturedCube`; partition one 12-query/96-byte timestamp/readback allocation into three four-query frame-context slices; consume only fence-complete results; and report validated frame/pass samples plus bounded query accounting without adding a normal-frame drain | `feat(diagnostics): add GPU frame instrumentation` |
 | `S-001` | V | Load one licensed DDS cubemap through the texture/upload path with correct face orientation and sRGB handling | `feat(assets): load DDS cubemap textures` |
 | `S-002` | V | Render the skybox as a named graph pass; camera rotation changes it, translation does not, and resize stays clean | `feat(sky): render a cubemap skybox` |
 
@@ -691,27 +697,29 @@ entity scale or query patterns make it useful.
 
 ## 14. Immediate next increment
 
-After `G-006` is reviewed and committed by the owner, implement only `G-007`:
+After `G-007` is reviewed and committed by the owner, implement only `S-001`:
 
-- add named PIX events around the submitted frame, the `TexturedCube` graph
-  pass, and the existing major static upload;
-- add a fixed-capacity timestamp-query and readback slice to each reusable frame
-  context, with reuse guarded by that context's existing completion fence;
-- resolve frame/pass timestamps on the direct queue and consume results only
-  after their submission completes, without adding a normal-frame queue drain;
-- report reproducible frame/pass GPU durations and bounded query high-water
-  accounting in the smoke summary;
-- preserve the G-006 graph declarations, exact two-barrier frame contract,
-  camera/checker cube, resize/minimize behavior, hardware/WARP paths, focused
-  GPU validation, and zero DirectX errors; and
-- stop before a live debug HUD, Dear ImGui, capture automation, pipeline
-  statistics, occlusion queries, multi-queue timing, async compute, or broader
-  renderer profiling.
+- add one small, clearly licensed DDS cubemap fixture and record its source,
+  license, conversion settings, face order, format, extent, and mip count;
+- consume the already pinned DirectXTex dependency through a narrow asset
+  boundary that loads the DDS into CPU-owned metadata and subresource views;
+- reject non-cubemaps, incomplete faces, mismatched dimensions, unsupported
+  formats, malformed mip chains, and ambiguous color-space metadata with
+  structured errors;
+- upload all six faces through the existing direct-queue static upload path,
+  create one persistent cube SRV, and preserve the source's deliberate
+  sRGB/linear interpretation;
+- add deterministic CPU tests for face order and validation plus hardware/WARP
+  smoke accounting for the uploaded texture, while preserving G-007 PIX and
+  timestamp invariants; and
+- stop before drawing the skybox, changing the root signature or frame graph,
+  HDR conversion, image-based lighting, runtime texture streaming, general
+  material loading, or a content database.
 
-`G-006` now proves declared ownership, stable hazard-aware ordering, callback
-access validation, and centralized legacy barriers without changing the
-visible scene. `G-007` makes that frame and its named pass measurable before the
-skybox adds a second visual rendering feature.
+`G-007` now makes the submitted frame and its only graph pass measurable with
+fence-delayed readback and stable capture names. `S-001` establishes the first
+file-backed texture asset and GPU cubemap resource; `S-002` will make it the
+second visible rendering feature.
 
 ## 15. Primary technical references
 
@@ -725,6 +733,9 @@ skybox adds a second visual rendering feature.
 - [D3D12 debug-layer interfaces](https://learn.microsoft.com/en-us/windows/win32/direct3d12/direct3d-12-sdklayers-interfaces)
 - [DRED device-removal diagnostics](https://learn.microsoft.com/en-us/windows/win32/direct3d12/use-dred)
 - [PIX for Direct3D 12](https://learn.microsoft.com/en-us/windows/win32/direct3dtools/pix/articles/general/pix-overview)
+- [Direct3D 12 timing queries](https://learn.microsoft.com/en-us/windows/win32/direct3d12/timing)
+- [ResolveQueryData](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-resolvequerydata)
+- [WinPixEventRuntime](https://devblogs.microsoft.com/pix/winpixeventruntime/)
 - [D3D12 Work Graphs](https://learn.microsoft.com/en-us/windows-hardware/drivers/display/work-graphs)
 
 This document is the source of truth until specialized ADRs and milestone files

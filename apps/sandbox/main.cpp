@@ -502,6 +502,7 @@ void log_platform_event(const shark::platform::Event& event)
     bool debug_state_validated = false;
     std::uint64_t frames_when_minimized = 0;
     std::uint64_t submissions_when_minimized = 0;
+    std::uint64_t graph_executions_when_minimized = 0;
     std::uint64_t cube_draws_when_minimized = 0;
     std::uint64_t camera_updates_when_minimized = 0;
     std::uint64_t depth_clears_when_minimized = 0;
@@ -659,6 +660,8 @@ void log_platform_event(const shark::platform::Event& event)
                 const auto& stats = presentation.stats();
                 frames_when_minimized = stats.presented_frames;
                 submissions_when_minimized = stats.frame_submissions;
+                graph_executions_when_minimized =
+                    stats.render_graph_executions;
                 cube_draws_when_minimized = stats.cube_draw_calls;
                 camera_updates_when_minimized =
                     stats.camera_constant_updates;
@@ -679,6 +682,8 @@ void log_platform_event(const shark::platform::Event& event)
                 if (stats.presented_frames != frames_when_minimized ||
                     stats.frame_submissions !=
                         submissions_when_minimized ||
+                    stats.render_graph_executions !=
+                        graph_executions_when_minimized ||
                     stats.cube_draw_calls !=
                         cube_draws_when_minimized ||
                     stats.camera_constant_updates !=
@@ -827,7 +832,19 @@ void log_platform_event(const shark::platform::Event& event)
             stats.upload_high_water_bytes != frame_probe_bytes ||
             stats.descriptor_allocations != stats.frame_submissions ||
             stats.descriptor_high_water_count != 1 ||
+            stats.render_graph_compilations !=
+                stats.frame_submissions ||
+            stats.render_graph_executions !=
+                stats.frame_submissions ||
+            stats.render_graph_resource_imports !=
+                stats.frame_submissions * 2 ||
+            stats.render_graph_pass_executions !=
+                stats.frame_submissions ||
+            stats.render_graph_transition_barriers !=
+                stats.frame_submissions * 2 ||
             stats.cube_draw_calls != stats.frame_submissions ||
+            stats.cube_draw_calls !=
+                stats.render_graph_pass_executions ||
             stats.cube_indices !=
                 stats.cube_draw_calls * 36 ||
             stats.camera_constant_updates !=
@@ -866,6 +883,12 @@ void log_platform_event(const shark::platform::Event& event)
         summary.append(", descriptor-high-water=");
         summary.append(std::to_string(
             stats.descriptor_high_water_count));
+        summary.append(", graph-passes=");
+        summary.append(std::to_string(
+            stats.render_graph_pass_executions));
+        summary.append(", graph-barriers=");
+        summary.append(std::to_string(
+            stats.render_graph_transition_barriers));
         summary.append(", cube-draws=");
         summary.append(std::to_string(stats.cube_draw_calls));
         summary.append(", camera-matrix-changes=");

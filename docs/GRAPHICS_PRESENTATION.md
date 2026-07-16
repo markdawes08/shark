@@ -1,6 +1,6 @@
 # Direct3D 12 Presentation and Frame-Resource Contract
 
-- **Completed through:** `G-005`
+- **Completed through:** `G-006`
 - **Last verified:** July 16, 2026
 
 G-002 produced Shark's first pixels through a resize-safe Direct3D 12
@@ -8,7 +8,9 @@ flip-model swap chain. G-003 replaces its wait-after-every-present path with
 three fence-gated reusable frame contexts and bounded transient staging. G-004
 adds the first build-time HLSL pipeline. G-005 preserves those lifecycles while
 adding the engine camera, one indexed textured cube, the first shader-visible
-SRV binding, and a resize-safe reversed-Z depth target.
+SRV binding, and a resize-safe reversed-Z depth target. G-006 preserves the
+same visible frame while declaring its back-buffer/depth use and centralizing
+its attachment transitions through a frame-local render graph.
 
 ## Public boundary and ownership
 
@@ -90,20 +92,21 @@ One frame performs the following work:
    matrix followed by the retained diagnostic probe, create one CBV in the
    context's CPU-only staging heap, and point the root CBV at the same GPU
    upload address;
-5. reset that context's command allocator and the shared command list with the
+5. build and compile one frame-local graph that imports the current back buffer
+   in `PRESENT`, imports the depth texture in `DEPTH_WRITE`, and declares one
+   `TexturedCube` pass writing both attachments;
+6. reset that context's command allocator and the shared command list with the
    immutable cube PSO;
-6. copy the 256-byte frame record from the upload heap to the context's
-   default-heap probe destination on the direct queue;
-7. transition the current back buffer from `PRESENT` to `RENDER_TARGET`, clear
-   it, clear the matching depth texture to `0.0F`, bind the RTV and DSV, bind
-   the root signature, checker heap/SRV, camera root CBV, current physical
-   viewport/scissor, cube vertex/index buffers, and triangle-list topology,
-   issue `DrawIndexedInstanced(36, 1, 0, 0, 0)`, then transition the buffer
-   back to `PRESENT`;
-8. close and execute the command list;
-9. immediately signal the next monotonic fence value and store it on the
+7. copy the 256-byte frame record from the upload heap to the context's
+   default-heap probe destination on the direct queue, outside the graph;
+8. execute the graph, which records `PRESENT -> RENDER_TARGET`, invokes the
+   pass to clear/bind/draw, and records `RENDER_TARGET -> PRESENT`; the depth
+   target remains in `DEPTH_WRITE`, so both of its equal-state transitions are
+   elided;
+9. close and execute the command list;
+10. immediately signal the next monotonic fence value and store it on the
    context; and
-10. call `Present` without an unconditional post-frame fence wait.
+11. call `Present` without an unconditional post-frame fence wait.
 
 The root CBV makes upload-memory reuse genuinely GPU-fence-sensitive, and the
 copy retains the G-003 default-heap probe. Probe content is not read back. The
@@ -132,10 +135,12 @@ artifacts after creation. The root signature, PSO, cube buffers, checker, and
 checker heap remain valid across swap-chain resize and are released only after
 shutdown drains and retires every submitted frame.
 
-Legacy transition barriers are intentional for the explicit back-buffer and
-static-upload transitions here. The depth target remains in `DEPTH_WRITE`.
-Enhanced-barrier selection is owned by the later render-graph work, not this
-focused presentation proof.
+G-006's graph executor owns the per-frame whole-resource legacy transition
+barriers. It resolves the current imported resources immediately before graph
+execution and verifies that graph, executor, and recorder transition counts
+agree. Static-upload barriers remain in the focused startup upload path, and
+the diagnostic probe continues to use D3D12 buffer promotion/decay. Enhanced
+barriers remain a later capability-gated graph backend.
 
 ## Resize, minimize, and shutdown
 
@@ -208,6 +213,11 @@ The frame count is not user-configurable. A successful run:
   `frame_submissions` to successful plus occluded present attempts;
 - proves `cube_draw_calls`, `depth_clear_count`, and `texture_bindings` each
   equal `frame_submissions`, while `cube_indices == cube_draw_calls * 36`;
+- proves one graph compilation, one graph execution, and one `TexturedCube`
+  pass execution per frame submission;
+- proves two frame-local imports and exactly two recorded graph transition
+  barriers per frame submission, with the cube draw count equal to the graph
+  pass-execution count;
 - retires every submission by explicit shutdown;
 - verifies one 256-byte GPU-consumed upload and one CPU staging descriptor per
   attempt, with high-water marks of 256 bytes and one descriptor;
@@ -235,20 +245,28 @@ back or compare the final pixels.
 
 CTest runs hardware, packaged WARP, and packaged WARP with GPU-based validation
 as separate serial processes. Debug and Release must both pass those checks in
-addition to the device-only, platform-only, and frame-resource unit tests.
+addition to the device-only, platform-only, frame-resource, render-graph
+planner, and D3D12 graph-executor unit tests.
 
 ## Explicit non-goals
 
-G-005 does not expose a public/general upload allocator, global upload ring,
+G-006 does not expose a public/general upload allocator, global upload ring,
 persistent descriptor allocator, generic deferred-destruction system, or
 readback/image validation. Its one-slot shader-visible heap, root signature,
 geometry, checker, and PSO are deliberately specific to the cube proof, not a
 general asset system, mesh manager, material layout, pipeline cache, or
-hot-reload boundary. It adds no copy queue, asynchronous compute, render graph,
+hot-reload boundary.
+
+The graph remains frame-local, direct-queue, serial, and limited to imported
+whole resources. It adds no graph-owned transients, lifetime/aliasing analysis,
+subresource tracking, automatic attachment binding, pass culling/merging,
+parallel recording, copy queue, asynchronous compute, enhanced barriers,
 fullscreen policy, tearing mode, asset texture loading, mip generation, or
 scene/ECS layer.
 
 See [the HLSL pipeline contract](GRAPHICS_PIPELINE.md) for compilation,
 generated artifacts, root-signature/PSO state, and the indexed draw contract.
 See [the camera and textured-cube contract](CAMERA_AND_CUBE.md) for coordinate,
-input, depth, geometry, texture, and acceptance rules.
+input, depth, geometry, texture, and acceptance rules. See
+[the minimal render-graph contract](RENDER_GRAPH.md) for declaration,
+compilation, execution, barrier, and accounting rules.

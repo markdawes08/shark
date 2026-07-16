@@ -1,12 +1,14 @@
 # Camera, Reversed-Z Depth, and Textured Cube Contract
 
-- **Completed through:** `G-005`
+- **Completed through:** `G-006`
 - **Last verified:** July 16, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
 engine-owned free-fly camera drives a resource-bound cube pipeline, a finite
 reversed-Z depth target establishes the permanent depth convention, and a
 procedural checker texture exercises the first shader-visible descriptor.
+G-006 keeps those visible and input conventions unchanged while executing the
+frame through the first render graph.
 
 This remains a deliberately narrow proof. It establishes conventions and
 lifetime rules that later sky, terrain, rain, and water passes can reuse; it is
@@ -172,6 +174,11 @@ The permanent accounting contract requires:
   `depth_clear_count`, `texture_bindings`, and `frame_submissions` agree on one
   draw, 36 indices, one matrix update, one depth clear, and one checker binding
   per submitted frame;
+- `render_graph_compilations`, `render_graph_executions`, and
+  `render_graph_pass_executions` each equal `frame_submissions`;
+- `render_graph_resource_imports == frame_submissions * 2`,
+  `render_graph_transition_barriers == frame_submissions * 2`, and
+  `cube_draw_calls == render_graph_pass_executions`;
 - frame submissions equal successful plus occluded present attempts;
 - all three DXGI-selected frame contexts are acquired and reused;
 - every submission retires before shutdown;
@@ -206,17 +213,20 @@ CPU coverage is discovered through the existing `unit.` CTest prefix from
 
 ## Explicit non-goals
 
-G-005 adds no general asset importer, DDS/WIC/glTF loader, DirectXTex runtime
+G-006 adds no general asset importer, DDS/WIC/glTF loader, DirectXTex runtime
 path, mip chain, compression, texture streaming, sRGB/HDR policy, material/PBR
 system, lighting, skybox, terrain, or content database.
 
 It also adds no general mesh/resource/descriptor manager, typed GPU handles,
 placed-resource pool, copy queue, deferred uploader, shader reflection, runtime
-shader compilation, hot reload, PSO cache, render graph, scene graph, ECS,
+shader compilation, hot reload, PSO cache, scene graph, ECS,
 multiple cameras, controllable entity, physics, animation, shadows, MSAA,
 frustum culling, instancing, raw mouse input, cursor lock, configurable action
 map, gamepad support, fixed simulation clock, pixel readback, or golden-image
 testing.
 
-The minimal direct-queue render graph that first declares back-buffer and depth
-access and centralizes their barriers is the separate `G-006` increment.
+The G-006 render graph is intentionally limited to one frame-local
+`TexturedCube` pass and imported whole-resource attachment state. It does not
+change the camera, cube, shader, depth, texture, or input behavior described
+here. See [the minimal render-graph contract](RENDER_GRAPH.md) for its exact
+declaration, ordering, barrier, and accounting boundaries.

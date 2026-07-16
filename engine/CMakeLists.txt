@@ -21,6 +21,8 @@ add_library(SharkEngine STATIC
     platform/windows/include/shark/platform/application.hpp
     platform/windows/include/shark/platform/events.hpp
     platform/windows/src/application.cpp
+    render_graph/include/shark/render_graph/render_graph.hpp
+    render_graph/src/render_graph.cpp
     rhi/d3d12/include/shark/rhi/d3d12/device.hpp
     rhi/d3d12/include/shark/rhi/d3d12/presentation.hpp
     rhi/d3d12/src/device.cpp
@@ -28,6 +30,8 @@ add_library(SharkEngine STATIC
     rhi/d3d12/src/frame_resource_state.cpp
     rhi/d3d12/src/frame_resource_state.hpp
     rhi/d3d12/src/presentation.cpp
+    rhi/d3d12/src/render_graph_executor.cpp
+    rhi/d3d12/src/render_graph_executor.hpp
     world/include/shark/world/camera.hpp
     world/src/camera.cpp
 )
@@ -36,6 +40,7 @@ target_include_directories(SharkEngine
     PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/core/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/platform/windows/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/render_graph/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/rhi/d3d12/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/world/include"
 )

@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 16, 2026
-- **Completed through:** `G-005` - camera, reversed-Z depth, and textured cube
-- **Next increment:** `G-006` - minimal direct-queue render graph
+- **Completed through:** `G-006` - minimal direct-queue render graph
+- **Next increment:** `G-007` - GPU frame instrumentation
 
 ## 1. Project direction
 
@@ -353,24 +353,27 @@ unstable circular solve; iterative two-way coupling is a later milestone.
 
 ### Render graph growth
 
-The graph is renderer infrastructure, not a scene API. A pass declares its
-resource/subresource reads and writes, intended access/layout, attachments,
-queue preference, and an execution callback that can see only declared
-resources.
+The graph is renderer infrastructure, not a scene API. G-006 establishes
+whole-resource reads and writes, intended resource states, explicit and
+hazard-derived dependencies, and an execution callback that can resolve only
+its declared resources. Subresource ranges, attachment policy, and queue
+preference remain later extensions.
 
 It grows in three deliberate stages:
 
-1. **Simple:** direct queue, committed resources, explicit pass ordering, and
-   centralized barrier encoding.
-2. **Managed:** graph compilation, validation/cycle checks, lifetime analysis,
-   transient placed resources, and aliasing.
+1. **Simple:** direct queue, imported committed resources, declaration
+   validation, stable hazard-aware topological compilation, cycle rejection,
+   and centralized legacy barrier encoding. G-006 completes this first form
+   with one `TexturedCube` pass.
+2. **Managed:** lifetime analysis, graph-owned transient placed resources,
+   resource pooling, subresource scopes, and aliasing.
 3. **Optimized:** pass merging, parallel recording, and compute/copy scheduling
    only where PIX proves a benefit.
 
-The barrier layer provides an enhanced-barrier encoder and a legacy fallback.
-One backend is selected globally when the device starts and remains fixed for
-the device lifetime; the models are not casually mixed across resources or
-frames.
+G-006 provides only a whole-resource legacy-barrier executor. A future
+capability-gated increment may add an enhanced-barrier encoder; one model will
+then be selected globally for the device lifetime rather than mixed casually
+across resources or frames.
 
 ### Diagnostics from the first executable
 
@@ -545,7 +548,7 @@ This is the shortest responsible path to the first requested visual feature.
 | `G-003` | - | Add three back-buffer-indexed frame contexts, a monotonic direct-queue fence, bounded per-context upload and CPU descriptor staging, and verify transient slots reset only after submission completes | `feat(gpu): add frame resource lifecycle` |
 | `G-004` | V | Resolve retail DXC `1.9.2602.24` only from the manifest host tools; compile tracked `vs_6_0`/`ps_6_0` HLSL with warnings as errors; reject malformed/warning fixtures; create one immutable PSO; and record one three-vertex triangle draw per submitted frame | `feat(render): add the first HLSL pipeline` |
 | `G-005` | V | Add the `+Y`-up/`-Z`-forward row-vector camera and right-drag/`WASD`/`QE`/`Shift` controls; render one 24-vertex/36-index cube with an `8x8` procedural checker through a root CBV plus one SRV/static sampler; and recreate a `D32_FLOAT`, clear-`0`, `GREATER_EQUAL` reversed-Z target safely across resize | `feat(render): add camera and depth conventions` |
-| `G-006` | - | Add the simple direct-queue render graph with declared back-buffer/depth use and centralized barriers | `feat(render): add minimal render graph` |
+| `G-006` | - | Add a frame-local, single-use direct-queue graph with move-safe owner-scoped imports/passes, explicit plus RAW/WAR/WAW dependencies, stable topological compilation, cycle and callback-access validation, and centralized whole-resource legacy barriers; run the existing cube as one `TexturedCube` pass with exactly two attachment transitions per submitted frame | `feat(render): add minimal render graph` |
 | `G-007` | - | Add named PIX events and GPU timestamp queries; frame/pass timings are reproducible in logs with bounded query storage | `feat(diagnostics): add GPU frame instrumentation` |
 | `S-001` | V | Load one licensed DDS cubemap through the texture/upload path with correct face orientation and sRGB handling | `feat(assets): load DDS cubemap textures` |
 | `S-002` | V | Render the skybox as a named graph pass; camera rotation changes it, translation does not, and resize stays clean | `feat(sky): render a cubemap skybox` |
@@ -688,27 +691,27 @@ entity scale or query patterns make it useful.
 
 ## 14. Immediate next increment
 
-After `G-005` is reviewed and committed by the owner, implement only `G-006`:
+After `G-006` is reviewed and committed by the owner, implement only `G-007`:
 
-- add a small direct-queue render-graph builder whose passes declare named
-  resource reads/writes and execution callbacks;
-- import the current swap-chain back buffer and reversed-Z depth target as
-  external resources rather than transferring their ownership;
-- express the existing cube frame as one graph pass that declares render-target
-  and depth-write access;
-- compile deterministic pass order, reject undeclared resource access and
-  dependency cycles, and centralize the existing legacy transition barriers in
-  the graph executor;
-- preserve the G-005 camera controls, checker cube, resize-safe depth, static
-  upload, frame-context retirement, hardware/WARP smokes, GPU validation, and
-  zero DirectX errors; and
-- stop before transient placed resources, aliasing, resource pooling, pass
-  merging, parallel command recording, compute/copy queues, async compute,
-  cross-queue fences, renderer scene extraction, or a public scene API.
+- add named PIX events around the submitted frame, the `TexturedCube` graph
+  pass, and the existing major static upload;
+- add a fixed-capacity timestamp-query and readback slice to each reusable frame
+  context, with reuse guarded by that context's existing completion fence;
+- resolve frame/pass timestamps on the direct queue and consume results only
+  after their submission completes, without adding a normal-frame queue drain;
+- report reproducible frame/pass GPU durations and bounded query high-water
+  accounting in the smoke summary;
+- preserve the G-006 graph declarations, exact two-barrier frame contract,
+  camera/checker cube, resize/minimize behavior, hardware/WARP paths, focused
+  GPU validation, and zero DirectX errors; and
+- stop before a live debug HUD, Dear ImGui, capture automation, pipeline
+  statistics, occlusion queries, multi-queue timing, async compute, or broader
+  renderer profiling.
 
-`G-006` proves declared ownership and barrier orchestration without changing the
-visible scene. Managed transient lifetimes and multi-queue scheduling remain
-later render-graph stages.
+`G-006` now proves declared ownership, stable hazard-aware ordering, callback
+access validation, and centralized legacy barriers without changing the
+visible scene. `G-007` makes that frame and its named pass measurable before the
+skybox adds a second visual rendering feature.
 
 ## 15. Primary technical references
 

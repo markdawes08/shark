@@ -67,6 +67,11 @@ struct PresentationStats final {
     std::uint64_t upload_high_water_bytes{};
     std::uint64_t descriptor_allocations{};
     std::uint64_t descriptor_high_water_count{};
+    std::uint64_t render_graph_compilations{};
+    std::uint64_t render_graph_executions{};
+    std::uint64_t render_graph_resource_imports{};
+    std::uint64_t render_graph_pass_executions{};
+    std::uint64_t render_graph_transition_barriers{};
     std::uint64_t cube_draw_calls{};
     std::uint64_t cube_indices{};
     std::uint64_t camera_constant_updates{};

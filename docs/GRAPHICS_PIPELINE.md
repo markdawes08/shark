@@ -1,13 +1,15 @@
 # HLSL Graphics Pipeline Contract
 
-- **Completed through:** `G-005`
+- **Completed through:** `G-006`
 - **Last verified:** July 16, 2026
 
 G-004 established one reproducible path from project-owned HLSL to a real
 Direct3D 12 draw. G-005 keeps that build contract and replaces the
 `SV_VertexID` triangle with one resource-bound indexed cube using camera
-constants, an SRV, a static sampler, and reversed-Z depth. This remains one
-focused pipeline, not a general shader asset system or renderer abstraction.
+constants, an SRV, a static sampler, and reversed-Z depth. G-006 keeps the
+shader, root signature, and PSO unchanged while recording that draw through the
+`TexturedCube` render-graph pass. This remains one focused pipeline, not a
+general shader asset system or renderer abstraction.
 
 ## Pinned compiler boundary
 
@@ -142,18 +144,22 @@ Every non-minimized frame then:
 1. writes one 256-byte-aligned frame record containing the camera
    `view_projection` matrix and retained probe data in the acquired context,
    then preserves its diagnostic GPU copy;
-2. resets the shared command list with the cube PSO;
-3. transitions and clears the current back buffer and clears the current
-   reversed-Z depth target to `0.0F`;
-4. binds the RTV/DSV pair, root signature, checker descriptor heap, root CBV,
-   SRV table, physical-pixel viewport/scissor, vertex/index buffers, and
-   triangle-list topology;
-5. issues exactly `DrawIndexedInstanced(36, 1, 0, 0, 0)`; and
-6. transitions, submits, signals the context fence, and presents through the
-   established G-003 lifecycle.
+2. compiles one frame-local graph importing the current back buffer and depth
+   target and declaring one `TexturedCube` pass with render-target/depth-write
+   access;
+3. resets the shared command list with the cube PSO;
+4. executes the graph's pre-pass back-buffer transition;
+5. invokes `TexturedCube`, which clears the current attachments, binds the
+   RTV/DSV pair, root signature, checker descriptor heap, root CBV, SRV table,
+   physical-pixel viewport/scissor, vertex/index buffers, and triangle-list
+   topology, then issues exactly `DrawIndexedInstanced(36, 1, 0, 0, 0)`;
+6. executes the graph's final back-buffer transition; and
+7. submits, signals the context fence, and presents through the established
+   G-003 lifecycle.
 
 The fixed presentation smoke requires one indexed draw, 36 indices, one camera
-upload, and one depth clear per submitted frame. Hardware, packaged WARP, and
+upload, one depth clear, one graph/pass execution, two imported resources, and
+two graph transition barriers per submitted frame. Hardware, packaged WARP, and
 packaged WARP with GPU-based validation must each complete 1,000 successful
 presents with zero DirectX corruption/errors and no live D3D12 presentation
 children.
@@ -166,14 +172,18 @@ WARP provide the permanent automated contract.
 
 ## Explicit non-goals
 
-G-005 adds no general shader artifact database, reflection, root-signature
+G-006 adds no general shader artifact database, reflection, root-signature
 versioning system, persistent descriptor allocator, PSO hash/cache, runtime
 compilation, hot reload, asset texture loading, mip generation, material/PBR
-system, render graph, or image comparison. Its root signature, one-slot heap,
-static sampler, geometry, and PSO are specific to the cube proof.
+system, or image comparison. Its root signature, one-slot heap, static sampler,
+geometry, and PSO are specific to the cube proof. The new graph provides only
+frame-local pass/access/barrier orchestration; it is not a shader asset,
+pipeline-layout, or material abstraction.
 
 See [the camera and textured-cube contract](CAMERA_AND_CUBE.md) for the
-coordinate, input, geometry, texture, depth, resize, and acceptance rules.
+coordinate, input, geometry, texture, depth, resize, and acceptance rules. See
+[the minimal render-graph contract](RENDER_GRAPH.md) for the pass declaration
+and barrier execution around this pipeline.
 
 ## Primary references
 

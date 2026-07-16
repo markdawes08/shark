@@ -41,8 +41,10 @@ and the pinned vcpkg registry. Shark's overlay triplet applies that same MSVC
 14.50 toolset to built dependencies. The configure step restores every declared
 dependency. G-001 consumes DirectX Headers/Guids and the Agility runtime;
 G-004 consumes DXC as a build-time host tool, and G-005 consumes the
-header-only DirectXMath package for camera and transform math. DirectXTex and
-WinPix remain restored for their later increments.
+header-only DirectXMath package for camera and transform math. G-006 adds no
+third-party dependency; its planner is engine-owned and its executor uses the
+existing D3D12 headers. DirectXTex and WinPix remain restored for their later
+increments.
 
 The checked-in toolchain also scopes `UCRTContentRoot` to the complete Windows
 SDK payload for the CMake process. This avoids a Visual Studio 2026 installation
@@ -79,13 +81,14 @@ local development and testing only and must never enter a packaged product.
 
 With no arguments, `SharkSandbox` initializes the highest-priority eligible
 hardware device, opens the native Win32 window, and continuously draws the
-G-005 procedural-checker cube through the G-003 triple frame-resource
-lifecycle and the resize-safe reversed-Z depth target. Use `W`/`S` along the
-camera forward axis, `A`/`D` to strafe, `Q`/`E` to move down/up, hold
-`Shift` to move faster, and hold the right mouse button while dragging to look
-around. `Control` and `Space` are down/up aliases. Resize or minimize/restore
-the window to exercise the projection, swap-chain, and depth lifecycles, then
-close the title bar or press Alt+F4 to exit cleanly.
+G-005 procedural-checker cube as the G-006 graph's one `TexturedCube` pass,
+through the G-003 triple frame-resource lifecycle and resize-safe reversed-Z
+depth target. Use `W`/`S` along the camera forward axis, `A`/`D` to strafe,
+`Q`/`E` to move down/up, hold `Shift` to move faster, and hold the right mouse
+button while dragging to look around. `Control` and `Space` are down/up
+aliases. Resize or minimize/restore the window to exercise the projection,
+swap-chain, depth, and frame-local graph imports, then close the title bar or
+press Alt+F4 to exit cleanly.
 
 ## Shader build contract
 
@@ -185,18 +188,29 @@ allocator, camera bytes, and probe destination.
 
 Creation records one static direct-queue upload submission and bounded wait for
 the 24-vertex/36-index cube and deterministic `8x8` checker. Every submitted
-frame must then record one 36-index draw and one reversed-Z depth clear. Resize
-and shutdown perform the full queue drains. The summary reports
-`cube_draw_calls`/`cube_indices`, `camera_constant_updates` and
+frame compiles one graph importing the current back buffer and depth texture,
+executes one `TexturedCube` pass, records the back buffer's two legacy
+transitions, one 36-index draw, and one reversed-Z depth clear. Resize and
+shutdown perform the full queue drains. The summary reports graph pass/barrier
+counts, `cube_draw_calls`/`cube_indices`, `camera_constant_updates` and
 `camera_matrix_changes`, `depth_clear_count`/`depth_resource_creations`,
 `texture_bindings`, `static_upload_submissions`, resource/SRV creation counts,
 context reuse, blocking reuse waits, queue drains, and upload/descriptor
-high-water marks. The reuse wait count is deliberately not a performance gate
-because it depends on adapter speed and scheduling.
+high-water marks. The fixed graph invariants require one compilation,
+execution, and pass execution per frame submission, two imports and two
+transition barriers per submission, and one cube draw per graph pass. The reuse
+wait count is deliberately not a performance gate because it depends on
+adapter speed and scheduling.
+
+Run the focused planner and D3D12 executor unit coverage directly with:
+
+```powershell
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[render-graph]"
+```
 
 CTest registers hardware and WARP device and presentation paths as separate
 serial processes, plus a focused packaged-WARP GPU-validation presentation
-path. The G-005 presentation cases are
+path. The G-006 presentation cases remain
 `integration.gpu.hardware_cube_present`,
 `integration.gpu.warp_cube_present`, and
 `integration.gpu.warp_cube_present_validation`. To run all graphics integration
@@ -228,6 +242,8 @@ pinned compilation, generated artifacts, root-signature/PSO state, and indexed
 draw behavior. See the
 [camera and textured-cube contract](CAMERA_AND_CUBE.md) for controls,
 coordinate conventions, reversed-Z, geometry, texture, and explicit limits.
+See [the minimal render-graph contract](RENDER_GRAPH.md) for graph declaration,
+ordering, validation, barrier mapping, accounting, and non-goals.
 
 ## Visual Studio
 

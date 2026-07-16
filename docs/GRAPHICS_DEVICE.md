@@ -60,7 +60,9 @@ existing-allocation, and recently-freed-allocation details. G-004 preserves the
 same path while adding root-signature/PSO creation and a real draw submission.
 G-005 keeps that diagnostic boundary while adding the camera constants,
 shader-visible checker binding, indexed geometry, static upload submission, and
-reversed-Z depth resource.
+reversed-Z depth resource. G-006 keeps the same device and removal-diagnostic
+boundary while routing the two per-frame attachment transitions through the
+minimal render-graph executor.
 
 If a debugger is attached, corruption and error messages also request a debug
 break. Unattended processes count and report those severities instead of
@@ -92,9 +94,10 @@ Selection rules are strict:
 `--gpu-smoke` and `--capabilities` create no window and exit after device
 verification. `--present-smoke` accepts the normal GPU selectors and optional
 GPU-based validation, creates a real window, presents exactly 1,000 successful
-indexed-cube frames, verifies camera/depth/resource lifecycles, and exits. The
-default interactive path keeps the device alive while the G-005 free-fly camera
-and textured-cube presentation run until the window is closed.
+indexed-cube frames, verifies camera/depth/resource/graph lifecycles, and exits.
+The default interactive path keeps the device alive while the G-005 free-fly
+camera and textured-cube scene run as the G-006 graph's `TexturedCube` pass
+until the window is closed.
 
 ## Required and optional capabilities
 
@@ -163,9 +166,14 @@ conflict/malformed-index boundary, aligned frame-arena allocation and
 exhaustion, invalid lifecycle transitions, fence-gated retirement, and monotonic
 fence exhaustion. G-005 adds core matrix, finite reversed-Z camera,
 controller/focus lifecycle, 24/36 cube geometry, checker generation, input
-layout, and depth-state unit coverage. The presentation smoke additionally
-verifies all three frame contexts are reused and every submission retires
-during explicit shutdown, before frame resources are released.
+layout, and depth-state unit coverage. G-006 adds single-use, move-safe,
+owner-scoped graph declarations, stable hazard-aware ordering,
+cycle/access/failure validation, transition elision, exact legacy state
+mapping/alias handling, and native binding rejection.
+The presentation smoke additionally verifies all three frame contexts are
+reused, every submission compiles and executes exactly one graph pass with two
+imports and two barriers, and every submission retires during explicit
+shutdown before frame resources are released.
 
 Presentation shutdown explicitly drains and releases its command list, cube
 PSO/root signature, checker descriptor heap and texture, vertex/index buffers,
@@ -177,4 +185,6 @@ tests with zero DirectX corruption or error messages. See the
 G-002/G-003 frame, staging, retirement, and resize rules, and the
 [HLSL pipeline contract](GRAPHICS_PIPELINE.md) for the G-004/G-005 shader and
 draw path. See [the camera and textured-cube contract](CAMERA_AND_CUBE.md) for
-the G-005 input, math, depth, static-resource, and acceptance rules.
+the G-005 input, math, depth, static-resource, and acceptance rules. See
+[the minimal render-graph contract](RENDER_GRAPH.md) for the G-006
+platform-independent planner and D3D12 legacy-barrier executor.

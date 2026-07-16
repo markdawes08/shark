@@ -1,6 +1,7 @@
 #include "device_access.hpp"
 #include "cube_scene_data.hpp"
 #include "frame_resource_state.hpp"
+#include "render_graph_executor.hpp"
 
 #include <directx/d3d12.h>
 #include <dxgi1_6.h>
@@ -9,6 +10,7 @@
 #include <shark/core/assertion.hpp>
 #include <shark/core/error.hpp>
 #include <shark/core/logging.hpp>
+#include <shark/render_graph/render_graph.hpp>
 #include <shark/rhi/d3d12/device.hpp>
 #include <shark/rhi/d3d12/presentation.hpp>
 
@@ -44,6 +46,8 @@ constexpr std::size_t camera_matrix_bytes = sizeof(math::Matrix4x4);
 constexpr std::size_t frame_probe_offset = camera_matrix_bytes;
 constexpr UINT root_camera_constants = 0;
 constexpr UINT root_checker_texture = 1;
+constexpr render_graph::ExternalResourceId graph_back_buffer_id{1};
+constexpr render_graph::ExternalResourceId graph_depth_buffer_id{2};
 
 static_assert(back_buffer_count <= 32);
 static_assert(camera_matrix_bytes == 64);
@@ -530,6 +534,115 @@ public:
         return core::Result<void>::success();
     }
 
+    [[nodiscard]] core::Result<void> record_textured_cube_pass(
+        const render_graph::PassContext& pass_context,
+        const render_graph::ResourceHandle back_buffer_resource,
+        const render_graph::ResourceHandle depth_buffer_resource,
+        FrameContext& context,
+        const UINT back_buffer_index)
+    {
+        auto back_buffer_access =
+            pass_context.write(back_buffer_resource);
+        if (!back_buffer_access) {
+            return core::Result<void>::failure(
+                std::move(back_buffer_access).error());
+        }
+        auto depth_buffer_access =
+            pass_context.write(depth_buffer_resource);
+        if (!depth_buffer_access) {
+            return core::Result<void>::failure(
+                std::move(depth_buffer_access).error());
+        }
+        if (back_buffer_access.value() != graph_back_buffer_id ||
+            depth_buffer_access.value() != graph_depth_buffer_id) {
+            return core::Result<void>::failure(graphics_error(
+                core::ErrorCode::invalid_state,
+                "The textured-cube pass resolved unexpected graph "
+                "resource bindings"));
+        }
+
+        auto render_target =
+            rtv_heap->GetCPUDescriptorHandleForHeapStart();
+        render_target.ptr += static_cast<SIZE_T>(back_buffer_index) *
+            static_cast<SIZE_T>(rtv_descriptor_increment);
+        const auto depth_stencil =
+            dsv_heap->GetCPUDescriptorHandleForHeapStart();
+        command_list->OMSetRenderTargets(
+            1,
+            &render_target,
+            FALSE,
+            &depth_stencil);
+        const std::array<float, 4> frame_clear_color{
+            clear_color.red,
+            clear_color.green,
+            clear_color.blue,
+            clear_color.alpha,
+        };
+        command_list->ClearRenderTargetView(
+            render_target,
+            frame_clear_color.data(),
+            0,
+            nullptr);
+        command_list->ClearDepthStencilView(
+            depth_stencil,
+            D3D12_CLEAR_FLAG_DEPTH,
+            detail::cube_depth_clear_value,
+            0,
+            0,
+            nullptr);
+        ++statistics.depth_clear_count;
+
+        const D3D12_VIEWPORT viewport{
+            0.0F,
+            0.0F,
+            static_cast<float>(current_extent.width),
+            static_cast<float>(current_extent.height),
+            0.0F,
+            1.0F,
+        };
+        const D3D12_RECT scissor_rectangle{
+            0,
+            0,
+            static_cast<LONG>(current_extent.width),
+            static_cast<LONG>(current_extent.height),
+        };
+        command_list->SetGraphicsRootSignature(
+            cube_root_signature.Get());
+        ID3D12DescriptorHeap* descriptor_heaps[]{
+            checker_descriptor_heap.Get(),
+        };
+        command_list->SetDescriptorHeaps(
+            static_cast<UINT>(std::size(descriptor_heaps)),
+            descriptor_heaps);
+        command_list->SetGraphicsRootConstantBufferView(
+            root_camera_constants,
+            context.upload_buffer->GetGPUVirtualAddress() +
+                context.staged_probe_offset);
+        command_list->SetGraphicsRootDescriptorTable(
+            root_checker_texture,
+            checker_descriptor_heap->GetGPUDescriptorHandleForHeapStart());
+        ++statistics.texture_bindings;
+        command_list->RSSetViewports(1, &viewport);
+        command_list->RSSetScissorRects(
+            1,
+            &scissor_rectangle);
+        command_list->IASetPrimitiveTopology(
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        command_list->IASetVertexBuffers(
+            0,
+            1,
+            &vertex_buffer_view);
+        command_list->IASetIndexBuffer(&index_buffer_view);
+        command_list->DrawIndexedInstanced(
+            static_cast<UINT>(detail::cube_indices.size()),
+            1,
+            0,
+            0,
+            0);
+
+        return core::Result<void>::success();
+    }
+
     [[nodiscard]] core::Result<void> submit_frame(
         FrameContext& context)
     {
@@ -947,6 +1060,8 @@ public:
             &texture_source,
             nullptr);
 
+        // G-006 manages frame color/depth attachments. These one-time
+        // initialization transitions remain with the static upload batch.
         std::array<D3D12_RESOURCE_BARRIER, 3> barriers{};
         barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
         barriers[0].Transition.pResource = vertex_buffer.Get();
@@ -1783,6 +1898,80 @@ core::Result<PresentStatus> Presentation::present_frame(
             std::move(probe_result).error());
     }
 
+    render_graph::GraphBuilder graph_builder;
+    auto back_buffer_resource_result = graph_builder.import_resource(
+        "BackBuffer",
+        graph_back_buffer_id,
+        render_graph::ResourceState::present,
+        render_graph::ResourceState::present);
+    if (!back_buffer_resource_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(back_buffer_resource_result).error());
+    }
+    const auto back_buffer_resource =
+        back_buffer_resource_result.value();
+
+    auto depth_buffer_resource_result = graph_builder.import_resource(
+        "DepthBuffer",
+        graph_depth_buffer_id,
+        render_graph::ResourceState::depth_write,
+        render_graph::ResourceState::depth_write);
+    if (!depth_buffer_resource_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(depth_buffer_resource_result).error());
+    }
+    const auto depth_buffer_resource =
+        depth_buffer_resource_result.value();
+
+    auto cube_pass_result = graph_builder.add_pass(
+        "TexturedCube",
+        [implementation = implementation_.get(),
+         context,
+         back_buffer_index,
+         back_buffer_resource,
+         depth_buffer_resource](
+            const render_graph::PassContext& pass_context) {
+            return implementation->record_textured_cube_pass(
+                pass_context,
+                back_buffer_resource,
+                depth_buffer_resource,
+                *context,
+                back_buffer_index);
+        });
+    if (!cube_pass_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(cube_pass_result).error());
+    }
+    const auto cube_pass = cube_pass_result.value();
+
+    auto color_write_result = graph_builder.write(
+        cube_pass,
+        back_buffer_resource,
+        render_graph::ResourceState::render_target);
+    if (!color_write_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(color_write_result).error());
+    }
+    auto depth_write_result = graph_builder.write(
+        cube_pass,
+        depth_buffer_resource,
+        render_graph::ResourceState::depth_write);
+    if (!depth_write_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(depth_write_result).error());
+    }
+
+    auto compiled_graph_result = std::move(graph_builder).compile();
+    if (!compiled_graph_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(compiled_graph_result).error());
+    }
+    auto compiled_graph = std::move(compiled_graph_result).value();
+    ++implementation_->statistics.render_graph_compilations;
+    implementation_->statistics.render_graph_resource_imports +=
+        static_cast<std::uint64_t>(
+            compiled_graph.stats().imported_resource_count);
+
     auto result = context->command_allocator->Reset();
     if (FAILED(result)) {
         return core::Result<PresentStatus>::failure(
@@ -1812,103 +2001,49 @@ core::Result<PresentStatus> Presentation::present_frame(
         context->staged_probe_offset,
         frame_probe_bytes);
 
-    D3D12_RESOURCE_BARRIER to_render_target{};
-    to_render_target.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    to_render_target.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-    to_render_target.Transition.pResource =
-        implementation_->back_buffers[back_buffer_index].Get();
-    to_render_target.Transition.Subresource =
-        D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    to_render_target.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
-    to_render_target.Transition.StateAfter =
-        D3D12_RESOURCE_STATE_RENDER_TARGET;
-    implementation_->command_list->ResourceBarrier(1, &to_render_target);
-
-    auto render_target =
-        implementation_->rtv_heap->GetCPUDescriptorHandleForHeapStart();
-    render_target.ptr += static_cast<SIZE_T>(back_buffer_index) *
-        static_cast<SIZE_T>(implementation_->rtv_descriptor_increment);
-    const auto depth_stencil =
-        implementation_->dsv_heap->GetCPUDescriptorHandleForHeapStart();
-    implementation_->command_list->OMSetRenderTargets(
-        1,
-        &render_target,
-        FALSE,
-        &depth_stencil);
-    const std::array<float, 4> clear_color{
-        implementation_->clear_color.red,
-        implementation_->clear_color.green,
-        implementation_->clear_color.blue,
-        implementation_->clear_color.alpha,
+    const std::array graph_resources{
+        detail::RenderGraphResourceBinding{
+            graph_back_buffer_id,
+            implementation_->back_buffers[back_buffer_index].Get(),
+        },
+        detail::RenderGraphResourceBinding{
+            graph_depth_buffer_id,
+            implementation_->depth_buffer.Get(),
+        },
     };
-    implementation_->command_list->ClearRenderTargetView(
-        render_target,
-        clear_color.data(),
-        0,
-        nullptr);
-    implementation_->command_list->ClearDepthStencilView(
-        depth_stencil,
-        D3D12_CLEAR_FLAG_DEPTH,
-        detail::cube_depth_clear_value,
-        0,
-        0,
-        nullptr);
-    ++implementation_->statistics.depth_clear_count;
-
-    const D3D12_VIEWPORT viewport{
-        0.0F,
-        0.0F,
-        static_cast<float>(implementation_->current_extent.width),
-        static_cast<float>(implementation_->current_extent.height),
-        0.0F,
-        1.0F,
+    auto graph_bindings_result =
+        detail::validate_render_graph_resource_bindings(
+            graph_resources);
+    if (!graph_bindings_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(graph_bindings_result).error());
+    }
+    detail::LegacyRenderGraphTransitionRecorder transition_recorder{
+        implementation_->command_list.Get(),
+        graph_resources,
     };
-    const D3D12_RECT scissor_rectangle{
-        0,
-        0,
-        static_cast<LONG>(implementation_->current_extent.width),
-        static_cast<LONG>(implementation_->current_extent.height),
-    };
-    implementation_->command_list->SetGraphicsRootSignature(
-        implementation_->cube_root_signature.Get());
-    ID3D12DescriptorHeap* descriptor_heaps[]{
-        implementation_->checker_descriptor_heap.Get(),
-    };
-    implementation_->command_list->SetDescriptorHeaps(
-        static_cast<UINT>(std::size(descriptor_heaps)),
-        descriptor_heaps);
-    implementation_->command_list->SetGraphicsRootConstantBufferView(
-        root_camera_constants,
-        context->upload_buffer->GetGPUVirtualAddress() +
-            context->staged_probe_offset);
-    implementation_->command_list->SetGraphicsRootDescriptorTable(
-        root_checker_texture,
-        implementation_->checker_descriptor_heap
-            ->GetGPUDescriptorHandleForHeapStart());
-    ++implementation_->statistics.texture_bindings;
-    implementation_->command_list->RSSetViewports(1, &viewport);
-    implementation_->command_list->RSSetScissorRects(
-        1,
-        &scissor_rectangle);
-    implementation_->command_list->IASetPrimitiveTopology(
-        D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    implementation_->command_list->IASetVertexBuffers(
-        0,
-        1,
-        &implementation_->vertex_buffer_view);
-    implementation_->command_list->IASetIndexBuffer(
-        &implementation_->index_buffer_view);
-    implementation_->command_list->DrawIndexedInstanced(
-        static_cast<UINT>(detail::cube_indices.size()),
-        1,
-        0,
-        0,
-        0);
-
-    auto to_present = to_render_target;
-    to_present.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-    to_present.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-    implementation_->command_list->ResourceBarrier(1, &to_present);
+    auto graph_execution_result =
+        compiled_graph.execute(transition_recorder);
+    if (!graph_execution_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(graph_execution_result).error());
+    }
+    const auto graph_execution = graph_execution_result.value();
+    if (graph_execution.transitions_recorded !=
+            compiled_graph.stats().transition_count ||
+        graph_execution.transitions_recorded !=
+            transition_recorder.recorded_transition_count()) {
+        return core::Result<PresentStatus>::failure(graphics_error(
+            core::ErrorCode::invalid_state,
+            "Render-graph execution recorded an inconsistent transition "
+            "count"));
+    }
+    ++implementation_->statistics.render_graph_executions;
+    implementation_->statistics.render_graph_pass_executions +=
+        static_cast<std::uint64_t>(graph_execution.passes_executed);
+    implementation_->statistics.render_graph_transition_barriers +=
+        static_cast<std::uint64_t>(
+            graph_execution.transitions_recorded);
 
     result = implementation_->command_list->Close();
     if (FAILED(result)) {

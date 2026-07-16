@@ -18,6 +18,8 @@ enum class ResourceState : std::uint8_t {
     present,
     render_target,
     depth_write,
+    depth_read,
+    pixel_shader_read,
     shader_read,
     copy_source,
     copy_destination,

@@ -5,11 +5,12 @@ engine. Its first vertical slice is an interactive outdoor environment with a
 skybox, textured terrain, rain, terrain collision, and progressively simulated
 surface water.
 
-The project is complete through `S-001`: the first project-owned DDS cubemap is
-strictly decoded through a DirectXTex-isolated asset boundary and uploaded as a
-persistent Direct3D 12 texture cube. It is not drawn yet; `S-002` adds the
-visible skybox pass.
+The project is complete through `S-002`: a dedicated `Skybox` graph pass now
+renders the project-owned DDS cubemap behind the checker cube with a
+translation-invariant camera and read-only reversed-Z depth. `T-001` is next
+and begins the first deterministic terrain tile.
 
 - [Engine architecture and roadmap](docs/ENGINE_PLAN.md)
 - [Windows build and test guide](docs/BUILDING.md)
+- [Static cubemap skybox contract](docs/SKYBOX.md)
 - [DDS cubemap asset and upload contract](docs/DDS_CUBEMAP.md)

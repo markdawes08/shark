@@ -46,6 +46,8 @@ std::atomic<std::uint64_t> next_builder_owner{1};
     case ResourceState::present:
     case ResourceState::render_target:
     case ResourceState::depth_write:
+    case ResourceState::depth_read:
+    case ResourceState::pixel_shader_read:
     case ResourceState::shader_read:
     case ResourceState::copy_source:
     case ResourceState::copy_destination:
@@ -73,7 +75,9 @@ std::atomic<std::uint64_t> next_builder_owner{1};
     const ResourceState state) noexcept
 {
     if (mode == AccessMode::read) {
-        return state == ResourceState::shader_read ||
+        return state == ResourceState::depth_read ||
+            state == ResourceState::pixel_shader_read ||
+            state == ResourceState::shader_read ||
             state == ResourceState::copy_source;
     }
     if (mode == AccessMode::write) {

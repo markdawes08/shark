@@ -149,6 +149,46 @@ TEST_CASE(
         ResourceState::render_target));
     REQUIRE_FALSE(builder.add_dependency(cube, cube));
 
+    const auto depth_result = builder.import_resource(
+        "depth",
+        ExternalResourceId{3},
+        ResourceState::depth_write,
+        ResourceState::depth_write);
+    const auto depth_reader =
+        builder.add_pass("depth-reader", no_op_pass());
+    const auto invalid_depth_writer =
+        builder.add_pass("invalid-depth-writer", no_op_pass());
+    REQUIRE(depth_result);
+    REQUIRE(depth_reader);
+    REQUIRE(invalid_depth_writer);
+    REQUIRE(builder.read(
+        depth_reader.value(),
+        depth_result.value(),
+        ResourceState::depth_read));
+    REQUIRE_FALSE(builder.write(
+        invalid_depth_writer.value(),
+        depth_result.value(),
+        ResourceState::depth_read));
+    REQUIRE_FALSE(builder.read(
+        invalid_depth_writer.value(),
+        depth_result.value(),
+        ResourceState::depth_write));
+
+    const auto texture_result = builder.import_resource(
+        "pixel-texture",
+        ExternalResourceId{4},
+        ResourceState::pixel_shader_read,
+        ResourceState::pixel_shader_read);
+    REQUIRE(texture_result);
+    REQUIRE(builder.read(
+        depth_reader.value(),
+        texture_result.value(),
+        ResourceState::pixel_shader_read));
+    REQUIRE_FALSE(builder.write(
+        invalid_depth_writer.value(),
+        texture_result.value(),
+        ResourceState::pixel_shader_read));
+
     GraphBuilder foreign_builder;
     const auto foreign_resource = foreign_builder.import_resource(
         "foreign",
@@ -562,6 +602,170 @@ TEST_CASE(
         compiled_cube.transitions[0]);
     REQUIRE(recorder.transitions[1] ==
         graph.final_transitions()[0]);
+}
+
+TEST_CASE(
+    "cube then skybox graph compiles exact depth-read ordering",
+    "[render-graph][transitions][dependencies][skybox]")
+{
+    using namespace shark;
+    using namespace render_graph;
+
+    std::vector<std::string> execution_order;
+    GraphBuilder builder;
+    const auto back_buffer = builder.import_resource(
+        "back-buffer",
+        ExternalResourceId{7},
+        ResourceState::present,
+        ResourceState::present);
+    const auto depth = builder.import_resource(
+        "depth",
+        ExternalResourceId{9},
+        ResourceState::depth_write,
+        ResourceState::depth_write);
+    const auto checker = builder.import_resource(
+        "checker",
+        ExternalResourceId{11},
+        ResourceState::pixel_shader_read,
+        ResourceState::pixel_shader_read);
+    const auto cubemap = builder.import_resource(
+        "cubemap",
+        ExternalResourceId{12},
+        ResourceState::pixel_shader_read,
+        ResourceState::pixel_shader_read);
+    REQUIRE(back_buffer);
+    REQUIRE(depth);
+    REQUIRE(checker);
+    REQUIRE(cubemap);
+
+    const auto cube = builder.add_pass(
+        "TexturedCube",
+        [back_buffer = back_buffer.value(),
+         depth = depth.value(),
+         checker = checker.value(),
+         &execution_order](const PassContext& context) {
+            const auto color = context.write(back_buffer);
+            const auto depth_target = context.write(depth);
+            const auto texture = context.read(checker);
+            if (!color || !depth_target || !texture) {
+                return core::Result<void>::failure(core::Error{
+                    core::ErrorCategory::graphics,
+                    core::ErrorCode::invalid_state,
+                    "declared cube resources were unavailable",
+                });
+            }
+            execution_order.emplace_back("TexturedCube");
+            return core::Result<void>::success();
+        });
+    const auto skybox = builder.add_pass(
+        "Skybox",
+        [back_buffer = back_buffer.value(),
+         depth = depth.value(),
+         cubemap = cubemap.value(),
+         &execution_order](const PassContext& context) {
+            const auto color = context.write(back_buffer);
+            const auto depth_target = context.read(depth);
+            const auto texture = context.read(cubemap);
+            if (!color || !depth_target || !texture) {
+                return core::Result<void>::failure(core::Error{
+                    core::ErrorCategory::graphics,
+                    core::ErrorCode::invalid_state,
+                    "declared skybox resources were unavailable",
+                });
+            }
+            execution_order.emplace_back("Skybox");
+            return core::Result<void>::success();
+        });
+    REQUIRE(cube);
+    REQUIRE(skybox);
+    REQUIRE(builder.write(
+        cube.value(),
+        back_buffer.value(),
+        ResourceState::render_target));
+    REQUIRE(builder.write(
+        cube.value(),
+        depth.value(),
+        ResourceState::depth_write));
+    REQUIRE(builder.read(
+        cube.value(),
+        checker.value(),
+        ResourceState::pixel_shader_read));
+    REQUIRE(builder.write(
+        skybox.value(),
+        back_buffer.value(),
+        ResourceState::render_target));
+    REQUIRE(builder.read(
+        skybox.value(),
+        depth.value(),
+        ResourceState::depth_read));
+    REQUIRE(builder.read(
+        skybox.value(),
+        cubemap.value(),
+        ResourceState::pixel_shader_read));
+
+    auto graph = compile_graph(std::move(builder));
+    REQUIRE(graph.passes().size() == 2);
+    REQUIRE(graph.passes()[0].name == "TexturedCube");
+    REQUIRE(graph.passes()[1].name == "Skybox");
+
+    const auto& compiled_cube = find_pass(graph, "TexturedCube");
+    const auto& compiled_skybox = find_pass(graph, "Skybox");
+    REQUIRE(compiled_cube.dependencies.empty());
+    REQUIRE((compiled_skybox.dependencies ==
+        std::vector<PassHandle>{cube.value()}));
+    REQUIRE(compiled_cube.transitions.size() == 1);
+    REQUIRE((compiled_cube.transitions[0] == ResourceTransition{
+        back_buffer.value(),
+        ExternalResourceId{7},
+        ResourceState::present,
+        ResourceState::render_target,
+    }));
+    REQUIRE(compiled_skybox.transitions.size() == 1);
+    REQUIRE((compiled_skybox.transitions[0] == ResourceTransition{
+        depth.value(),
+        ExternalResourceId{9},
+        ResourceState::depth_write,
+        ResourceState::depth_read,
+    }));
+    REQUIRE(graph.final_transitions().size() == 2);
+    REQUIRE((graph.final_transitions()[0] == ResourceTransition{
+        back_buffer.value(),
+        ExternalResourceId{7},
+        ResourceState::render_target,
+        ResourceState::present,
+    }));
+    REQUIRE((graph.final_transitions()[1] == ResourceTransition{
+        depth.value(),
+        ExternalResourceId{9},
+        ResourceState::depth_read,
+        ResourceState::depth_write,
+    }));
+    REQUIRE((graph.stats() == CompiledGraphStats{
+        .imported_resource_count = 4,
+        .pass_count = 2,
+        .dependency_count = 1,
+        .transition_count = 4,
+        .elided_transition_count = 6,
+    }));
+
+    RecordingTransitionRecorder recorder;
+    const auto execution = graph.execute(recorder);
+    REQUIRE(execution);
+    REQUIRE((execution.value() == ExecutionStats{
+        .passes_executed = 2,
+        .transitions_recorded = 4,
+    }));
+    REQUIRE((execution_order ==
+        std::vector<std::string>{"TexturedCube", "Skybox"}));
+    REQUIRE(recorder.transitions.size() == 4);
+    REQUIRE(recorder.transitions[0] ==
+        compiled_cube.transitions[0]);
+    REQUIRE(recorder.transitions[1] ==
+        compiled_skybox.transitions[0]);
+    REQUIRE(recorder.transitions[2] ==
+        graph.final_transitions()[0]);
+    REQUIRE(recorder.transitions[3] ==
+        graph.final_transitions()[1]);
 }
 
 TEST_CASE(

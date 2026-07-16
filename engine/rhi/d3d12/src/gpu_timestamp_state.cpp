@@ -35,34 +35,43 @@ core::Result<GpuTimingSample> GpuTimingAccumulator::consume(
     if (raw_timestamps.size() != gpu_timestamp_queries_per_frame) {
         return core::Result<GpuTimingSample>::failure(timestamp_error(
             core::ErrorCode::invalid_argument,
-            "A GPU timing sample requires exactly four timestamps"));
+            "A GPU timing sample requires exactly six timestamps"));
     }
 
     const auto frame_begin =
         raw_timestamps[index_of(GpuTimestampQuery::frame_begin)];
-    const auto pass_begin =
-        raw_timestamps[index_of(GpuTimestampQuery::pass_begin)];
-    const auto pass_end =
-        raw_timestamps[index_of(GpuTimestampQuery::pass_end)];
+    const auto textured_cube_begin = raw_timestamps[
+        index_of(GpuTimestampQuery::textured_cube_begin)];
+    const auto textured_cube_end = raw_timestamps[
+        index_of(GpuTimestampQuery::textured_cube_end)];
+    const auto skybox_begin =
+        raw_timestamps[index_of(GpuTimestampQuery::skybox_begin)];
+    const auto skybox_end =
+        raw_timestamps[index_of(GpuTimestampQuery::skybox_end)];
     const auto frame_end =
         raw_timestamps[index_of(GpuTimestampQuery::frame_end)];
-    if (frame_begin > pass_begin ||
-        pass_begin > pass_end ||
-        pass_end > frame_end) {
+    if (frame_begin > textured_cube_begin ||
+        textured_cube_begin > textured_cube_end ||
+        textured_cube_end > skybox_begin ||
+        skybox_begin > skybox_end ||
+        skybox_end > frame_end) {
         return core::Result<GpuTimingSample>::failure(timestamp_error(
             core::ErrorCode::invalid_state,
-            "GPU timestamps must contain a nested pass interval inside "
-            "the frame interval"));
+            "GPU timestamps must contain ordered textured-cube and "
+            "skybox intervals inside the frame interval"));
     }
 
     const GpuTimingSample sample{
         frame_end - frame_begin,
-        pass_end - pass_begin,
+        textured_cube_end - textured_cube_begin,
+        skybox_end - skybox_begin,
     };
     constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();
     if (sample_count_ == maximum ||
         sample.frame_ticks > maximum - frame_total_ticks_ ||
-        sample.pass_ticks > maximum - pass_total_ticks_) {
+        sample.textured_cube_ticks >
+            maximum - textured_cube_total_ticks_ ||
+        sample.skybox_ticks > maximum - skybox_total_ticks_) {
         return core::Result<GpuTimingSample>::failure(timestamp_error(
             core::ErrorCode::unavailable,
             "GPU timing accumulation would overflow"));
@@ -70,25 +79,34 @@ core::Result<GpuTimingSample> GpuTimingAccumulator::consume(
 
     if (sample_count_ == 0) {
         frame_min_ticks_ = sample.frame_ticks;
-        pass_min_ticks_ = sample.pass_ticks;
+        textured_cube_min_ticks_ = sample.textured_cube_ticks;
+        skybox_min_ticks_ = sample.skybox_ticks;
     } else {
         frame_min_ticks_ = std::min(
             frame_min_ticks_,
             sample.frame_ticks);
-        pass_min_ticks_ = std::min(
-            pass_min_ticks_,
-            sample.pass_ticks);
+        textured_cube_min_ticks_ = std::min(
+            textured_cube_min_ticks_,
+            sample.textured_cube_ticks);
+        skybox_min_ticks_ = std::min(
+            skybox_min_ticks_,
+            sample.skybox_ticks);
     }
     frame_max_ticks_ = std::max(
         frame_max_ticks_,
         sample.frame_ticks);
-    pass_max_ticks_ = std::max(
-        pass_max_ticks_,
-        sample.pass_ticks);
+    textured_cube_max_ticks_ = std::max(
+        textured_cube_max_ticks_,
+        sample.textured_cube_ticks);
+    skybox_max_ticks_ = std::max(
+        skybox_max_ticks_,
+        sample.skybox_ticks);
     frame_last_ticks_ = sample.frame_ticks;
-    pass_last_ticks_ = sample.pass_ticks;
+    textured_cube_last_ticks_ = sample.textured_cube_ticks;
+    skybox_last_ticks_ = sample.skybox_ticks;
     frame_total_ticks_ += sample.frame_ticks;
-    pass_total_ticks_ += sample.pass_ticks;
+    textured_cube_total_ticks_ += sample.textured_cube_ticks;
+    skybox_total_ticks_ += sample.skybox_ticks;
     ++sample_count_;
     return core::Result<GpuTimingSample>::success(sample);
 }
@@ -118,24 +136,48 @@ std::uint64_t GpuTimingAccumulator::frame_last_ticks() const noexcept
     return frame_last_ticks_;
 }
 
-std::uint64_t GpuTimingAccumulator::pass_total_ticks() const noexcept
+std::uint64_t
+GpuTimingAccumulator::textured_cube_total_ticks() const noexcept
 {
-    return pass_total_ticks_;
+    return textured_cube_total_ticks_;
 }
 
-std::uint64_t GpuTimingAccumulator::pass_min_ticks() const noexcept
+std::uint64_t
+GpuTimingAccumulator::textured_cube_min_ticks() const noexcept
 {
-    return pass_min_ticks_;
+    return textured_cube_min_ticks_;
 }
 
-std::uint64_t GpuTimingAccumulator::pass_max_ticks() const noexcept
+std::uint64_t
+GpuTimingAccumulator::textured_cube_max_ticks() const noexcept
 {
-    return pass_max_ticks_;
+    return textured_cube_max_ticks_;
 }
 
-std::uint64_t GpuTimingAccumulator::pass_last_ticks() const noexcept
+std::uint64_t
+GpuTimingAccumulator::textured_cube_last_ticks() const noexcept
 {
-    return pass_last_ticks_;
+    return textured_cube_last_ticks_;
+}
+
+std::uint64_t GpuTimingAccumulator::skybox_total_ticks() const noexcept
+{
+    return skybox_total_ticks_;
+}
+
+std::uint64_t GpuTimingAccumulator::skybox_min_ticks() const noexcept
+{
+    return skybox_min_ticks_;
+}
+
+std::uint64_t GpuTimingAccumulator::skybox_max_ticks() const noexcept
+{
+    return skybox_max_ticks_;
+}
+
+std::uint64_t GpuTimingAccumulator::skybox_last_ticks() const noexcept
+{
+    return skybox_last_ticks_;
 }
 
 } // namespace shark::rhi::d3d12::detail

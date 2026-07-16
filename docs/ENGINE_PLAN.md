@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 16, 2026
-- **Completed through:** `S-001` - DDS cubemap loading
-- **Next increment:** `S-002` - cubemap skybox rendering
+- **Completed through:** `S-002` - cubemap skybox rendering
+- **Next increment:** `T-001` - deterministic heightmapped terrain tile
 
 ## 1. Project direction
 
@@ -302,16 +302,17 @@ unstable circular solve; iterative two-way coupling is a later milestone.
   descriptors, timestamps, and a completion set containing every queue fence
   that guards reuse. G-003 establishes one allocator, bounded upload/CPU
   descriptor staging, and one direct-fence checkpoint per context while sharing
-  one graphics command list. G-007 adds one fixed four-query timestamp/readback
-  slice per context, backed by one 12-query heap and one 96-byte buffer, and
+  one graphics command list. S-002 uses one fixed six-query timestamp/readback
+  slice per context, backed by one 18-query heap and one 144-byte buffer, and
   reuses each slice only after the same direct-fence checkpoint completes.
   Multi-queue completion sets remain later.
 - Defer destruction of GPU resources, descriptors, pipelines, and upload storage
   until every relevant queue fence in their retirement set completes. G-003
   verifies whole-context transient reuse. G-005 creates one persistent root
   signature/PSO, cube vertex/index buffers, checker texture/SRV, and resize-owned
-  depth target. S-001 adds one persistent six-face cubemap and cube SRV to the
-  same bounded static-upload submission; shutdown releases every persistent
+  depth target. S-002 adds a second immutable PSO that renders S-001's
+  persistent six-face cubemap while reusing the same geometry and bounded
+  static-upload submission; shutdown releases every persistent
   object after the final drain. Generic fence-keyed deferred destruction
   remains later.
 
@@ -326,7 +327,7 @@ unstable circular solve; iterative two-way coupling is a later milestone.
   persistent indices; recycle slots only after their fences complete. Begin
   with conventional descriptor tables while keeping handles bindless-ready.
   G-005 proves the checker at shader-visible SRV slot 0 and one static sampler.
-  S-001 reserves cubemap slot 1 without changing the current root table; the
+  S-002 points the same one-entry root table at cubemap slot 1 for `Skybox`; the
   stable-index allocator remains future work.
 - Keep CPU-only RTV and DSV allocators separate.
 - Add upload and readback arenas, with a per-frame linear upload ring.
@@ -345,16 +346,17 @@ unstable circular solve; iterative two-way coupling is a later milestone.
 - Begin with a small shared root-signature convention using descriptor tables and
   frame/pass constants. Direct heap indexing becomes a separate capability-gated
   increment only after Shader Model 6.6, Binding Tier 3, and a real scale need are
-  confirmed. G-005 establishes the first narrow convention: one root CBV for
-  the row-major camera `view_projection` matrix, one single-SRV descriptor
-  table, and one static sampler. This is not yet a versioned renderer-wide
+  confirmed. S-002's narrow convention is one root CBV for the row-major scene
+  and translation-free sky matrices, one single-SRV descriptor table, and one
+  static sampler. This is not yet a versioned renderer-wide
   layout.
 - Key shader artifacts by source/include hashes, entry point, target, defines,
   flags, compiler version, and root-signature version.
 - Cache immutable PSOs by structural hash; never compile a surprise PSO in the
   middle of a render pass. G-005 creates one immutable cube/depth PSO
   synchronously during presentation startup; generalized artifact keys and PSO
-  caching remain later.
+  caching remain later. S-002 creates a second immutable skybox PSO from pinned
+  build-time DXIL and never compiles pipeline state inside the frame loop.
 - Add development hot reload only after the offline build pipeline is reliable.
 
 ### Render graph growth
@@ -369,8 +371,8 @@ It grows in three deliberate stages:
 
 1. **Simple:** direct queue, imported committed resources, declaration
    validation, stable hazard-aware topological compilation, cycle rejection,
-   and centralized legacy barrier encoding. G-006 completes this first form
-   with one `TexturedCube` pass.
+   and centralized legacy barrier encoding. S-002 keeps this first form and
+   executes ordered `TexturedCube` and `Skybox` passes.
 2. **Managed:** lifetime analysis, graph-owned transient placed resources,
    resource pooling, subresource scopes, and aliasing.
 3. **Optimized:** pass merging, parallel recording, and compute/copy scheduling
@@ -384,11 +386,12 @@ across resources or frames.
 ### Diagnostics from the first executable
 
 - check every `HRESULT` and name every significant D3D12 object;
-- add PIX markers around every pass and major upload; G-007 names the current
-  `StaticCubeUpload`, `Frame`, and `TexturedCube` boundaries;
+- add PIX markers around every pass and major upload; S-002 names the current
+  `StaticCubeUpload`, `Frame`, `TexturedCube`, and `Skybox` boundaries;
 - expose per-pass CPU/GPU timestamps, draws, dispatches, descriptors, memory,
   and queue waits; G-007 begins with direct-queue GPU intervals for the frame
-  and its only pass, while CPU timings and broader counters remain later;
+  plus separate `TexturedCube` and `Skybox` intervals, while CPU timings and
+  broader counters remain later;
 - keep a WARP smoke path for device creation and a deterministic basic frame;
 - treat zero debug-layer errors as an acceptance gate; and
 - test real graphics on both the discrete and integrated adapters when their
@@ -497,7 +500,7 @@ architecture folders are not committed merely to make the tree look complete.
 |-- shaders/
 |   |-- shared/
 |   |-- cube/                 # First camera/depth/resource-bound HLSL proof
-|   |-- sky/
+|   |-- sky/                  # Static cubemap background HLSL proof
 |   |-- terrain/
 |   |-- rain/
 |   `-- water/
@@ -699,27 +702,19 @@ entity scale or query patterns make it useful.
 
 ## 14. Immediate next increment
 
-After `S-001` is reviewed and committed by the owner, implement only `S-002`:
+After `S-002` is reviewed and committed by the owner, implement only `T-001`:
 
-- add a dedicated build-time HLSL skybox pipeline that samples the persistent
-  texture-cube SRV created by S-001;
-- render one named `Skybox` graph pass with a depth policy that fills untouched
-  far-depth pixels without obscuring the existing textured cube;
-- remove camera translation from the sky view while preserving camera
-  rotation, the right-handed `+Y`-up/`-Z`-forward convention, reversed-Z, and
-  the DDS face orientation proven by S-001;
-- extend PIX, timestamp, graph, draw, resize, minimize, hardware/WARP, and
-  GPU-validation accounting for exactly two visible passes while retaining
-  bounded frame-context storage and no normal-frame drain;
-- add focused CPU tests for translation invariance and sky matrix/depth
-  construction plus a clear manual face-orientation acceptance procedure; and
-- stop before HDR conversion, image-based lighting, procedural atmosphere,
-  clouds, terrain, rain, general material loading, texture streaming, or a
-  content database.
+- add one deterministic height tile with inspectable bounds and normals;
+- render it in solid and wireframe diagnostic modes through the established
+  camera, depth, graph, shader, and diagnostics contracts;
+- retain the visible skybox and checker-cube baseline while keeping the change
+  independently reviewable; and
+- stop before canonical CPU terrain queries (`T-002`), PBR materials, chunks,
+  LOD, streaming, collision, weather, or fluid coupling.
 
-`S-001` now owns the first licensed file-backed texture path and persistent GPU
-cubemap resource without changing the visible checker-cube frame. `S-002` will
-turn that validated resource into Shark's second visible rendering feature.
+`S-002` completes M2: rotation changes the visible cubemap, translation does
+not, the cube remains in front through read-only reversed-Z depth, and both
+named passes are covered by hardware/WARP validation and bounded diagnostics.
 
 ## 15. Primary technical references
 

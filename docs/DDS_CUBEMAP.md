@@ -1,14 +1,14 @@
 # DDS Cubemap Asset and Upload Contract
 
-- **Completed through:** `S-001`
+- **Completed through:** `S-002`
 - **Last verified:** July 16, 2026
 
 S-001 establishes Shark's first file-backed texture asset. It loads one
 project-owned DDS cubemap into CPU-owned engine records, preserves explicit
 linear/sRGB semantics, uploads every face and mip through the existing startup
-submission, and creates a persistent texture-cube SRV. The current
-`TexturedCube` pass still draws only the procedural checker; S-002 will render
-the cubemap as a skybox.
+submission, and creates a persistent texture-cube SRV. S-002 now declares that
+persistent resource as an exact pixel-shader read and renders it through the
+named `Skybox` pass.
 
 ## Tracked orientation fixture
 
@@ -127,10 +127,11 @@ Startup then:
    preserving the checker at slot 0; and
 7. creates one `D3D12_SRV_DIMENSION_TEXTURECUBE` SRV at slot 1.
 
-The root signature still exposes one SRV table entry and the current pass still
-binds heap slot 0. Slot 1 is persistent startup state reserved for S-002; no
-new frame-graph resource, pass, barrier, timestamp, draw, or normal-frame wait
-is introduced.
+The root signature still exposes one SRV table entry. `TexturedCube` points it
+at checker slot 0, while `Skybox` points it at cubemap slot 1. The frame graph
+imports both persistent textures in exact `pixel_shader_read` state and each
+pass declares its own read. S-002 adds no texture transition because both
+resources remain in `D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE`.
 
 ## Verification
 
@@ -139,8 +140,9 @@ orientation, face/mip indexing, explicit linear and sRGB handling, partial and
 complete mip chains, missing-file errors, and rejection of malformed
 dimensions, faces, arrays, formats, color spaces, payload sizes, and mip data.
 
-The hardware, packaged-WARP, and packaged-WARP GPU-validation presentation
-smokes retain all G-007 frame invariants and additionally require:
+Every hardware, packaged-WARP, and focused packaged-WARP GPU-validation
+presentation submission retains the G-007 per-frame invariants and additionally
+requires:
 
 ```text
 cubemap_texture_creations == 1
@@ -155,14 +157,17 @@ cubemap_srgb_resources == 1
 ```
 
 The startup path remains exactly one static submission, one `StaticCubeUpload`
-PIX event, and one bounded initialization wait. The normal frame graph remains
-one `TexturedCube` pass with two back-buffer transitions and four timestamps
-per submitted frame.
+PIX event, and one bounded initialization wait. The normal frame graph now has
+four imports, ordered `TexturedCube`/`Skybox` passes, four attachment
+transitions, six elided same-state transitions, and six timestamps per frame.
+Hardware and normal WARP execute 1,000 successful presents; focused WARP with
+GPU-based validation executes 120 presents, retaining resize and rotation while
+intentionally skipping the normal paths' minimize/restore interval, with a
+180-second internal deadline and 240-second CTest timeout.
 
 ## Explicit non-goals
 
-S-001 does not draw the skybox, modify shaders or the root signature, import
-the cubemap into the frame graph, generate mips, convert HDR images, build
-irradiance/specular maps, stream textures, compress content, load general 2D
-materials, create asset IDs or caches, or establish a general descriptor
-allocator. Those capabilities enter only through later focused increments.
+S-002 does not generate mips, convert HDR images, build irradiance/specular
+maps, stream textures, compress content, load general 2D materials, create asset
+IDs or caches, or establish a general descriptor allocator. See
+[the skybox contract](SKYBOX.md) for the visible use of this asset.

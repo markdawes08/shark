@@ -94,10 +94,11 @@ Selection rules are strict:
 `--gpu-smoke` and `--capabilities` create no window and exit after device
 verification. `--present-smoke` accepts the normal GPU selectors and optional
 GPU-based validation, creates a real window, presents exactly 1,000 successful
-indexed-cube frames, verifies camera/depth/resource/graph lifecycles, and exits.
-The default interactive path keeps the device alive while the G-005 free-fly
-camera and textured-cube scene run as the G-006 graph's `TexturedCube` pass
-until the window is closed.
+frames containing both the indexed cube and skybox, verifies
+camera/depth/resource/graph lifecycles, and exits. The default interactive path
+keeps the device alive while the free-fly camera, textured cube, and diagnostic
+cubemap sky run as the graph's `TexturedCube` and `Skybox` passes until the
+window is closed.
 
 ## Required and optional capabilities
 
@@ -171,13 +172,15 @@ owner-scoped graph declarations, stable hazard-aware ordering,
 cycle/access/failure validation, transition elision, exact legacy state
 mapping/alias handling, and native binding rejection.
 The presentation smoke additionally verifies all three frame contexts are
-reused, every submission compiles and executes exactly one graph pass with two
-imports and two barriers, and every submission retires during explicit
-shutdown before frame resources are released.
+reused, every submission compiles and executes exactly two graph passes with
+four imports, one dependency, four emitted barriers, and six elided barriers,
+and every submission retires during explicit shutdown before frame resources
+are released.
 
 Presentation shutdown explicitly drains and releases its command list, cube
-PSO/root signature, checker descriptor heap and texture, vertex/index buffers,
-depth texture/DSV, swap-chain resources, and frame contexts before
+and skybox PSOs, root signature, descriptor heap, checker/cubemap textures,
+vertex/index buffers, depth texture/DSVs, swap-chain resources, and frame
+contexts before
 `Device::validate_debug_state` checks new D3D12 and DXGI messages plus live
 D3D12 child objects. Debug and Release must both build and pass all registered
 tests with zero DirectX corruption or error messages. See the

@@ -26,6 +26,12 @@ TEST_CASE(
         legacy_resource_state(ResourceState::depth_write).value() ==
         D3D12_RESOURCE_STATE_DEPTH_WRITE);
     REQUIRE(
+        legacy_resource_state(ResourceState::depth_read).value() ==
+        D3D12_RESOURCE_STATE_DEPTH_READ);
+    REQUIRE(
+        legacy_resource_state(ResourceState::pixel_shader_read).value() ==
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    REQUIRE(
         legacy_resource_state(ResourceState::shader_read).value() ==
         D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);
     REQUIRE(
@@ -76,6 +82,40 @@ TEST_CASE(
     REQUIRE(
         barrier.Transition.StateAfter ==
         D3D12_RESOURCE_STATE_RENDER_TARGET);
+}
+
+TEST_CASE(
+    "legacy render graph barriers transition depth for skybox reads",
+    "[gpu][render-graph][barrier][skybox]")
+{
+    using namespace shark;
+    using namespace rhi::d3d12::detail;
+
+    constexpr render_graph::ExternalResourceId depth_id{9};
+    auto* const resource = reinterpret_cast<ID3D12Resource*>(
+        std::uintptr_t{0x3000});
+    const std::array resources{
+        RenderGraphResourceBinding{depth_id, resource},
+    };
+    const render_graph::ResourceTransition transition{
+        render_graph::ResourceHandle{},
+        depth_id,
+        render_graph::ResourceState::depth_write,
+        render_graph::ResourceState::depth_read,
+    };
+
+    const auto result = make_legacy_transition_barrier(
+        transition,
+        resources);
+    REQUIRE(result);
+    const auto& barrier = result.value();
+    REQUIRE(barrier.Transition.pResource == resource);
+    REQUIRE(
+        barrier.Transition.StateBefore ==
+        D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    REQUIRE(
+        barrier.Transition.StateAfter ==
+        D3D12_RESOURCE_STATE_DEPTH_READ);
 }
 
 TEST_CASE(

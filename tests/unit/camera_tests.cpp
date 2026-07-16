@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
+#include <cstddef>
 #include <limits>
 
 namespace {
@@ -229,6 +230,14 @@ TEST_CASE(
     REQUIRE(
         matrices.value().projection.elements[1][1] ==
         Catch::Approx(square.value().projection.elements[1][1]));
+    REQUIRE(
+        matrices.value().sky_view_projection.elements[0][0] ==
+        Catch::Approx(
+            square.value().sky_view_projection.elements[0][0] * 0.5F));
+    REQUIRE(
+        matrices.value().sky_view_projection.elements[1][1] ==
+        Catch::Approx(
+            square.value().sky_view_projection.elements[1][1]));
 
     const math::Float4 world_point{0.0F, 0.0F, 3.0F, 1.0F};
     const auto sequential = math::transform(
@@ -241,6 +250,93 @@ TEST_CASE(
     REQUIRE(composed.y == Catch::Approx(sequential.y));
     REQUIRE(composed.z == Catch::Approx(sequential.z));
     REQUIRE(composed.w == Catch::Approx(sequential.w));
+}
+
+TEST_CASE(
+    "sky view projection ignores camera translation",
+    "[world][camera][skybox]")
+{
+    using namespace shark;
+
+    world::Camera first;
+    first.transform.position = {12.0F, -7.0F, 31.0F};
+    first.transform.yaw_radians = math::pi / 5.0F;
+    first.transform.pitch_radians = -math::pi / 8.0F;
+
+    auto translated = first;
+    translated.transform.position = {-900.0F, 250.0F, 0.125F};
+
+    const auto first_matrices = world::build_camera_matrices(
+        first,
+        16.0F / 9.0F);
+    const auto translated_matrices = world::build_camera_matrices(
+        translated,
+        16.0F / 9.0F);
+    REQUIRE(first_matrices);
+    REQUIRE(translated_matrices);
+
+    bool ordinary_view_projection_changed = false;
+    for (std::size_t row = 0; row < 4; ++row) {
+        for (std::size_t column = 0; column < 4; ++column) {
+            const auto first_sky = first_matrices.value()
+                .sky_view_projection.elements[row][column];
+            const auto translated_sky = translated_matrices.value()
+                .sky_view_projection.elements[row][column];
+            REQUIRE(translated_sky == Catch::Approx(first_sky));
+
+            if (translated_matrices.value()
+                    .view_projection.elements[row][column] !=
+                first_matrices.value()
+                    .view_projection.elements[row][column]) {
+                ordinary_view_projection_changed = true;
+            }
+        }
+    }
+    REQUIRE(ordinary_view_projection_changed);
+}
+
+TEST_CASE(
+    "sky view projection follows camera rotation",
+    "[world][camera][skybox]")
+{
+    using namespace shark;
+
+    const auto projects_forward_to_center = [](
+        const world::Camera& camera) {
+        const auto matrices = world::build_camera_matrices(camera, 1.6F);
+        REQUIRE(matrices);
+        const auto forward = world::camera_basis(camera.transform).forward;
+        const auto clip = math::transform(
+            math::Float4{forward.x, forward.y, forward.z, 1.0F},
+            matrices.value().sky_view_projection);
+        REQUIRE(clip.w > 0.0F);
+        REQUIRE(clip.x / clip.w ==
+            Catch::Approx(0.0F).margin(0.00001F));
+        REQUIRE(clip.y / clip.w ==
+            Catch::Approx(0.0F).margin(0.00001F));
+        return matrices.value().sky_view_projection;
+    };
+
+    world::Camera default_camera;
+    const auto default_sky = projects_forward_to_center(default_camera);
+
+    world::Camera rotated_camera;
+    rotated_camera.transform.yaw_radians = math::half_pi;
+    rotated_camera.transform.pitch_radians = math::pi / 6.0F;
+    const auto rotated_sky = projects_forward_to_center(rotated_camera);
+
+    bool rotation_changed_sky = false;
+    for (std::size_t row = 0; row < 4; ++row) {
+        for (std::size_t column = 0; column < 4; ++column) {
+            if (rotated_sky.elements[row][column] !=
+                default_sky.elements[row][column]) {
+                rotation_changed_sky = true;
+            }
+        }
+    }
+    REQUIRE(rotation_changed_sky);
+    REQUIRE(math::is_finite(default_sky));
+    REQUIRE(math::is_finite(rotated_sky));
 }
 
 TEST_CASE(

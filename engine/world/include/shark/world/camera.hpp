@@ -35,6 +35,7 @@ struct CameraMatrices final {
     math::Matrix4x4 view;
     math::Matrix4x4 projection;
     math::Matrix4x4 view_projection;
+    math::Matrix4x4 sky_view_projection;
 };
 
 struct CameraMotion final {

@@ -166,9 +166,17 @@ core::Result<CameraMatrices> build_camera_matrices(
         camera.lens,
         aspect_ratio);
     const auto view_projection = math::multiply(view, projection);
+    auto sky_view = view;
+    sky_view.elements[3][0] = 0.0F;
+    sky_view.elements[3][1] = 0.0F;
+    sky_view.elements[3][2] = 0.0F;
+    const auto sky_view_projection = math::multiply(
+        sky_view,
+        projection);
     if (!math::is_finite(view) ||
         !math::is_finite(projection) ||
-        !math::is_finite(view_projection)) {
+        !math::is_finite(view_projection) ||
+        !math::is_finite(sky_view_projection)) {
         return core::Result<CameraMatrices>::failure(camera_error(
             "Camera matrix construction produced non-finite values"));
     }
@@ -177,6 +185,7 @@ core::Result<CameraMatrices> build_camera_matrices(
         view,
         projection,
         view_projection,
+        sky_view_projection,
     });
 }
 

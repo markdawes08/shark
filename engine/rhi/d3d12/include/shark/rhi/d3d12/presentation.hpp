@@ -64,12 +64,15 @@ struct PresentationConfig final {
     ClearColor clear_color{};
     ShaderBytecodeView vertex_shader{};
     ShaderBytecodeView pixel_shader{};
+    ShaderBytecodeView skybox_vertex_shader{};
+    ShaderBytecodeView skybox_pixel_shader{};
     TextureCubeUploadView startup_cubemap{};
     bool synchronize_to_vertical_refresh{true};
 };
 
 struct PresentationFrameData final {
     math::Matrix4x4 view_projection{};
+    math::Matrix4x4 sky_view_projection{};
 };
 
 enum class PresentStatus : std::uint8_t {
@@ -98,10 +101,14 @@ struct PresentationStats final {
     std::uint64_t render_graph_executions{};
     std::uint64_t render_graph_resource_imports{};
     std::uint64_t render_graph_pass_executions{};
+    std::uint64_t render_graph_dependencies{};
     std::uint64_t render_graph_transition_barriers{};
+    std::uint64_t render_graph_elided_transitions{};
     std::uint64_t pix_static_upload_events{};
     std::uint64_t pix_frame_events{};
     std::uint64_t pix_pass_events{};
+    std::uint64_t pix_textured_cube_events{};
+    std::uint64_t pix_skybox_events{};
     std::uint64_t gpu_timestamp_frequency_hz{};
     std::uint64_t timestamp_query_capacity{};
     std::uint64_t timestamp_query_high_water{};
@@ -112,16 +119,24 @@ struct PresentationStats final {
     std::uint64_t gpu_frame_min_ticks{};
     std::uint64_t gpu_frame_max_ticks{};
     std::uint64_t gpu_frame_last_ticks{};
-    std::uint64_t gpu_pass_total_ticks{};
-    std::uint64_t gpu_pass_min_ticks{};
-    std::uint64_t gpu_pass_max_ticks{};
-    std::uint64_t gpu_pass_last_ticks{};
+    std::uint64_t gpu_textured_cube_total_ticks{};
+    std::uint64_t gpu_textured_cube_min_ticks{};
+    std::uint64_t gpu_textured_cube_max_ticks{};
+    std::uint64_t gpu_textured_cube_last_ticks{};
+    std::uint64_t gpu_skybox_total_ticks{};
+    std::uint64_t gpu_skybox_min_ticks{};
+    std::uint64_t gpu_skybox_max_ticks{};
+    std::uint64_t gpu_skybox_last_ticks{};
     std::uint64_t cube_draw_calls{};
     std::uint64_t cube_indices{};
+    std::uint64_t skybox_draw_calls{};
+    std::uint64_t skybox_indices{};
     std::uint64_t camera_constant_updates{};
     std::uint64_t camera_matrix_changes{};
+    std::uint64_t skybox_matrix_changes{};
     std::uint64_t depth_clear_count{};
     std::uint64_t depth_resource_creations{};
+    std::uint64_t depth_read_view_creations{};
     std::uint64_t texture_bindings{};
     std::uint64_t static_upload_submissions{};
     std::uint64_t geometry_buffer_creations{};

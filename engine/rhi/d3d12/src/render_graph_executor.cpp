@@ -74,6 +74,12 @@ core::Result<D3D12_RESOURCE_STATES> legacy_resource_state(
     case ResourceState::depth_write:
         return core::Result<D3D12_RESOURCE_STATES>::success(
             D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    case ResourceState::depth_read:
+        return core::Result<D3D12_RESOURCE_STATES>::success(
+            D3D12_RESOURCE_STATE_DEPTH_READ);
+    case ResourceState::pixel_shader_read:
+        return core::Result<D3D12_RESOURCE_STATES>::success(
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     case ResourceState::shader_read:
         return core::Result<D3D12_RESOURCE_STATES>::success(
             D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);

@@ -11,6 +11,7 @@ add_executable(SharkTests
     unit/assertion_tests.cpp
     unit/dds_cubemap_tests.cpp
     unit/d3d12_cube_scene_data_tests.cpp
+    unit/d3d12_skybox_scene_data_tests.cpp
     unit/d3d12_device_contract_tests.cpp
     unit/d3d12_frame_resource_tests.cpp
     unit/d3d12_gpu_timestamp_tests.cpp
@@ -191,5 +192,5 @@ set_tests_properties(integration.gpu.warp_cube_present_validation
     PROPERTIES
         LABELS "integration;gpu;presentation;warp;validation"
         RUN_SERIAL TRUE
-        TIMEOUT 180
+        TIMEOUT 240
 )

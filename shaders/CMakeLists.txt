@@ -2,6 +2,8 @@ set(cube_shader_source
     "${CMAKE_CURRENT_SOURCE_DIR}/cube/cube.hlsl")
 set(cube_shader_include
     "${CMAKE_CURRENT_SOURCE_DIR}/shared/camera_constants.hlsli")
+set(skybox_shader_source
+    "${CMAKE_CURRENT_SOURCE_DIR}/sky/skybox.hlsl")
 
 shark_compile_hlsl(
     SOURCE "${cube_shader_source}"
@@ -45,6 +47,48 @@ add_custom_target(SharkCubeShaders
 )
 set_property(TARGET SharkCubeShaders PROPERTY FOLDER "Shark/Shaders")
 
+shark_compile_hlsl(
+    SOURCE "${skybox_shader_source}"
+    ENTRY_POINT VSMain
+    PROFILE vs_6_0
+    OUTPUT_NAME skybox.vertex
+    SYMBOL shark_skybox_vertex_shader
+    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+set(skybox_vertex_binary "${SHARK_SHADER_BINARY}")
+set(skybox_vertex_header "${SHARK_SHADER_HEADER}")
+set(skybox_vertex_pdb "${SHARK_SHADER_PDB}")
+set(skybox_vertex_depfile "${SHARK_SHADER_DEPFILE}")
+
+shark_compile_hlsl(
+    SOURCE "${skybox_shader_source}"
+    ENTRY_POINT PSMain
+    PROFILE ps_6_0
+    OUTPUT_NAME skybox.pixel
+    SYMBOL shark_skybox_pixel_shader
+    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+set(skybox_pixel_binary "${SHARK_SHADER_BINARY}")
+set(skybox_pixel_header "${SHARK_SHADER_HEADER}")
+set(skybox_pixel_pdb "${SHARK_SHADER_PDB}")
+set(skybox_pixel_depfile "${SHARK_SHADER_DEPFILE}")
+
+add_custom_target(SharkSkyboxShaders
+    DEPENDS
+        "${skybox_vertex_binary}"
+        "${skybox_vertex_depfile}"
+        "${skybox_vertex_header}"
+        "${skybox_vertex_pdb}"
+        "${skybox_pixel_binary}"
+        "${skybox_pixel_depfile}"
+        "${skybox_pixel_header}"
+        "${skybox_pixel_pdb}"
+    SOURCES
+        "${skybox_shader_source}"
+        "${cube_shader_include}"
+)
+set_property(TARGET SharkSkyboxShaders PROPERTY FOLDER "Shark/Shaders")
+
 set(SHARK_CUBE_SHADER_TARGET
     SharkCubeShaders
     PARENT_SCOPE
@@ -67,6 +111,30 @@ set(SHARK_CUBE_VERTEX_DEPFILE
 )
 set(SHARK_CUBE_PIXEL_DEPFILE
     "${cube_pixel_depfile}"
+    PARENT_SCOPE
+)
+set(SHARK_SKYBOX_SHADER_TARGET
+    SharkSkyboxShaders
+    PARENT_SCOPE
+)
+set(SHARK_SKYBOX_SHADER_INCLUDE_DIRECTORY
+    "${CMAKE_BINARY_DIR}/generated/shaders/$<CONFIG>"
+    PARENT_SCOPE
+)
+set(SHARK_SKYBOX_VERTEX_HEADER
+    "${skybox_vertex_header}"
+    PARENT_SCOPE
+)
+set(SHARK_SKYBOX_PIXEL_HEADER
+    "${skybox_pixel_header}"
+    PARENT_SCOPE
+)
+set(SHARK_SKYBOX_VERTEX_DEPFILE
+    "${skybox_vertex_depfile}"
+    PARENT_SCOPE
+)
+set(SHARK_SKYBOX_PIXEL_DEPFILE
+    "${skybox_pixel_depfile}"
     PARENT_SCOPE
 )
 

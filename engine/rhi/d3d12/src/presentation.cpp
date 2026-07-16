@@ -3,6 +3,7 @@
 #include "frame_resource_state.hpp"
 #include "gpu_timestamp_state.hpp"
 #include "render_graph_executor.hpp"
+#include "skybox_scene_data.hpp"
 
 #include <directx/d3d12.h>
 #include <dxgi1_6.h>
@@ -53,18 +54,22 @@ constexpr UINT64 timestamp_readback_bytes =
 constexpr std::size_t frame_probe_bytes =
     D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT;
 constexpr std::size_t camera_matrix_bytes = sizeof(math::Matrix4x4);
-constexpr std::size_t frame_probe_offset = camera_matrix_bytes;
+constexpr std::size_t camera_constants_bytes = camera_matrix_bytes * 2U;
+constexpr std::size_t frame_probe_offset = camera_constants_bytes;
 constexpr UINT root_camera_constants = 0;
 constexpr UINT root_checker_texture = 1;
 constexpr std::uint32_t cubemap_face_count = 6;
 constexpr std::size_t rgba8_bytes_per_pixel = 4;
 constexpr render_graph::ExternalResourceId graph_back_buffer_id{1};
 constexpr render_graph::ExternalResourceId graph_depth_buffer_id{2};
+constexpr render_graph::ExternalResourceId graph_checker_texture_id{3};
+constexpr render_graph::ExternalResourceId graph_cubemap_id{4};
 
 static_assert(back_buffer_count <= 32);
 static_assert(camera_matrix_bytes == 64);
-static_assert(timestamp_query_count == 12);
-static_assert(timestamp_readback_bytes == 96);
+static_assert(camera_constants_bytes == 128);
+static_assert(timestamp_query_count == 18);
+static_assert(timestamp_readback_bytes == 144);
 
 class PixCommandListEvent final {
 public:
@@ -263,7 +268,8 @@ static_assert(
 [[nodiscard]] bool valid_frame_data(
     const PresentationFrameData& frame_data) noexcept
 {
-    return math::is_finite(frame_data.view_projection);
+    return math::is_finite(frame_data.view_projection) &&
+        math::is_finite(frame_data.sky_view_projection);
 }
 
 [[nodiscard]] D3D12_BLEND_DESC opaque_blend_description() noexcept
@@ -325,6 +331,15 @@ static_assert(
     description.StencilWriteMask = D3D12_DEFAULT_STENCIL_WRITE_MASK;
     description.FrontFace = disabled_stencil;
     description.BackFace = disabled_stencil;
+    return description;
+}
+
+[[nodiscard]] D3D12_DEPTH_STENCIL_DESC skybox_depth_description()
+    noexcept
+{
+    auto description = reversed_depth_description();
+    description.DepthWriteMask = detail::skybox_depth_write_mask;
+    description.DepthFunc = detail::skybox_depth_comparison;
     return description;
 }
 
@@ -557,7 +572,7 @@ public:
             return core::Result<UINT>::failure(graphics_error(
                 core::ErrorCode::invalid_state,
                 "The frame timestamp allocator returned an invalid "
-                "four-query slice"));
+                "six-query slice"));
         }
 
         context.timestamp_query_base =
@@ -616,14 +631,22 @@ public:
             gpu_timing.frame_max_ticks();
         statistics.gpu_frame_last_ticks =
             gpu_timing.frame_last_ticks();
-        statistics.gpu_pass_total_ticks =
-            gpu_timing.pass_total_ticks();
-        statistics.gpu_pass_min_ticks =
-            gpu_timing.pass_min_ticks();
-        statistics.gpu_pass_max_ticks =
-            gpu_timing.pass_max_ticks();
-        statistics.gpu_pass_last_ticks =
-            gpu_timing.pass_last_ticks();
+        statistics.gpu_textured_cube_total_ticks =
+            gpu_timing.textured_cube_total_ticks();
+        statistics.gpu_textured_cube_min_ticks =
+            gpu_timing.textured_cube_min_ticks();
+        statistics.gpu_textured_cube_max_ticks =
+            gpu_timing.textured_cube_max_ticks();
+        statistics.gpu_textured_cube_last_ticks =
+            gpu_timing.textured_cube_last_ticks();
+        statistics.gpu_skybox_total_ticks =
+            gpu_timing.skybox_total_ticks();
+        statistics.gpu_skybox_min_ticks =
+            gpu_timing.skybox_min_ticks();
+        statistics.gpu_skybox_max_ticks =
+            gpu_timing.skybox_max_ticks();
+        statistics.gpu_skybox_last_ticks =
+            gpu_timing.skybox_last_ticks();
         context.timestamp_results_pending = false;
         return core::Result<void>::success();
     }
@@ -750,6 +773,10 @@ public:
             destination,
             &frame_data.view_projection,
             camera_matrix_bytes);
+        std::memcpy(
+            destination + camera_matrix_bytes,
+            &frame_data.sky_view_projection,
+            camera_matrix_bytes);
         const FrameProbe probe{
             statistics.frame_context_acquisitions,
             context.state.generation(),
@@ -789,6 +816,18 @@ public:
                 camera_matrix_bytes);
             has_last_camera_matrix = true;
         }
+        if (!has_last_skybox_matrix ||
+            std::memcmp(
+                last_skybox_matrix.data(),
+                &frame_data.sky_view_projection,
+                camera_matrix_bytes) != 0) {
+            ++statistics.skybox_matrix_changes;
+            std::memcpy(
+                last_skybox_matrix.data(),
+                &frame_data.sky_view_projection,
+                camera_matrix_bytes);
+            has_last_skybox_matrix = true;
+        }
         ++statistics.upload_allocations;
         statistics.upload_bytes_written += upload.size;
         statistics.upload_high_water_bytes = std::max(
@@ -807,6 +846,7 @@ public:
         const render_graph::PassContext& pass_context,
         const render_graph::ResourceHandle back_buffer_resource,
         const render_graph::ResourceHandle depth_buffer_resource,
+        const render_graph::ResourceHandle checker_texture_resource,
         FrameContext& context,
         const UINT back_buffer_index,
         const UINT timestamp_query_base)
@@ -823,8 +863,16 @@ public:
             return core::Result<void>::failure(
                 std::move(depth_buffer_access).error());
         }
+        auto checker_texture_access =
+            pass_context.read(checker_texture_resource);
+        if (!checker_texture_access) {
+            return core::Result<void>::failure(
+                std::move(checker_texture_access).error());
+        }
         if (back_buffer_access.value() != graph_back_buffer_id ||
-            depth_buffer_access.value() != graph_depth_buffer_id) {
+            depth_buffer_access.value() != graph_depth_buffer_id ||
+            checker_texture_access.value() !=
+                graph_checker_texture_id) {
             return core::Result<void>::failure(graphics_error(
                 core::ErrorCode::invalid_state,
                 "The textured-cube pass resolved unexpected graph "
@@ -840,7 +888,7 @@ public:
             D3D12_QUERY_TYPE_TIMESTAMP,
             timestamp_query_index(
                 timestamp_query_base,
-                detail::GpuTimestampQuery::pass_begin));
+                detail::GpuTimestampQuery::textured_cube_begin));
 
         auto render_target =
             rtv_heap->GetCPUDescriptorHandleForHeapStart();
@@ -925,7 +973,126 @@ public:
             D3D12_QUERY_TYPE_TIMESTAMP,
             timestamp_query_index(
                 timestamp_query_base,
-                detail::GpuTimestampQuery::pass_end));
+                detail::GpuTimestampQuery::textured_cube_end));
+        pass_event.end();
+
+        return core::Result<void>::success();
+    }
+
+    [[nodiscard]] core::Result<void> record_skybox_pass(
+        const render_graph::PassContext& pass_context,
+        const render_graph::ResourceHandle back_buffer_resource,
+        const render_graph::ResourceHandle depth_buffer_resource,
+        const render_graph::ResourceHandle cubemap_resource,
+        FrameContext& context,
+        const UINT back_buffer_index,
+        const UINT timestamp_query_base)
+    {
+        auto back_buffer_access = pass_context.write(
+            back_buffer_resource);
+        if (!back_buffer_access) {
+            return core::Result<void>::failure(
+                std::move(back_buffer_access).error());
+        }
+        auto depth_buffer_access = pass_context.read(
+            depth_buffer_resource);
+        if (!depth_buffer_access) {
+            return core::Result<void>::failure(
+                std::move(depth_buffer_access).error());
+        }
+        auto cubemap_access = pass_context.read(cubemap_resource);
+        if (!cubemap_access) {
+            return core::Result<void>::failure(
+                std::move(cubemap_access).error());
+        }
+        if (back_buffer_access.value() != graph_back_buffer_id ||
+            depth_buffer_access.value() != graph_depth_buffer_id ||
+            cubemap_access.value() != graph_cubemap_id) {
+            return core::Result<void>::failure(graphics_error(
+                core::ErrorCode::invalid_state,
+                "The skybox pass resolved unexpected graph resource "
+                "bindings"));
+        }
+
+        PixCommandListEvent pass_event{
+            command_list.Get(),
+            3,
+            "Skybox"};
+        command_list->EndQuery(
+            timestamp_query_heap.Get(),
+            D3D12_QUERY_TYPE_TIMESTAMP,
+            timestamp_query_index(
+                timestamp_query_base,
+                detail::GpuTimestampQuery::skybox_begin));
+
+        auto render_target =
+            rtv_heap->GetCPUDescriptorHandleForHeapStart();
+        render_target.ptr += static_cast<SIZE_T>(back_buffer_index) *
+            static_cast<SIZE_T>(rtv_descriptor_increment);
+        auto read_only_depth =
+            dsv_heap->GetCPUDescriptorHandleForHeapStart();
+        read_only_depth.ptr += static_cast<SIZE_T>(
+            dsv_descriptor_increment);
+        command_list->OMSetRenderTargets(
+            1,
+            &render_target,
+            FALSE,
+            &read_only_depth);
+
+        const D3D12_VIEWPORT viewport{
+            0.0F,
+            0.0F,
+            static_cast<float>(current_extent.width),
+            static_cast<float>(current_extent.height),
+            0.0F,
+            1.0F,
+        };
+        const D3D12_RECT scissor_rectangle{
+            0,
+            0,
+            static_cast<LONG>(current_extent.width),
+            static_cast<LONG>(current_extent.height),
+        };
+        command_list->SetPipelineState(skybox_pipeline.Get());
+        command_list->SetGraphicsRootSignature(
+            cube_root_signature.Get());
+        ID3D12DescriptorHeap* descriptor_heaps[]{
+            checker_descriptor_heap.Get(),
+        };
+        command_list->SetDescriptorHeaps(
+            static_cast<UINT>(std::size(descriptor_heaps)),
+            descriptor_heaps);
+        command_list->SetGraphicsRootConstantBufferView(
+            root_camera_constants,
+            context.upload_buffer->GetGPUVirtualAddress() +
+                context.staged_probe_offset);
+        auto cubemap_descriptor =
+            checker_descriptor_heap->GetGPUDescriptorHandleForHeapStart();
+        cubemap_descriptor.ptr +=
+            static_cast<UINT64>(detail::skybox_texture_descriptor_slot) *
+            static_cast<UINT64>(persistent_descriptor_increment);
+        command_list->SetGraphicsRootDescriptorTable(
+            root_checker_texture,
+            cubemap_descriptor);
+        ++statistics.texture_bindings;
+        command_list->RSSetViewports(1, &viewport);
+        command_list->RSSetScissorRects(1, &scissor_rectangle);
+        command_list->IASetPrimitiveTopology(
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        command_list->IASetVertexBuffers(0, 1, &vertex_buffer_view);
+        command_list->IASetIndexBuffer(&index_buffer_view);
+        command_list->DrawIndexedInstanced(
+            static_cast<UINT>(detail::skybox_index_count),
+            1,
+            0,
+            0,
+            0);
+        command_list->EndQuery(
+            timestamp_query_heap.Get(),
+            D3D12_QUERY_TYPE_TIMESTAMP,
+            timestamp_query_index(
+                timestamp_query_base,
+                detail::GpuTimestampQuery::skybox_end));
         pass_event.end();
 
         return core::Result<void>::success();
@@ -947,7 +1114,9 @@ public:
         }
         context.timestamp_results_pending = true;
         ++statistics.pix_frame_events;
-        ++statistics.pix_pass_events;
+        statistics.pix_pass_events += 2;
+        ++statistics.pix_textured_cube_events;
+        ++statistics.pix_skybox_events;
         statistics.timestamp_queries_written +=
             timestamp_queries_per_frame;
         ++statistics.timestamp_resolve_batches;
@@ -1059,7 +1228,17 @@ public:
             depth_buffer.Get(),
             &view,
             dsv_heap->GetCPUDescriptorHandleForHeapStart());
+        auto read_only_descriptor =
+            dsv_heap->GetCPUDescriptorHandleForHeapStart();
+        read_only_descriptor.ptr += static_cast<SIZE_T>(
+            dsv_descriptor_increment);
+        view.Flags = D3D12_DSV_FLAG_READ_ONLY_DEPTH;
+        native_device->CreateDepthStencilView(
+            depth_buffer.Get(),
+            &view,
+            read_only_descriptor);
         ++statistics.depth_resource_creations;
+        ++statistics.depth_read_view_creations;
         return core::Result<void>::success();
     }
 
@@ -1450,6 +1629,9 @@ public:
                     "ID3D12Object::SetName(checker descriptor heap)",
                     result));
         }
+        persistent_descriptor_increment =
+            native_device->GetDescriptorHandleIncrementSize(
+                D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
         D3D12_SHADER_RESOURCE_VIEW_DESC shader_resource_view{};
         shader_resource_view.Format = detail::checker_format;
@@ -1470,9 +1652,7 @@ public:
 
         auto cubemap_descriptor =
             checker_descriptor_heap->GetCPUDescriptorHandleForHeapStart();
-        cubemap_descriptor.ptr +=
-            native_device->GetDescriptorHandleIncrementSize(
-                D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        cubemap_descriptor.ptr += persistent_descriptor_increment;
         D3D12_SHADER_RESOURCE_VIEW_DESC cubemap_view{};
         cubemap_view.Format = cubemap_format;
         cubemap_view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
@@ -1663,6 +1843,7 @@ public:
         release_back_buffers();
         swap_chain.Reset();
         command_list.Reset();
+        skybox_pipeline.Reset();
         cube_pipeline.Reset();
         cube_root_signature.Reset();
         checker_descriptor_heap.Reset();
@@ -1752,6 +1933,7 @@ public:
     std::array<FrameContext, back_buffer_count> frame_contexts;
     ComPtr<ID3D12GraphicsCommandList> command_list;
     ComPtr<ID3D12PipelineState> cube_pipeline;
+    ComPtr<ID3D12PipelineState> skybox_pipeline;
     ComPtr<ID3D12RootSignature> cube_root_signature;
     ComPtr<ID3D12Resource> vertex_buffer;
     ComPtr<ID3D12Resource> index_buffer;
@@ -1766,11 +1948,15 @@ public:
     ComPtr<ID3D12Fence> fence;
     HANDLE fence_event{};
     UINT rtv_descriptor_increment{};
+    UINT dsv_descriptor_increment{};
+    UINT persistent_descriptor_increment{};
     UINT transient_descriptor_increment{};
     D3D12_VERTEX_BUFFER_VIEW vertex_buffer_view{};
     D3D12_INDEX_BUFFER_VIEW index_buffer_view{};
     std::array<float, 16> last_camera_matrix{};
     bool has_last_camera_matrix{};
+    std::array<float, 16> last_skybox_matrix{};
+    bool has_last_skybox_matrix{};
     detail::FenceTimeline fence_timeline;
 };
 
@@ -1814,6 +2000,18 @@ core::Result<Presentation> Presentation::create(
             core::ErrorCode::invalid_argument,
             "Presentation pixel shader bytecode is missing a DXIL "
             "container signature"));
+    }
+    if (!valid_shader_bytecode(config.skybox_vertex_shader)) {
+        return core::Result<Presentation>::failure(graphics_error(
+            core::ErrorCode::invalid_argument,
+            "Presentation skybox vertex shader bytecode is missing a "
+            "DXIL container signature"));
+    }
+    if (!valid_shader_bytecode(config.skybox_pixel_shader)) {
+        return core::Result<Presentation>::failure(graphics_error(
+            core::ErrorCode::invalid_argument,
+            "Presentation skybox pixel shader bytecode is missing a "
+            "DXIL container signature"));
     }
     auto cubemap_result = validate_cubemap_upload(
         config.startup_cubemap);
@@ -2074,7 +2272,7 @@ core::Result<Presentation> Presentation::create(
             D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
     heap_description.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
-    heap_description.NumDescriptors = 1;
+    heap_description.NumDescriptors = 2;
     result = native.device->CreateDescriptorHeap(
         &heap_description,
         IID_PPV_ARGS(&implementation->dsv_heap));
@@ -2085,6 +2283,9 @@ core::Result<Presentation> Presentation::create(
                 "ID3D12Device::CreateDescriptorHeap(DSV)",
                 result));
     }
+    implementation->dsv_descriptor_increment =
+        native.device->GetDescriptorHandleIncrementSize(
+            D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
     result = implementation->dsv_heap->SetName(
         L"Shark Presentation DSV Heap");
     if (FAILED(result)) {
@@ -2264,6 +2465,36 @@ core::Result<Presentation> Presentation::create(
                 result));
     }
 
+    pipeline_description.VS = D3D12_SHADER_BYTECODE{
+        config.skybox_vertex_shader.data,
+        config.skybox_vertex_shader.size,
+    };
+    pipeline_description.PS = D3D12_SHADER_BYTECODE{
+        config.skybox_pixel_shader.data,
+        config.skybox_pixel_shader.size,
+    };
+    pipeline_description.DepthStencilState = skybox_depth_description();
+    pipeline_description.InputLayout.NumElements = 1;
+    result = native.device->CreateGraphicsPipelineState(
+        &pipeline_description,
+        IID_PPV_ARGS(&implementation->skybox_pipeline));
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Device::CreateGraphicsPipelineState(skybox)",
+                result));
+    }
+    result = implementation->skybox_pipeline->SetName(
+        L"Shark Cubemap Skybox Pipeline");
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Object::SetName(skybox pipeline)",
+                result));
+    }
+
     result = native.device->CreateCommandList(
         0,
         D3D12_COMMAND_LIST_TYPE_DIRECT,
@@ -2278,7 +2509,7 @@ core::Result<Presentation> Presentation::create(
                 result));
     }
     result = implementation->command_list->SetName(
-        L"Shark Textured Cube Command List");
+        L"Shark Presentation Command List");
     if (FAILED(result)) {
         return core::Result<Presentation>::failure(
             detail::DeviceAccess::graphics_failure(
@@ -2486,7 +2717,7 @@ core::Result<Presentation> Presentation::create(
             std::to_string(config.extent.width) + "x" +
             std::to_string(config.extent.height) +
             " with three fence-gated frame contexts, reversed-Z depth, "
-            "and the textured cube pipeline");
+            "and named TexturedCube/Skybox pipelines");
     return core::Result<Presentation>::success(
         Presentation{std::move(implementation)});
 }
@@ -2508,7 +2739,7 @@ core::Result<PresentStatus> Presentation::present_frame(
     if (!valid_frame_data(frame_data)) {
         return core::Result<PresentStatus>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
-            "Presentation frame view-projection matrix must be finite"));
+            "Presentation frame view-projection matrices must be finite"));
     }
 
     const auto back_buffer_index =
@@ -2567,6 +2798,29 @@ core::Result<PresentStatus> Presentation::present_frame(
     const auto depth_buffer_resource =
         depth_buffer_resource_result.value();
 
+    auto checker_texture_resource_result = graph_builder.import_resource(
+        "CheckerTexture",
+        graph_checker_texture_id,
+        render_graph::ResourceState::pixel_shader_read,
+        render_graph::ResourceState::pixel_shader_read);
+    if (!checker_texture_resource_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(checker_texture_resource_result).error());
+    }
+    const auto checker_texture_resource =
+        checker_texture_resource_result.value();
+
+    auto cubemap_resource_result = graph_builder.import_resource(
+        "StartupCubemap",
+        graph_cubemap_id,
+        render_graph::ResourceState::pixel_shader_read,
+        render_graph::ResourceState::pixel_shader_read);
+    if (!cubemap_resource_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(cubemap_resource_result).error());
+    }
+    const auto cubemap_resource = cubemap_resource_result.value();
+
     auto cube_pass_result = graph_builder.add_pass(
         "TexturedCube",
         [implementation = implementation_.get(),
@@ -2574,12 +2828,14 @@ core::Result<PresentStatus> Presentation::present_frame(
          back_buffer_index,
          back_buffer_resource,
          depth_buffer_resource,
+         checker_texture_resource,
          timestamp_query_base](
             const render_graph::PassContext& pass_context) {
             return implementation->record_textured_cube_pass(
                 pass_context,
                 back_buffer_resource,
                 depth_buffer_resource,
+                checker_texture_resource,
                 *context,
                 back_buffer_index,
                 timestamp_query_base);
@@ -2606,6 +2862,63 @@ core::Result<PresentStatus> Presentation::present_frame(
         return core::Result<PresentStatus>::failure(
             std::move(depth_write_result).error());
     }
+    auto checker_read_result = graph_builder.read(
+        cube_pass,
+        checker_texture_resource,
+        render_graph::ResourceState::pixel_shader_read);
+    if (!checker_read_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(checker_read_result).error());
+    }
+
+    auto skybox_pass_result = graph_builder.add_pass(
+        "Skybox",
+        [implementation = implementation_.get(),
+         context,
+         back_buffer_index,
+         back_buffer_resource,
+         depth_buffer_resource,
+         cubemap_resource,
+         timestamp_query_base](
+            const render_graph::PassContext& pass_context) {
+            return implementation->record_skybox_pass(
+                pass_context,
+                back_buffer_resource,
+                depth_buffer_resource,
+                cubemap_resource,
+                *context,
+                back_buffer_index,
+                timestamp_query_base);
+        });
+    if (!skybox_pass_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(skybox_pass_result).error());
+    }
+    const auto skybox_pass = skybox_pass_result.value();
+    auto skybox_color_result = graph_builder.write(
+        skybox_pass,
+        back_buffer_resource,
+        render_graph::ResourceState::render_target);
+    if (!skybox_color_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(skybox_color_result).error());
+    }
+    auto skybox_depth_result = graph_builder.read(
+        skybox_pass,
+        depth_buffer_resource,
+        render_graph::ResourceState::depth_read);
+    if (!skybox_depth_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(skybox_depth_result).error());
+    }
+    auto cubemap_read_result = graph_builder.read(
+        skybox_pass,
+        cubemap_resource,
+        render_graph::ResourceState::pixel_shader_read);
+    if (!cubemap_read_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(cubemap_read_result).error());
+    }
 
     auto compiled_graph_result = std::move(graph_builder).compile();
     if (!compiled_graph_result) {
@@ -2617,6 +2930,12 @@ core::Result<PresentStatus> Presentation::present_frame(
     implementation_->statistics.render_graph_resource_imports +=
         static_cast<std::uint64_t>(
             compiled_graph.stats().imported_resource_count);
+    implementation_->statistics.render_graph_dependencies +=
+        static_cast<std::uint64_t>(
+            compiled_graph.stats().dependency_count);
+    implementation_->statistics.render_graph_elided_transitions +=
+        static_cast<std::uint64_t>(
+            compiled_graph.stats().elided_transition_count);
 
     auto result = context->command_allocator->Reset();
     if (FAILED(result)) {
@@ -2666,6 +2985,14 @@ core::Result<PresentStatus> Presentation::present_frame(
         detail::RenderGraphResourceBinding{
             graph_depth_buffer_id,
             implementation_->depth_buffer.Get(),
+        },
+        detail::RenderGraphResourceBinding{
+            graph_checker_texture_id,
+            implementation_->checker_texture.Get(),
+        },
+        detail::RenderGraphResourceBinding{
+            graph_cubemap_id,
+            implementation_->startup_cubemap.Get(),
         },
     };
     auto graph_bindings_result =
@@ -2738,6 +3065,9 @@ core::Result<PresentStatus> Presentation::present_frame(
     ++implementation_->statistics.cube_draw_calls;
     implementation_->statistics.cube_indices +=
         detail::cube_indices.size();
+    ++implementation_->statistics.skybox_draw_calls;
+    implementation_->statistics.skybox_indices +=
+        detail::skybox_index_count;
 
     result = implementation_->swap_chain->Present(
         implementation_->synchronize_to_vertical_refresh ? 1 : 0,

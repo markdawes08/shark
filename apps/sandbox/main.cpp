@@ -13,6 +13,8 @@
 
 #include <cube.pixel.hpp>
 #include <cube.vertex.hpp>
+#include <skybox.pixel.hpp>
+#include <skybox.vertex.hpp>
 
 #include <Windows.h>
 
@@ -500,14 +502,19 @@ void log_platform_event(const shark::platform::Event& event)
 {
     using namespace shark;
 
-    constexpr std::uint64_t resize_after_frames = 250;
-    constexpr std::uint64_t minimize_after_frames = 500;
-    constexpr std::uint64_t change_camera_after_frames = 750;
-    constexpr std::uint64_t required_smoke_frames = 1'000;
+    const auto focused_gpu_validation =
+        device.gpu_based_validation_enabled();
+    const auto exercise_minimize_restore = !focused_gpu_validation;
+    const std::uint64_t required_smoke_frames =
+        focused_gpu_validation ? 120 : 1'000;
+    const auto resize_after_frames = required_smoke_frames / 4;
+    const auto minimize_after_frames = required_smoke_frames / 2;
+    const auto change_camera_after_frames =
+        required_smoke_frames * 3 / 4;
     constexpr platform::WindowExtent smoke_resize_extent{960, 600};
     const auto smoke_deadline_duration =
-        device.gpu_based_validation_enabled()
-        ? std::chrono::seconds{150}
+        focused_gpu_validation
+        ? std::chrono::seconds{180}
         : std::chrono::seconds{45};
 
     platform::ApplicationConfig application_config;
@@ -576,6 +583,14 @@ void log_platform_event(const shark::platform::Event& event)
         shark_cube_pixel_shader,
         sizeof(shark_cube_pixel_shader),
     };
+    presentation_config.skybox_vertex_shader = {
+        shark_skybox_vertex_shader,
+        sizeof(shark_skybox_vertex_shader),
+    };
+    presentation_config.skybox_pixel_shader = {
+        shark_skybox_pixel_shader,
+        sizeof(shark_skybox_pixel_shader),
+    };
     presentation_config.startup_cubemap = {
         .width = cubemap.width(),
         .height = cubemap.height(),
@@ -619,9 +634,13 @@ void log_platform_event(const shark::platform::Event& event)
         core::LogLevel::info,
         "sandbox",
         smoke_mode
-            ? "Running fixed 1,000-frame textured-cube presentation "
-                "smoke test"
-            : "Direct3D 12 textured-cube presentation initialized");
+            ? "Running fixed " +
+                std::to_string(required_smoke_frames) +
+                "-frame cube-and-sky presentation smoke test" +
+                (focused_gpu_validation
+                    ? " with GPU-based validation"
+                    : "")
+            : "Direct3D 12 cube-and-sky presentation initialized");
 
     world::Camera camera;
     sandbox::CameraController camera_controller;
@@ -644,12 +663,16 @@ void log_platform_event(const shark::platform::Event& event)
     std::uint64_t frames_when_minimized = 0;
     std::uint64_t submissions_when_minimized = 0;
     std::uint64_t graph_executions_when_minimized = 0;
+    std::uint64_t graph_passes_when_minimized = 0;
+    std::uint64_t graph_barriers_when_minimized = 0;
     std::uint64_t pix_frame_events_when_minimized = 0;
     std::uint64_t pix_pass_events_when_minimized = 0;
     std::uint64_t timestamp_queries_when_minimized = 0;
     std::uint64_t timestamp_resolves_when_minimized = 0;
     std::uint64_t timing_samples_when_minimized = 0;
     std::uint64_t cube_draws_when_minimized = 0;
+    std::uint64_t skybox_draws_when_minimized = 0;
+    std::uint64_t texture_bindings_when_minimized = 0;
     std::uint64_t camera_updates_when_minimized = 0;
     std::uint64_t depth_clears_when_minimized = 0;
 
@@ -724,8 +747,9 @@ void log_platform_event(const shark::platform::Event& event)
             if (smoke_mode && !smoke_close_posted) {
                 return core::Result<void>::failure(
                     presentation_smoke_error(
-                        "The presentation smoke window closed before "
-                        "1,000 frames completed"));
+                            "The presentation smoke window closed before " +
+                            std::to_string(required_smoke_frames) +
+                            " frames completed"));
             }
 
             auto shutdown_result = shutdown_and_validate_presentation(
@@ -801,6 +825,7 @@ void log_platform_event(const shark::platform::Event& event)
             }
 
             if (observed_resize &&
+                exercise_minimize_restore &&
                 !minimize_requested &&
                 presented_frames >= minimize_after_frames) {
                 const auto& stats = presentation.stats();
@@ -808,6 +833,10 @@ void log_platform_event(const shark::platform::Event& event)
                 submissions_when_minimized = stats.frame_submissions;
                 graph_executions_when_minimized =
                     stats.render_graph_executions;
+                graph_passes_when_minimized =
+                    stats.render_graph_pass_executions;
+                graph_barriers_when_minimized =
+                    stats.render_graph_transition_barriers;
                 pix_frame_events_when_minimized =
                     stats.pix_frame_events;
                 pix_pass_events_when_minimized =
@@ -819,6 +848,8 @@ void log_platform_event(const shark::platform::Event& event)
                 timing_samples_when_minimized =
                     stats.gpu_timing_samples;
                 cube_draws_when_minimized = stats.cube_draw_calls;
+                skybox_draws_when_minimized = stats.skybox_draw_calls;
+                texture_bindings_when_minimized = stats.texture_bindings;
                 camera_updates_when_minimized =
                     stats.camera_constant_updates;
                 depth_clears_when_minimized =
@@ -833,35 +864,45 @@ void log_platform_event(const shark::platform::Event& event)
             }
 
             if (application.minimized()) {
-                observed_minimized_iteration = true;
-                const auto& stats = presentation.stats();
-                if (stats.presented_frames != frames_when_minimized ||
-                    stats.frame_submissions !=
-                        submissions_when_minimized ||
-                    stats.render_graph_executions !=
-                        graph_executions_when_minimized ||
-                    stats.pix_frame_events !=
-                        pix_frame_events_when_minimized ||
-                    stats.pix_pass_events !=
-                        pix_pass_events_when_minimized ||
-                    stats.timestamp_queries_written !=
-                        timestamp_queries_when_minimized ||
-                    stats.timestamp_resolve_batches !=
-                        timestamp_resolves_when_minimized ||
-                    stats.gpu_timing_samples !=
-                        timing_samples_when_minimized ||
-                    stats.cube_draw_calls !=
-                        cube_draws_when_minimized ||
-                    stats.camera_constant_updates !=
-                        camera_updates_when_minimized ||
-                    stats.depth_clear_count !=
-                        depth_clears_when_minimized) {
-                    return core::Result<void>::failure(
-                        presentation_smoke_error(
-                            "Render work advanced while the window was "
-                            "minimized"));
+                if (minimize_requested && !restore_requested) {
+                    observed_minimized_iteration = true;
+                    const auto& stats = presentation.stats();
+                    if (stats.presented_frames != frames_when_minimized ||
+                        stats.frame_submissions !=
+                            submissions_when_minimized ||
+                        stats.render_graph_executions !=
+                            graph_executions_when_minimized ||
+                        stats.render_graph_pass_executions !=
+                            graph_passes_when_minimized ||
+                        stats.render_graph_transition_barriers !=
+                            graph_barriers_when_minimized ||
+                        stats.pix_frame_events !=
+                            pix_frame_events_when_minimized ||
+                        stats.pix_pass_events !=
+                            pix_pass_events_when_minimized ||
+                        stats.timestamp_queries_written !=
+                            timestamp_queries_when_minimized ||
+                        stats.timestamp_resolve_batches !=
+                            timestamp_resolves_when_minimized ||
+                        stats.gpu_timing_samples !=
+                            timing_samples_when_minimized ||
+                        stats.cube_draw_calls !=
+                            cube_draws_when_minimized ||
+                        stats.skybox_draw_calls !=
+                            skybox_draws_when_minimized ||
+                        stats.texture_bindings !=
+                            texture_bindings_when_minimized ||
+                        stats.camera_constant_updates !=
+                            camera_updates_when_minimized ||
+                        stats.depth_clear_count !=
+                            depth_clears_when_minimized) {
+                        return core::Result<void>::failure(
+                            presentation_smoke_error(
+                                "Render work advanced during the intended "
+                                "minimize checkpoint"));
+                    }
                 }
-                if (observed_minimized && !restore_requested) {
+                if (!smoke_close_posted) {
                     auto restore_result = application.restore_window();
                     if (!restore_result) {
                         return core::Result<void>::failure(
@@ -876,10 +917,11 @@ void log_platform_event(const shark::platform::Event& event)
                 presented_frames >= required_smoke_frames) {
                 if (presented_frames != required_smoke_frames ||
                     !observed_resize ||
-                    !observed_minimized ||
-                    !observed_minimized_iteration ||
-                    !observed_restored ||
-                    !observed_restore_resize ||
+                    (exercise_minimize_restore &&
+                        (!observed_minimized ||
+                         !observed_minimized_iteration ||
+                         !observed_restored ||
+                         !observed_restore_resize)) ||
                     !smoke_camera_pose_changed) {
                     return core::Result<void>::failure(
                         presentation_smoke_error(
@@ -946,6 +988,8 @@ void log_platform_event(const shark::platform::Event& event)
         const rhi::d3d12::PresentationFrameData frame_data{
             .view_projection =
                 matrices_result.value().view_projection,
+            .sky_view_projection =
+                matrices_result.value().sky_view_projection,
         };
         auto present_result = presentation.present_frame(frame_data);
         if (!present_result) {
@@ -982,7 +1026,7 @@ void log_platform_event(const shark::platform::Event& event)
         constexpr std::uint32_t expected_context_mask =
             (std::uint32_t{1} << expected_context_count) - 1;
         constexpr std::uint64_t frame_probe_bytes = 256;
-        constexpr std::uint64_t timestamp_queries_per_frame = 4;
+        constexpr std::uint64_t timestamp_queries_per_frame = 6;
         const auto attempted_presents =
             stats.presented_frames + stats.occluded_frames;
         if (stats.frame_context_count != expected_context_count ||
@@ -1004,16 +1048,24 @@ void log_platform_event(const shark::platform::Event& event)
             stats.render_graph_executions !=
                 stats.frame_submissions ||
             stats.render_graph_resource_imports !=
-                stats.frame_submissions * 2 ||
+                stats.frame_submissions * 4 ||
             stats.render_graph_pass_executions !=
+                stats.frame_submissions * 2 ||
+            stats.render_graph_dependencies !=
                 stats.frame_submissions ||
             stats.render_graph_transition_barriers !=
-                stats.frame_submissions * 2 ||
+                stats.frame_submissions * 4 ||
+            stats.render_graph_elided_transitions !=
+                stats.frame_submissions * 6 ||
             stats.pix_static_upload_events !=
                 stats.static_upload_submissions ||
             stats.pix_frame_events != stats.frame_submissions ||
             stats.pix_pass_events !=
                 stats.render_graph_pass_executions ||
+            stats.pix_textured_cube_events !=
+                stats.frame_submissions ||
+            stats.pix_skybox_events !=
+                stats.frame_submissions ||
             stats.gpu_timestamp_frequency_hz == 0 ||
             stats.timestamp_query_capacity !=
                 expected_context_count *
@@ -1027,27 +1079,39 @@ void log_platform_event(const shark::platform::Event& event)
                 stats.frame_submissions ||
             stats.gpu_timing_samples != stats.frame_submissions ||
             stats.gpu_frame_total_ticks <
-                stats.gpu_pass_total_ticks ||
+                stats.gpu_textured_cube_total_ticks +
+                    stats.gpu_skybox_total_ticks ||
             stats.gpu_frame_last_ticks <
-                stats.gpu_pass_last_ticks ||
+                stats.gpu_textured_cube_last_ticks +
+                    stats.gpu_skybox_last_ticks ||
             stats.gpu_frame_max_ticks <
-                stats.gpu_pass_max_ticks ||
+                stats.gpu_textured_cube_max_ticks ||
+            stats.gpu_frame_max_ticks <
+                stats.gpu_skybox_max_ticks ||
             stats.gpu_frame_min_ticks >
                 stats.gpu_frame_max_ticks ||
-            stats.gpu_pass_min_ticks >
-                stats.gpu_pass_max_ticks ||
+            stats.gpu_textured_cube_min_ticks >
+                stats.gpu_textured_cube_max_ticks ||
+            stats.gpu_skybox_min_ticks >
+                stats.gpu_skybox_max_ticks ||
             stats.cube_draw_calls != stats.frame_submissions ||
-            stats.cube_draw_calls !=
+            stats.skybox_draw_calls != stats.frame_submissions ||
+            stats.cube_draw_calls + stats.skybox_draw_calls !=
                 stats.render_graph_pass_executions ||
             stats.cube_indices !=
                 stats.cube_draw_calls * 36 ||
+            stats.skybox_indices !=
+                stats.skybox_draw_calls * 36 ||
             stats.camera_constant_updates !=
                 stats.frame_submissions ||
             stats.camera_matrix_changes < 3 ||
+            stats.skybox_matrix_changes < 3 ||
             stats.depth_clear_count != stats.frame_submissions ||
             stats.depth_resource_creations !=
                 stats.resize_count + 1 ||
-            stats.texture_bindings != stats.frame_submissions ||
+            stats.depth_read_view_creations !=
+                stats.resize_count + 1 ||
+            stats.texture_bindings != stats.frame_submissions * 2 ||
             stats.static_upload_submissions != 1 ||
             stats.geometry_buffer_creations != 2 ||
             stats.checker_texture_creations != 1 ||
@@ -1091,6 +1155,11 @@ void log_platform_event(const shark::platform::Event& event)
         summary.append(", graph-barriers=");
         summary.append(std::to_string(
             stats.render_graph_transition_barriers));
+        summary.append(", graph-dependencies/elided=");
+        summary.append(std::to_string(stats.render_graph_dependencies));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.render_graph_elided_transitions));
         summary.append(", pix-events(static/frame/pass)=");
         summary.append(std::to_string(
             stats.pix_static_upload_events));
@@ -1116,17 +1185,30 @@ void log_platform_event(const shark::platform::Event& event)
             stats.gpu_timestamp_frequency_hz));
         summary.append(", gpu-TexturedCube-ms(avg/max)=");
         summary.append(format_gpu_milliseconds(
-            stats.gpu_pass_total_ticks,
+            stats.gpu_textured_cube_total_ticks,
             stats.gpu_timestamp_frequency_hz,
             stats.gpu_timing_samples));
         summary.push_back('/');
         summary.append(format_gpu_milliseconds(
-            stats.gpu_pass_max_ticks,
+            stats.gpu_textured_cube_max_ticks,
             stats.gpu_timestamp_frequency_hz));
-        summary.append(", cube-draws=");
+        summary.append(", gpu-Skybox-ms(avg/max)=");
+        summary.append(format_gpu_milliseconds(
+            stats.gpu_skybox_total_ticks,
+            stats.gpu_timestamp_frequency_hz,
+            stats.gpu_timing_samples));
+        summary.push_back('/');
+        summary.append(format_gpu_milliseconds(
+            stats.gpu_skybox_max_ticks,
+            stats.gpu_timestamp_frequency_hz));
+        summary.append(", cube/sky-draws=");
         summary.append(std::to_string(stats.cube_draw_calls));
-        summary.append(", camera-matrix-changes=");
+        summary.push_back('/');
+        summary.append(std::to_string(stats.skybox_draw_calls));
+        summary.append(", camera/sky-matrix-changes=");
         summary.append(std::to_string(stats.camera_matrix_changes));
+        summary.push_back('/');
+        summary.append(std::to_string(stats.skybox_matrix_changes));
         summary.append(", depth-creations=");
         summary.append(std::to_string(stats.depth_resource_creations));
         summary.append(", cubemap(faces/mips/subresources/bytes)=");

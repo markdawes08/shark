@@ -77,8 +77,12 @@ out/build/windows-vs2026/lib/Debug/SharkEngine.lib
 out/build/windows-vs2026/lib/Release/SharkEngine.lib
 out/build/windows-vs2026/generated/shaders/Debug/cube.vertex.dxil
 out/build/windows-vs2026/generated/shaders/Debug/cube.pixel.dxil
+out/build/windows-vs2026/generated/shaders/Debug/skybox.vertex.dxil
+out/build/windows-vs2026/generated/shaders/Debug/skybox.pixel.dxil
 out/build/windows-vs2026/generated/shaders/Release/cube.vertex.dxil
 out/build/windows-vs2026/generated/shaders/Release/cube.pixel.dxil
+out/build/windows-vs2026/generated/shaders/Release/skybox.vertex.dxil
+out/build/windows-vs2026/generated/shaders/Release/skybox.pixel.dxil
 ```
 
 vcpkg deploys the spdlog/fmt, DirectXTex, and WinPixEventRuntime DLLs beside
@@ -90,12 +94,10 @@ local development and testing only and must never enter a packaged product.
 
 With no arguments, `SharkSandbox` initializes the highest-priority eligible
 hardware device, opens the native Win32 window, and continuously draws the
-G-005 procedural-checker cube as the G-006 graph's one `TexturedCube` pass,
-through the G-003 triple frame-resource lifecycle and resize-safe reversed-Z
-depth target. G-007 emits `Frame` and `TexturedCube` PIX events and resolves
-their GPU timestamp intervals asynchronously. S-001 also loads the app-local
-DDS and creates its persistent texture-cube resource/SRV during startup, but
-does not draw it yet. Use `W`/`S` along the camera
+procedural-checker cube followed by the static DDS skybox as named
+`TexturedCube` and `Skybox` graph passes. S-002 keeps the triple frame-resource
+lifecycle and resize-safe reversed-Z target, and reports separate PIX/timestamp
+intervals for both passes. Use `W`/`S` along the camera
 forward axis, `A`/`D` to strafe, `Q`/`E` to move down/up, hold `Shift` to move
 faster, and hold the right mouse button while dragging to look around.
 `Control` and `Space` are down/up aliases. Resize or minimize/restore the
@@ -111,11 +113,13 @@ neither required nor accepted. The compiler's sidecar `dxcompiler.dll` and
 `dxil.dll` remain beside that host tool; Shark does not link them or copy them
 beside `SharkSandbox.exe`.
 
-The build compiles `VSMain` as `vs_6_0` and `PSMain` as `ps_6_0`, using HLSL
-2021, row-major layout, strict mode, and warnings as errors. DXIL, generated C++
+The build compiles the cube and skybox `VSMain` entry points as `vs_6_0` and
+their `PSMain` entry points as `ps_6_0`, using HLSL 2021, row-major layout,
+strict mode, and warnings as errors. DXIL, generated C++
 byte arrays, PDBs, and dependency files are configuration-specific and stay
 under ignored `out/build/windows-vs2026/generated/shaders/`. The dependency
-files make edits to the shared cube include rebuild both stages.
+files make edits to the shared camera include rebuild every dependent cube and
+sky stage.
 
 CTest adds three build checks: both shader depfiles must name the primary source
 and shared include, a build-tree include edit must actually regenerate the
@@ -127,15 +131,16 @@ missing tool or broken build target.
 Run only the normal shader target and focused build checks with:
 
 ```powershell
-& $cmake --build --preset windows-debug --target SharkCubeShaders
+& $cmake --build --preset windows-debug --target SharkCubeShaders SharkSkyboxShaders
 & $ctest --preset windows-debug -R '^build\.shader_'
 ```
 
 For the visual acceptance check, run `SharkSandbox` without arguments. A
 clearly textured cube must retain correct hidden-surface occlusion and
-perspective while the camera moves. Right-drag must begin from the button-press
-coordinates without inheriting an old cursor position, and resizing from a wide
-to a non-wide aspect must not stretch the cube.
+perspective while the diagnostic cubemap fills the background. Translation
+must not move the sky, right-drag rotation must change it, and resizing from a
+wide to a non-wide aspect must not stretch either feature. The exact face check
+is documented in [the skybox contract](SKYBOX.md).
 
 ## Graphics device checks
 
@@ -170,6 +175,13 @@ focused command includes real submission and presentation:
 & .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe --present-smoke --warp --gpu-validation
 ```
 
+This focused path completes 120 successful presents, with resize at frame 30
+and scripted yaw at frame 90. It intentionally skips the minimize/restore
+interval already covered by the normal paths. Its 180-second internal deadline
+is bounded by a 240-second CTest timeout. The normal hardware and WARP
+presentation paths below retain the 1,000-frame gate and checkpoints at frames
+250, 500, and 750.
+
 Every device path fails if either the D3D12 or DXGI initialization info queue
 contains an error or corruption message. See
 [the graphics-device contract](GRAPHICS_DEVICE.md) for selection, capability,
@@ -177,7 +189,7 @@ ownership, and runtime rules.
 
 ## Presentation checks
 
-Run the fixed cube/present contract on hardware and packaged WARP with:
+Run the fixed cube-and-sky presentation contract on hardware and packaged WARP with:
 
 ```powershell
 & .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe --present-smoke
@@ -185,7 +197,7 @@ Run the fixed cube/present contract on hardware and packaged WARP with:
 ```
 
 Each command shows a real PMv2-aware window, presents exactly 1,000 successful
-indexed-cube frames, changes the physical client area from `1280x720` to
+two-pass frames, changes the physical client area from `1280x720` to
 `960x600`, proves the projection and `D32_FLOAT` depth extent follow the
 aspect-changing resize, proves no frame is submitted while minimized, restores,
 shuts down the presentation objects before the window, and checks new
@@ -193,7 +205,8 @@ D3D12/DXGI messages plus live D3D12 device children. Submission or presentation
 removal failures also emit bounded DRED diagnostics.
 
 The run also exercises three contexts selected by DXGI's back-buffer index.
-Each attempt writes one 256-byte camera record, binds it through a root CBV,
+Each attempt writes one 256-byte record containing scene and sky matrices,
+binds it through a root CBV,
 copies it to the existing GPU probe, and stages one descriptor in a CPU-only
 heap. A context waits only when its own allocator cannot yet be reused because
 its preceding submission fence has not completed; that checkpoint protects the
@@ -202,30 +215,31 @@ allocator, camera bytes, and probe destination.
 Creation records one `StaticCubeUpload` PIX event, one static direct-queue
 upload submission, and one bounded wait for the 24-vertex/36-index cube,
 deterministic `8x8` checker, and all six faces of the app-local `8x8` sRGB DDS
-cubemap. Every submitted frame records one outer `Frame`
-event and one nested `TexturedCube` event, compiles one graph importing the
-current back buffer and depth texture, executes one pass, records the back
-buffer's two legacy transitions, one 36-index draw, and one reversed-Z depth
-clear.
+cubemap. Every submitted frame records one outer `Frame` event with nested
+`TexturedCube` and `Skybox` events. Its four-import graph declares exact
+checker/cubemap pixel-shader reads, executes both passes, one dependency, four
+recorded transitions, and six elided transitions. It
+issues two 36-index draws, two texture bindings, and one reversed-Z depth clear;
+the sky uses the read-only DSV and writes no depth.
 
-The direct queue reports its timestamp frequency once. One 12-entry query heap
-and one 96-byte persistently mapped readback buffer are split into three
-four-query frame-context slices: frame begin, pass begin, pass end, and frame
-end. The frame interval includes the diagnostic probe copy, graph barriers, and
-pass work but excludes its own query resolve. The pass interval covers only the
-`TexturedCube` callback commands and excludes graph barriers. Results are read
+The direct queue reports its timestamp frequency once. One 18-entry query heap
+and one 144-byte persistently mapped readback buffer are split into three
+six-query frame-context slices: frame begin, cube begin/end, sky begin/end, and
+frame end. The frame interval includes the diagnostic probe copy, four graph
+barriers, and both passes but excludes its own query resolve. Each pass interval
+covers only its callback commands and excludes graph barriers. Results are read
 only after the owning context fence completes, using an existing reuse wait or
 resize/shutdown drain; timing adds no normal-frame drain.
 
 The summary reports graph pass/barrier counts, PIX event counts, query
-high-water/capacity, timing sample count, average/maximum frame and
-`TexturedCube` milliseconds, `cube_draw_calls`/`cube_indices`,
-`camera_constant_updates` and `camera_matrix_changes`,
-`depth_clear_count`/`depth_resource_creations`, resource creation counts,
+high-water/capacity, timing sample count, average/maximum frame,
+`TexturedCube`, and `Skybox` milliseconds, both draw/index counts,
+scene/sky matrix changes, `depth_clear_count`, depth-resource/read-only-view
+creation counts, other resource creation counts,
 context reuse, blocking reuse waits, queue drains, and upload/descriptor
-high-water marks. The fixed diagnostics invariants require four queries and one
+high-water marks. The fixed diagnostics invariants require six queries and one
 resolve per frame, one completed timing sample per retired submission, and a
-four-query per-context high-water. Duration magnitude is deliberately not a
+six-query per-context high-water. Duration magnitude is deliberately not a
 performance gate because adapter speed and timestamp resolution vary.
 
 Run the focused planner, D3D12 executor, and GPU timestamp-state unit coverage
@@ -234,12 +248,14 @@ directly with:
 ```powershell
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[render-graph]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[timestamps]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[skybox]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[assets][dds][cubemap]"
 ```
 
 CTest registers hardware and WARP device and presentation paths as separate
 serial processes, plus a focused packaged-WARP GPU-validation presentation
-path. The unchanged presentation case names now cover G-007:
+path. That focused case uses the 120-frame/180-second contract and a 240-second
+CTest timeout. The retained presentation case names now cover S-002:
 `integration.gpu.hardware_cube_present`,
 `integration.gpu.warp_cube_present`, and
 `integration.gpu.warp_cube_present_validation`. To run all graphics integration

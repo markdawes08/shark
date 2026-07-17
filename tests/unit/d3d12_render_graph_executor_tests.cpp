@@ -32,6 +32,12 @@ TEST_CASE(
         legacy_resource_state(ResourceState::pixel_shader_read).value() ==
         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     REQUIRE(
+        legacy_resource_state(ResourceState::vertex_buffer).value() ==
+        D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+    REQUIRE(
+        legacy_resource_state(ResourceState::index_buffer).value() ==
+        D3D12_RESOURCE_STATE_INDEX_BUFFER);
+    REQUIRE(
         legacy_resource_state(ResourceState::shader_read).value() ==
         D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);
     REQUIRE(

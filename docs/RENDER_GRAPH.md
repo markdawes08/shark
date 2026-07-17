@@ -1,13 +1,14 @@
 # Minimal Render-Graph Contract
 
-- **Completed through:** `S-002`
-- **Presentation integration verified through:** `S-002`
-- **Last verified:** July 16, 2026
+- **Completed through:** `T-001`
+- **Presentation integration verified through:** `T-001`
+- **Last updated:** July 17, 2026
 
 G-006 moves the existing textured-cube frame behind Shark's first render graph
 without changing the visible scene. S-002 extends it to ordered cube/sky
-passes, read-only depth, and exact persistent texture-read declarations. The
-graph remains a small, platform-independent
+passes, read-only depth, and exact persistent texture-read declarations. T-001
+adds the first `Terrain` pass and explicitly declares the cube and terrain
+input-assembler buffers. The graph remains a small, platform-independent
 planner plus a Direct3D 12 legacy-barrier executor. It proves declared resource
 access, deterministic dependency compilation, and centralized frame barriers
 before later work adds more passes or graph-owned resources.
@@ -56,13 +57,16 @@ depth_write
 depth_read
 pixel_shader_read
 shader_read
+vertex_buffer
+index_buffer
 copy_source
 copy_destination
 ```
 
 Passes require a nonempty unique name and a valid callback. Each pass may
 declare a whole resource exactly once. Read access is currently valid for
-`depth_read`, `pixel_shader_read`, `shader_read`, and `copy_source`; write access is valid only for
+`depth_read`, `pixel_shader_read`, `shader_read`, `vertex_buffer`,
+`index_buffer`, and `copy_source`; write access is valid only for
 `render_target`, `depth_write`, and `copy_destination`.
 
 The graph tracks whole resources, not individual mip levels, array slices,
@@ -134,6 +138,8 @@ The G-006 D3D12 executor maps graph states exactly:
 | `depth_read` | `D3D12_RESOURCE_STATE_DEPTH_READ` |
 | `pixel_shader_read` | `D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE` |
 | `shader_read` | `D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE` |
+| `vertex_buffer` | `D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER` |
+| `index_buffer` | `D3D12_RESOURCE_STATE_INDEX_BUFFER` |
 | `copy_source` | `D3D12_RESOURCE_STATE_COPY_SOURCE` |
 | `copy_destination` | `D3D12_RESOURCE_STATE_COPY_DEST` |
 
@@ -161,51 +167,68 @@ staging its frame context. It imports:
 | `DepthBuffer` | `depth_write` | `depth_write` | the current extent-matched `D32_FLOAT` texture |
 | `CheckerTexture` | `pixel_shader_read` | `pixel_shader_read` | persistent checker texture |
 | `StartupCubemap` | `pixel_shader_read` | `pixel_shader_read` | persistent six-face cubemap |
+| `CubeVertexBuffer` | `vertex_buffer` | `vertex_buffer` | persistent 24-vertex cube buffer |
+| `CubeIndexBuffer` | `index_buffer` | `index_buffer` | persistent 36-index cube buffer |
+| `TerrainVertexBuffer` | `vertex_buffer` | `vertex_buffer` | persistent terrain and bounds vertices |
+| `TerrainIndexBuffer` | `index_buffer` | `index_buffer` | persistent terrain and bounds indices |
 
-The graph contains two passes. `TexturedCube` declares:
+The graph contains three passes. `Terrain` declares:
+
+- write access to `BackBuffer` as `render_target`;
+- write access to `DepthBuffer` as `depth_write`;
+- read access to `TerrainVertexBuffer` as `vertex_buffer`; and
+- read access to `TerrainIndexBuffer` as `index_buffer`.
+
+`TexturedCube` declares:
 
 - write access to `BackBuffer` as `render_target`; and
 - write access to `DepthBuffer` as `depth_write`; and
-- read access to `CheckerTexture` as `pixel_shader_read`.
+- read access to `CheckerTexture` as `pixel_shader_read`;
+- read access to `CubeVertexBuffer` as `vertex_buffer`; and
+- read access to `CubeIndexBuffer` as `index_buffer`.
 
 `Skybox` declares:
 
 - write access to `BackBuffer` as `render_target`;
 - read access to `DepthBuffer` as `depth_read`; and
-- read access to `StartupCubemap` as `pixel_shader_read`.
+- read access to `StartupCubemap` as `pixel_shader_read`;
+- read access to `CubeVertexBuffer` as `vertex_buffer`; and
+- read access to `CubeIndexBuffer` as `index_buffer`.
 
-The cube callback resolves its three declared resources, clears and draws.
-The sky callback resolves its three resources, binds the read-only DSV and
-cubemap SRV, and draws the reused 36 indices without clearing. Color WAW and
-depth RAW hazards deduplicate to one `TexturedCube -> Skybox` dependency. The
+The terrain callback resolves its four declared resources, clears color/depth,
+draws the selected 6,144-index surface PSO, and draws the always-present
+24-index bounds box. The cube and sky callbacks resolve all five of their
+declared resources; neither clears. Color/depth hazards produce
+`Terrain -> TexturedCube -> Skybox`, deduplicated to two dependencies. The
 compiled frame therefore has:
 
 ```text
-imports                 4
-passes                  2
-dependencies            1
+imports                 8
+passes                  3
+dependencies            2
 emitted transitions     4
-elided transitions      6
+elided transitions      18
 ```
 
-The emitted barriers are `PRESENT -> RENDER_TARGET` before `TexturedCube`,
+The emitted barriers are `PRESENT -> RENDER_TARGET` before `Terrain`,
 `DEPTH_WRITE -> DEPTH_READ` before `Skybox`, and final
-`RENDER_TARGET -> PRESENT` plus `DEPTH_READ -> DEPTH_WRITE`. Equal-state cube
-depth/checker accesses, sky color/cubemap accesses, and both texture final
-states account for the six elisions.
+`RENDER_TARGET -> PRESENT` plus `DEPTH_READ -> DEPTH_WRITE`. All matching
+attachment, texture, vertex-buffer, and index-buffer declarations/final states
+account for the 18 elisions.
 
 The retained 256-byte diagnostic `CopyBufferRegion` remains outside the graph
 and uses D3D12 buffer promotion/decay. The one-time vertex, index, and checker
 uploads remain in the startup upload path. The graph owns all four per-frame
-attachment barriers and the persistent texture-read declarations; it does not
-own startup copies or the diagnostic buffer copy.
+attachment barriers plus persistent texture and input-assembler declarations;
+it does not own startup copies or the diagnostic buffer copy.
 
-S-002 extends the state vocabulary but retains planner/executor ownership.
+T-001 extends the state vocabulary but retains planner/executor ownership.
 Presentation writes the
 outer frame timestamps and `Frame` PIX event outside graph execution. The
-`TexturedCube` and `Skybox` callbacks write their own timestamp pairs and nested
-PIX events inside their passes. Query allocation, resolution, readback, and statistics remain
-presentation-owned rather than automatic graph behavior.
+`Terrain`, `TexturedCube`, and `Skybox` callbacks write their own timestamp
+pairs and nested PIX events inside their passes. Query allocation, resolution,
+readback, and statistics remain presentation-owned rather than automatic graph
+behavior.
 
 ## Accounting and verification
 
@@ -224,13 +247,17 @@ For a successful fixed presentation smoke:
 ```text
 render_graph_compilations       == frame_submissions
 render_graph_executions         == frame_submissions
-render_graph_resource_imports    == frame_submissions * 4
-render_graph_pass_executions     == frame_submissions * 2
-render_graph_dependencies        == frame_submissions
+render_graph_resource_imports    == frame_submissions * 8
+render_graph_pass_executions     == frame_submissions * 3
+render_graph_dependencies        == frame_submissions * 2
 render_graph_transition_barriers == frame_submissions * 4
-render_graph_elided_transitions  == frame_submissions * 6
-cube_draw_calls + skybox_draw_calls == render_graph_pass_executions
+render_graph_elided_transitions  == frame_submissions * 18
+terrain_draw_calls + cube_draw_calls + skybox_draw_calls
+    == render_graph_pass_executions
 ```
+
+The separate terrain bounds draw is part of the `Terrain` callback and therefore
+does not add another graph pass.
 
 The hardware and normal packaged-WARP presentation processes complete exactly
 1,000 successful presents. The focused packaged-WARP GPU-validation process
@@ -260,14 +287,16 @@ barriers.
 It also adds no renderer scene extraction, public scene API, material system,
 typed RHI resource handles, PSO cache, shader reflection, timing HUD, or
 automatic graph-owned PIX/timestamp instrumentation. Graph compilation is
-intentionally frame-local and serial. S-002's named GPU diagnostics use
-the existing presentation and callback boundaries without broadening this graph
+intentionally frame-local and serial. T-001's three named GPU intervals use the
+existing presentation and callback boundaries without broadening this graph
 contract.
 
 See [the presentation and frame-resource contract](GRAPHICS_PRESENTATION.md)
 for submission and resize ownership, [the HLSL pipeline contract](GRAPHICS_PIPELINE.md)
-for the commands recorded by both passes, and
+for the commands recorded by the graphics passes, and
 [the camera/cube contract](CAMERA_AND_CUBE.md) for shared conventions. See
 [the skybox contract](SKYBOX.md) for the visible background and
+[the terrain contract](TERRAIN.md) for the first pass and input-assembler
+declarations, and
 [the GPU diagnostics contract](GPU_DIAGNOSTICS.md) for the presentation-owned
 marker/query lifecycle.

@@ -1,7 +1,7 @@
 # DDS Cubemap Asset and Upload Contract
 
-- **Completed through:** `S-002`
-- **Last verified:** July 16, 2026
+- **Completed through:** `T-001`
+- **Last verified:** July 17, 2026
 
 S-001 establishes Shark's first file-backed texture asset. It loads one
 project-owned DDS cubemap into CPU-owned engine records, preserves explicit
@@ -120,7 +120,7 @@ Startup then:
 2. asks D3D12 for every placed upload footprint;
 3. copies every source row into one temporary cubemap upload buffer;
 4. records one `CopyTextureRegion` per face/mip in the existing
-   `StaticCubeUpload` command list;
+   `StaticSceneUpload` command list;
 5. transitions all cubemap subresources from `COPY_DEST` to
    `PIXEL_SHADER_RESOURCE`;
 6. expands the persistent shader-visible texture heap from one to two slots,
@@ -156,10 +156,11 @@ texture_srv_creations == 2
 cubemap_srgb_resources == 1
 ```
 
-The startup path remains exactly one static submission, one `StaticCubeUpload`
-PIX event, and one bounded initialization wait. The normal frame graph now has
-four imports, ordered `TexturedCube`/`Skybox` passes, four attachment
-transitions, six elided same-state transitions, and six timestamps per frame.
+The startup path remains exactly one static submission, one
+`StaticSceneUpload` PIX event, and one bounded initialization wait. The normal
+frame graph now has eight imports, ordered
+`Terrain`/`TexturedCube`/`Skybox` passes, four attachment transitions, 18
+elided same-state transitions, and eight timestamps per frame.
 Hardware and normal WARP execute 1,000 successful presents; focused WARP with
 GPU-based validation executes 120 presents, retaining resize and rotation while
 intentionally skipping the normal paths' minimize/restore interval, with a

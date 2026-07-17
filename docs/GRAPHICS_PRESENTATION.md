@@ -1,7 +1,7 @@
 # Direct3D 12 Presentation and Frame-Resource Contract
 
-- **Completed through:** `S-002`
-- **Last verified:** July 16, 2026
+- **Completed through:** `T-001`
+- **Last verified:** July 17, 2026
 
 G-002 produced Shark's first pixels through a resize-safe Direct3D 12
 flip-model swap chain. G-003 replaces its wait-after-every-present path with
@@ -16,6 +16,9 @@ changing the visible frame or adding a normal-frame wait. S-001 preserves that
 frame contract while loading and uploading the first file-backed DDS cubemap
 and reserving its persistent SRV. S-002 renders that resource through a second
 named graph pass with rotation-only camera constants and read-only depth.
+T-001 adds a deterministic height tile as the first opaque pass, a dedicated
+terrain root signature, solid/wireframe pipelines, and a depth-tested
+diagnostic bounds draw while preserving the cube and sky paths.
 
 ## Public boundary and ownership
 
@@ -25,7 +28,11 @@ an opaque native-window pointer and engine-owned extent, color,
 shader and generic texture-cube upload views; it exposes no Win32, DXGI,
 D3D12, WRL, or COM types. `PresentationFrameData` contains finite engine-owned
 row-major `view_projection` and `sky_view_projection` matrices, which the
-per-frame call borrows while recording the cube-and-sky frame.
+per-frame call borrows while recording the terrain/cube/sky frame. It also
+selects the finite `TerrainRenderMode` (`solid` or `wireframe`).
+`TerrainMeshUploadView` lends interleaved position/normal vertices, triangle
+indices, and eight-vertex/24-index bounds lines only during synchronous
+creation.
 
 The internal `detail::DeviceAccess` bridge borrows the authoritative D3D12
 device and DXGI factory from `Device`. It does not transfer ownership. The
@@ -45,7 +52,7 @@ failure but cannot replace explicit validation.
 The presentation object owns:
 
 - one direct command queue;
-- one 18-entry timestamp query heap and one persistently mapped 144-byte
+- one 24-entry timestamp query heap and one persistently mapped 192-byte
   readback buffer partitioned into three fixed context slices;
 - one three-buffer `DXGI_SWAP_EFFECT_FLIP_DISCARD` swap chain;
 - three `DXGI_FORMAT_R8G8B8A8_UNORM` back-buffer references;
@@ -53,10 +60,16 @@ The presentation object owns:
 - one CPU-only DSV heap with writable and read-only descriptors plus one
   `DXGI_FORMAT_D32_FLOAT` depth texture matching the current physical extent;
 - one reusable graphics command list;
-- one resource-bound root signature and immutable cube and skybox graphics PSOs;
+- one resource-bound cube/sky root signature, one terrain-only root signature,
+  immutable cube and skybox PSOs, immutable solid and wireframe terrain PSOs,
+  and one terrain-bounds line PSO;
 - one committed default-heap cube vertex buffer containing 24 position/UV
   vertices and one committed default-heap index buffer containing 36
   `uint16_t` indices;
+- one committed default-heap terrain vertex buffer containing the 1,089
+  position/normal surface vertices followed by eight bounds vertices and one
+  terrain index buffer containing 6,144 triangle indices followed by 24 bounds
+  line indices;
 - one committed default-heap `8x8` one-mip
   `DXGI_FORMAT_R8G8B8A8_UNORM` procedural checker texture;
 - one committed default-heap `8x8`, one-mip, six-face
@@ -66,7 +79,7 @@ The presentation object owns:
 - three frame contexts, each containing one direct command allocator, one
   persistently mapped 64 KiB committed upload buffer, one 256-byte default-heap
   upload-probe destination, one CPU-only 64-slot CBV/SRV/UAV staging heap, a
-  checked upload cursor, a checked descriptor cursor, a checked six-query
+  checked upload cursor, a checked descriptor cursor, a checked eight-query
   timestamp cursor, a generation, one direct-fence completion value, and
   pending-result metadata; and
 - one fence plus one auto-reset Windows event.
@@ -86,8 +99,9 @@ has already retired.
 ## Frame acquisition, staging, and present
 
 Presentation creation records one direct-queue static upload submission for the
-cube vertex/index data, checker, and every cubemap face/mip. It transitions the
-immutable resources to their final shader/input states, signals the normal
+cube and terrain vertex/index data, checker, and every cubemap face/mip. Its six
+initialization barriers transition the immutable resources to their final
+shader/input states, then it signals the normal
 monotonic fence, performs one bounded startup wait, and releases the temporary
 upload resources before the first frame. No static geometry or texture upload
 occurs in the frame loop.
@@ -105,19 +119,22 @@ One frame performs the following work:
    create one CBV in the
    context's CPU-only staging heap, and point the root CBV at the same GPU
    upload address;
-5. reserve the context's exact six-query timestamp slice;
+5. reserve the context's exact eight-query timestamp slice;
 6. build and compile one frame-local graph that imports back buffer, depth,
-   checker, and cubemap; declares exact checker/cubemap pixel-shader reads; and
-   orders `TexturedCube` before the depth-reading `Skybox` pass;
+   checker, cubemap, cube vertex/index buffers, and terrain vertex/index
+   buffers; declares their exact shader/input reads; and orders `Terrain`,
+   `TexturedCube`, then the depth-reading `Skybox`;
 7. reset that context's command allocator and the shared command list with the
-   immutable cube PSO;
+   immutable solid-terrain PSO;
 8. begin the `Frame` PIX event, write the frame-begin timestamp, and copy the
    256-byte frame record from the upload heap to the context's
    default-heap probe destination on the direct queue, outside the graph;
 9. execute the graph, which records `PRESENT -> RENDER_TARGET`, invokes
-   `TexturedCube`, transitions depth `DEPTH_WRITE -> DEPTH_READ`, invokes
-   `Skybox` with the read-only DSV, then restores color/depth final states;
-10. write the frame-end timestamp, resolve all six query values to the
+   `Terrain` to clear and draw the selected surface plus bounds, invokes
+   `TexturedCube` without clearing, transitions depth
+   `DEPTH_WRITE -> DEPTH_READ`, invokes `Skybox` with the read-only DSV, then
+   restores color/depth final states;
+10. write the frame-end timestamp, resolve all eight query values to the
     context's readback slice, end `Frame`, then close and execute the command
     list;
 11. immediately signal the next monotonic fence value, store it on the
@@ -149,10 +166,10 @@ after every frame.
 
 The generated shader byte arrays and CPU cubemap subresource views are borrowed
 only during synchronous creation. Presentation owns neither source code,
-shader artifacts, nor caller CPU pixels afterward. The root signature, PSOs,
-cube buffers, checker, cubemap, and persistent texture heap remain valid across
-swap-chain resize and are released only after shutdown drains and retires every
-submitted frame.
+shader artifacts, nor caller CPU pixels afterward. The root signatures, PSOs,
+cube/terrain buffers, checker, cubemap, and persistent texture heap remain valid
+across swap-chain resize and are released only after shutdown drains and retires
+every submitted frame.
 
 G-006's graph executor owns the per-frame whole-resource legacy transition
 barriers. It resolves the current imported resources immediately before graph
@@ -164,37 +181,38 @@ barriers remain a later capability-gated graph backend.
 ## PIX events and GPU timestamps
 
 G-007 privately links the pinned WinPixEventRuntime and enables its retail event
-path in both Debug and Release. The command list contains four balanced,
+path in both Debug and Release. The command list contains five balanced,
 stable names:
 
 ```text
-StaticCubeUpload
+StaticSceneUpload
 Frame
+  Terrain
   TexturedCube
   Skybox
 ```
 
-`StaticCubeUpload` surrounds the one-time vertex, index, checker, and six
-cubemap copies plus four initialization barriers. Each submitted `Frame` begins
-after command-list
-reset and encloses the diagnostic probe copy, graph barriers, both passes, and
-timestamp resolve. Each nested marker contains only its callback's bind/draw
-work; `TexturedCube` also owns the attachment clears.
+`StaticSceneUpload` surrounds the one-time cube/terrain vertex/index, checker,
+and six cubemap copies plus six initialization barriers. Each submitted
+`Frame` begins after command-list reset and encloses the diagnostic probe copy,
+graph barriers, all three passes, and timestamp resolve. Each nested marker
+contains only its callback's bind/draw work; `Terrain` also owns the attachment
+clears and its bounds draw.
 
 The direct queue's GPU tick frequency is queried once. The global query/readback
 allocation is split exactly:
 
 ```text
 context index       0       1       2
-query base          0       6      12
-readback bytes      0      48      96
+query base          0       8      16
+readback bytes      0      64     128
 ```
 
-Each six-query slice stores frame begin, cube begin/end, sky begin/end, and
-frame end. Frame duration includes the probe copy, all four graph barriers, and
-both passes, but excludes `ResolveQueryData`. Pass durations exclude graph
-barriers. Resolved samples must preserve that exact nested/sequential order;
-equal timestamps are valid.
+Each eight-query slice stores frame begin, terrain begin/end, cube begin/end,
+sky begin/end, and frame end. Frame duration includes the probe copy, all four
+graph barriers, and all three passes, but excludes `ResolveQueryData`. Pass
+durations exclude graph barriers. Resolved samples must preserve that exact
+nested/sequential order; equal timestamps are valid.
 
 The persistently mapped readback memory is never inspected immediately after
 submission. A context is marked pending only after its direct-queue submission
@@ -284,24 +302,28 @@ deadline, and is registered with a 240-second CTest timeout. A successful run:
 - matches `frame_context_acquisitions`, `camera_constant_updates`,
   `upload_allocations`, `descriptor_allocations`, and fence-tracked
   `frame_submissions` to successful plus occluded present attempts;
-- proves one cube and one skybox draw, 36 indices for each, one depth clear,
-  and two texture bindings per frame submission;
-- proves one graph compilation/execution, four imports, two pass executions,
-  one dependency, four recorded transitions, and six elided transitions per
-  frame submission;
-- proves one `StaticCubeUpload` PIX event, one `Frame` event per submission,
-  plus one `TexturedCube` and one `Skybox` event per submission;
-- proves global timestamp capacity is 18, per-context high-water is six,
-  exactly six queries and one resolve are recorded per submission, and
-  shutdown consumes one frame/cube/sky timing sample per retired
+- proves one terrain surface draw and one 24-index terrain-bounds draw, one
+  cube and one skybox draw with 36 indices each, one depth clear, and two
+  texture bindings per frame submission;
+- proves both terrain modes execute at least once and their counts sum to the
+  terrain surface draw count;
+- proves one graph compilation/execution, eight imports, three pass
+  executions, two dependencies, four recorded transitions, and 18 elided
+  transitions per frame submission;
+- proves one `StaticSceneUpload` PIX event, one `Frame` event per submission,
+  plus one `Terrain`, one `TexturedCube`, and one `Skybox` event per submission;
+- proves global timestamp capacity is 24, per-context high-water is eight,
+  exactly eight queries and one resolve are recorded per submission, and
+  shutdown consumes one frame/terrain/cube/sky timing sample per retired
   submission;
-- reports average and maximum frame/cube/sky milliseconds using the direct queue's
-  nonzero GPU timestamp frequency without imposing a duration threshold;
+- reports average and maximum frame/terrain/cube/sky milliseconds using the
+  direct queue's nonzero GPU timestamp frequency without imposing a duration
+  threshold;
 - retires every submission by explicit shutdown;
 - verifies one 256-byte GPU-consumed upload and one CPU staging descriptor per
   attempt, with high-water marks of 256 bytes and one descriptor;
 - proves `static_upload_submissions == 1`,
-  `geometry_buffer_creations == 2`, `checker_texture_creations == 1`, and
+  `geometry_buffer_creations == 4`, `checker_texture_creations == 1`, and
   `cubemap_texture_creations == 1`;
 - proves six faces, one mip, six subresources, and 1,536 source bytes were
   uploaded, with `texture_srv_creations == 2`,
@@ -315,9 +337,10 @@ deadline, and is registered with a 240-second CTest timeout. A successful run:
 - proves scene and sky matrix-change counts are each at least three for the
   initial frame, aspect-changing resize, and scripted yaw at the
   three-quarter checkpoint;
-- on paths that exercise minimization, verifies no cube/sky draw, texture
-  binding, camera upload, depth clear, PIX frame/pass event, timestamp
-  write/resolve, or timing-sample consumption occurs while minimized;
+- on paths that exercise minimization, verifies no terrain/cube/sky draw,
+  terrain-bounds draw, texture binding, camera upload, depth clear, PIX
+  frame/pass event, timestamp write/resolve, or timing-sample consumption
+  occurs while minimized;
 - explicitly shuts down and validates presentation children;
 - posts and accepts the native close request; and
 - observes final HWND destruction.
@@ -326,9 +349,10 @@ Early close, dropped lifecycle events, occlusion that prevents progress,
 deadline expiry, a dimension mismatch, any graphics failure, incomplete close,
 or a final count other than the selected 1,000/120 target returns a nonzero
 process exit code.
-The smoke validates compilation, resource binding, indexed draw and depth
-submission, aspect propagation, lifetime, and diagnostics; it does not read
-back or compare the final pixels.
+The smoke automatically selects solid terrain for the first half and wireframe
+for the second half. It validates compilation, resource binding, indexed draw
+and depth submission, aspect propagation, lifetime, and diagnostics; it does
+not read back or compare the final pixels.
 
 CTest runs hardware, packaged WARP, and packaged WARP with GPU-based validation
 as separate serial processes. The focused validation test's 240-second CTest
@@ -339,14 +363,14 @@ unit tests.
 
 ## Explicit non-goals
 
-S-002 does not expose a public/general upload allocator, global upload ring,
+T-001 does not expose a public/general upload allocator, global upload ring,
 persistent descriptor allocator, generic deferred-destruction system, or
 readback/image validation. Its timestamp query heap and readback buffer are a
 fixed presentation diagnostic, not a general query allocator or asynchronous
-readback service. Its two-slot shader-visible heap, root signature, geometry,
-checker, visible cubemap SRV, and two PSOs remain deliberately specific to this
-proof, not a general mesh manager, material layout, pipeline cache, or
-hot-reload boundary.
+readback service. Its two-slot shader-visible heap, focused root signatures,
+static scene geometry, checker, visible cubemap SRV, and fixed PSOs remain
+deliberately specific to this proof, not a general mesh manager, material
+layout, pipeline cache, or hot-reload boundary.
 
 The graph remains frame-local, direct-queue, serial, and limited to imported
 whole resources. It adds no graph-owned transients, lifetime/aliasing analysis,
@@ -370,4 +394,6 @@ compilation, execution, barrier, and accounting rules. See
 details plus manual PIX acceptance. See
 [the DDS cubemap contract](DDS_CUBEMAP.md) for asset validation, orientation,
 deployment, upload, and persistent-SRV rules, and
-[the skybox contract](SKYBOX.md) for the visible background acceptance.
+[the skybox contract](SKYBOX.md) for the visible background acceptance. See
+[the terrain contract](TERRAIN.md) for the deterministic tile and diagnostic
+rendering modes.

@@ -114,8 +114,8 @@ the current non-preview main release; at the time of this contract that is
 `2603.25`. Preview PIX releases are reserved for isolated DirectX preview
 experiments. Shark builds and runs G-007 without the desktop application
 because the pinned WinPixEventRuntime is project-restored; PIX itself is needed
-only to open a capture and inspect `StaticCubeUpload`, `Frame`, and
-`TexturedCube`.
+only to open a capture and inspect `StaticSceneUpload`, `Frame`, `Terrain`,
+`TexturedCube`, and `Skybox`.
 
 An optional user-run installation command is:
 

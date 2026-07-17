@@ -1,7 +1,7 @@
 # HLSL Graphics Pipeline Contract
 
-- **Completed through:** `S-002`
-- **Last verified:** July 16, 2026
+- **Completed through:** `T-001`
+- **Last verified:** July 17, 2026
 
 G-004 established one reproducible path from project-owned HLSL to a real
 Direct3D 12 draw. G-005 keeps that build contract and replaces the
@@ -10,7 +10,9 @@ constants, an SRV, a static sampler, and reversed-Z depth. G-006 keeps the
 shader, root signature, and PSO unchanged while recording that draw through the
 `TexturedCube` render-graph pass. S-002 adds a dedicated build-time skybox
 program and immutable PSO for the ordered `Skybox` pass. These remain focused
-pipelines, not a general shader asset system or renderer abstraction.
+pipelines, not a general shader asset system or renderer abstraction. T-001
+adds a build-time position/normal terrain program, a dedicated root signature,
+solid/wireframe surface PSOs, and a bounds-line PSO.
 
 ## Pinned compiler boundary
 
@@ -30,6 +32,7 @@ The current program consists of:
 ```text
 shaders/cube/cube.hlsl
 shaders/sky/skybox.hlsl
+shaders/terrain/terrain.hlsl
 shaders/shared/camera_constants.hlsli
 ```
 
@@ -55,7 +58,7 @@ DXIL, a generated C++ byte-array header, a PDB, and a depfile under:
 out/build/windows-vs2026/generated/shaders/<Config>/
 ```
 
-`SharkSandbox` compiles all four generated stage headers into the executable. Runtime does
+`SharkSandbox` compiles all six generated stage headers into the executable. Runtime does
 not open or locate the adjacent `.dxil` files. All generated artifacts remain
 under ignored `out/` and must not be committed.
 
@@ -68,8 +71,8 @@ either the primary `.hlsl` or shared `.hlsli` rebuilds both stages.
 
 CTest owns three shader build checks:
 
-- both depfiles must name `cube.hlsl` and `camera_constants.hlsli`, and a
-  separate build-tree include edit must regenerate its compiled shader;
+- normal shader depfiles must name their primary HLSL and shared camera include,
+  and a separate build-tree include edit must regenerate its compiled shader;
 - `malformed.hlsl` must fail with its expected undeclared-identifier
   diagnostic; and
 - `warning.hlsl` must fail with its expected warning promoted by `-WX`.
@@ -83,7 +86,7 @@ the normal build.
 ## Runtime bytecode boundary
 
 The public D3D12 presentation API accepts COM-free `ShaderBytecodeView` records:
-a pointer plus byte count for each cube and skybox stage. Presentation checks for the DXIL
+a pointer plus byte count for each cube, skybox, and terrain stage. Presentation checks for the DXIL
 container signature, then borrows those arrays synchronously while creating the
 graphics PSO. Direct3D performs full bytecode and stage compatibility validation
 during `CreateGraphicsPipelineState`; Presentation retains no caller pointer.
@@ -106,9 +109,16 @@ direction; the sky pixel shader samples `TextureCube` through the same logical
 synchronous PSO creation; Presentation retains no caller-owned source or
 bytecode pointer.
 
+The terrain vertex shader consumes `POSITION` at byte offset 0 and `NORMAL` at
+byte offset 12 from a 24-byte interleaved stream. It transforms position by the
+same scene matrix and passes the area-weighted smooth normal to the pixel
+shader. The terrain pixel shader normalizes and maps that value from `[-1, 1]`
+to RGB `[0, 1]`; bounds vertices carry a fixed magenta-biased diagnostic
+direction through the same field.
+
 ## Root signature and pipeline state
 
-Presentation creates and names one version-1 root signature. It permits
+Presentation creates and names one version-1 cube/sky root signature. It permits
 input-assembler use, denies unused hull, domain, and geometry shader root
 access, and contains:
 
@@ -122,7 +132,11 @@ same table at texture-cube slot 1. The heap and static sampler do not
 establish a general persistent descriptor allocator, bindless convention, or
 material layout.
 
-One immutable named cube PSO and one immutable named skybox PSO are created
+Terrain uses a second focused version-1 root signature with only the
+vertex-visible `b0` root CBV. It needs no descriptor heap or sampler.
+
+One immutable named cube PSO, one immutable named skybox PSO, and three
+immutable named terrain PSOs are created
 during presentation startup. Both use opaque single-sample output, triangle
 topology, culling disabled, the shared root signature, and pinned generated
 `vs_6_0`/`ps_6_0` bytecode. The cube PSO uses:
@@ -142,44 +156,54 @@ uses the same color/depth formats, compares `GREATER_EQUAL`, disables depth
 writes, and binds the read-only DSV after the graph transitions depth to
 `DEPTH_READ`.
 
-PSO creation cannot occur unexpectedly in the frame loop. Both PSOs and the root
-signature survive swap-chain resize because neither depends on the back-buffer
-instances. Explicit presentation shutdown drains and retires all frames before
-releasing the command list, PSO, and root signature.
+The solid and wireframe terrain surface PSOs use position/normal input,
+triangle topology, culling disabled, opaque color writes, reversed-Z
+`GREATER_EQUAL`, and depth writes enabled; they differ only in fill mode. The
+terrain-bounds PSO uses line topology and disables depth writes while retaining
+the same depth comparison.
+
+PSO creation cannot occur unexpectedly in the frame loop. All PSOs and both
+root signatures survive swap-chain resize because none depends on the
+back-buffer instances. Explicit presentation shutdown drains and retires all
+frames before releasing the command list, PSOs, and root signatures.
 
 ## Draw contract
 
-The static cube upload occurs once before the first frame. One direct-queue
-submission copies the 24 vertices, 36 `uint16_t` indices, deterministic `8x8`
+The static scene upload occurs once before the first frame. One direct-queue
+submission copies cube and terrain vertex/index data, the deterministic `8x8`
 one-mip checker, and all six startup-cubemap faces into immutable default-heap
-resources, transitions them to their shader/input states, signals the monotonic
-direct fence, and performs one bounded startup wait before temporary upload
-storage is released.
+resources. Six initialization barriers establish shader/input states before
+the monotonic direct fence and bounded startup wait release temporary storage.
 
 Every non-minimized frame then:
 
 1. writes one 256-byte-aligned frame record containing scene and sky matrices
    plus retained probe data in the acquired context, then preserves its
    diagnostic GPU copy;
-2. compiles one frame-local graph importing color, depth, checker, and cubemap;
-   `TexturedCube` declares color/depth writes plus its checker read, and
-   `Skybox` declares a color write, depth read, and cubemap read;
-3. resets the shared command list with the cube PSO;
-4. executes the graph's pre-cube back-buffer transition;
-5. invokes `TexturedCube`, which clears the current attachments, binds the
+2. compiles one frame-local graph importing color, depth, checker, cubemap,
+   cube vertex/index buffers, and terrain vertex/index buffers, with exact
+   reads declared by each consumer;
+3. resets the shared command list with the solid terrain PSO;
+4. executes the graph's pre-terrain back-buffer transition;
+5. invokes `Terrain`, which clears the current attachments, selects solid or
+   wireframe, draws 6,144 triangle indices, then draws 24 depth-tested bounds
+   indices without writing depth;
+6. invokes `TexturedCube`, which preserves the current attachments, binds the
    RTV/DSV pair, root signature, checker descriptor heap, root CBV, SRV table,
    physical-pixel viewport/scissor, vertex/index buffers, and triangle-list
    topology, then issues exactly `DrawIndexedInstanced(36, 1, 0, 0, 0)`;
-6. transitions depth to read-only state and invokes `Skybox`, which binds the
+7. transitions depth to read-only state and invokes `Skybox`, which binds the
    second PSO, read-only DSV, cubemap slot 1, and reused cube buffers before a
    second `DrawIndexedInstanced(36, 1, 0, 0, 0)`;
-7. restores back-buffer/depth final states; and
-8. submits, signals the context fence, and presents through the established
+8. restores back-buffer/depth final states; and
+9. submits, signals the context fence, and presents through the established
    G-003 lifecycle.
 
-The fixed presentation smoke requires two indexed draws, 36 indices each, one
-camera upload, one depth clear, two pass executions, four imported resources,
-one dependency, four graph transitions, and six elided transitions per frame.
+The fixed presentation smoke requires four indexed draws (terrain surface,
+terrain bounds, textured cube, and skybox), one camera upload, one depth clear,
+three pass executions, eight imported resources, two dependencies, four graph
+transitions, and 18 elided transitions per frame. It runs solid terrain for the
+first half and wireframe terrain for the second half.
 Hardware and normal packaged WARP must each complete 1,000 successful presents.
 The focused packaged-WARP GPU-validation path completes 120 successful presents
 with resize and rotation checks at frames 30 and 90, intentionally skips the
@@ -188,20 +212,21 @@ deadline plus a 240-second CTest timeout. Every path requires zero DirectX
 corruption/errors and no live D3D12 presentation children.
 
 The smoke does not read back or compare pixels. Visual acceptance is the
-procedurally textured cube with stable perspective and correct hidden-surface
-occlusion over a translation-invariant, rotation-responsive diagnostic sky.
+normal-visualized or wireframe terrain and depth-tested bounds, procedurally
+textured cube with stable perspective and correct hidden-surface occlusion, and
+a translation-invariant, rotation-responsive diagnostic sky.
 Command submission,
 indexed-draw/depth accounting, compiler checks, debug-layer validation, and
 WARP provide the permanent automated contract.
 
 ## Explicit non-goals
 
-S-002 adds no general shader artifact database, reflection, root-signature
+T-001 adds no general shader artifact database, reflection, root-signature
 versioning system, persistent descriptor allocator, PSO hash/cache, runtime
 compilation, hot reload, general texture/material loading, runtime mip
-generation, material/PBR system, or image comparison. Its root signature,
-two-slot proof heap, static sampler, reused geometry, and two PSOs remain
-specific to the cube-and-sky proof. The graph provides only
+generation, material/PBR system, or image comparison. Its focused root
+signatures, two-slot proof heap, static sampler, static geometry, and fixed
+PSOs remain specific to the terrain/cube/sky proof. The graph provides only
 frame-local pass/access/barrier orchestration; it is not a shader asset,
 pipeline-layout, or material abstraction.
 
@@ -211,6 +236,8 @@ coordinate, input, geometry, texture, depth, resize, and acceptance rules. See
 and barrier execution around this pipeline. See
 [the DDS cubemap contract](DDS_CUBEMAP.md) for the persistent texture, and
 [the skybox contract](SKYBOX.md) for visible orientation and depth behavior.
+See [the terrain contract](TERRAIN.md) for the deterministic surface and
+diagnostic rendering modes.
 
 ## Primary references
 

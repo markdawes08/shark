@@ -79,10 +79,14 @@ out/build/windows-vs2026/generated/shaders/Debug/cube.vertex.dxil
 out/build/windows-vs2026/generated/shaders/Debug/cube.pixel.dxil
 out/build/windows-vs2026/generated/shaders/Debug/skybox.vertex.dxil
 out/build/windows-vs2026/generated/shaders/Debug/skybox.pixel.dxil
+out/build/windows-vs2026/generated/shaders/Debug/terrain.vertex.dxil
+out/build/windows-vs2026/generated/shaders/Debug/terrain.pixel.dxil
 out/build/windows-vs2026/generated/shaders/Release/cube.vertex.dxil
 out/build/windows-vs2026/generated/shaders/Release/cube.pixel.dxil
 out/build/windows-vs2026/generated/shaders/Release/skybox.vertex.dxil
 out/build/windows-vs2026/generated/shaders/Release/skybox.pixel.dxil
+out/build/windows-vs2026/generated/shaders/Release/terrain.vertex.dxil
+out/build/windows-vs2026/generated/shaders/Release/terrain.pixel.dxil
 ```
 
 vcpkg deploys the spdlog/fmt, DirectXTex, and WinPixEventRuntime DLLs beside
@@ -94,12 +98,14 @@ local development and testing only and must never enter a packaged product.
 
 With no arguments, `SharkSandbox` initializes the highest-priority eligible
 hardware device, opens the native Win32 window, and continuously draws the
-procedural-checker cube followed by the static DDS skybox as named
-`TexturedCube` and `Skybox` graph passes. S-002 keeps the triple frame-resource
-lifecycle and resize-safe reversed-Z target, and reports separate PIX/timestamp
-intervals for both passes. Use `W`/`S` along the camera
-forward axis, `A`/`D` to strafe, `Q`/`E` to move down/up, hold `Shift` to move
-faster, and hold the right mouse button while dragging to look around.
+deterministic height tile, procedural-checker cube, and static DDS skybox as
+named `Terrain`, `TexturedCube`, and `Skybox` graph passes. T-001 keeps the
+triple frame-resource lifecycle and resize-safe reversed-Z target, and reports
+separate PIX/timestamp intervals for all three passes. Press `F1` to toggle the
+terrain between solid normal visualization and wireframe. Use `W`/`S` along
+the camera forward axis, `A`/`D` to strafe, `Q`/`E` to move down/up, hold
+`Shift` to move faster, and hold the right mouse button while dragging to look
+around.
 `Control` and `Space` are down/up aliases. Resize or minimize/restore the
 window to exercise the projection, swap-chain, depth, frame-local graph
 imports, and fence-delayed timing reuse, then close the title bar or press
@@ -113,15 +119,15 @@ neither required nor accepted. The compiler's sidecar `dxcompiler.dll` and
 `dxil.dll` remain beside that host tool; Shark does not link them or copy them
 beside `SharkSandbox.exe`.
 
-The build compiles the cube and skybox `VSMain` entry points as `vs_6_0` and
-their `PSMain` entry points as `ps_6_0`, using HLSL 2021, row-major layout,
-strict mode, and warnings as errors. DXIL, generated C++
+The build compiles the cube, skybox, and terrain `VSMain` entry points as
+`vs_6_0` and their `PSMain` entry points as `ps_6_0`, using HLSL 2021,
+row-major layout, strict mode, and warnings as errors. DXIL, generated C++
 byte arrays, PDBs, and dependency files are configuration-specific and stay
 under ignored `out/build/windows-vs2026/generated/shaders/`. The dependency
-files make edits to the shared camera include rebuild every dependent cube and
-sky stage.
+files make edits to the shared camera include rebuild every dependent cube,
+sky, and terrain stage.
 
-CTest adds three build checks: both shader depfiles must name the primary source
+CTest adds three build checks: the shader depfiles must name the primary source
 and shared include, a build-tree include edit must actually regenerate the
 compiled shader, malformed HLSL must fail under the pinned compiler, and an
 HLSL warning must fail because `-WX` is active. The expected-failure checks also
@@ -131,16 +137,18 @@ missing tool or broken build target.
 Run only the normal shader target and focused build checks with:
 
 ```powershell
-& $cmake --build --preset windows-debug --target SharkCubeShaders SharkSkyboxShaders
+& $cmake --build --preset windows-debug --target SharkCubeShaders SharkSkyboxShaders SharkTerrainShaders
 & $ctest --preset windows-debug -R '^build\.shader_'
 ```
 
 For the visual acceptance check, run `SharkSandbox` without arguments. A
-clearly textured cube must retain correct hidden-surface occlusion and
-perspective while the temporarily treated sky-blue cubemap fills the
-background. Translation must not move the sky, right-drag rotation must change
-its sampled direction, and resizing from a wide to a non-wide aspect must not
-stretch either feature. The exact source-resource orientation check is
+solid height tile must show its smooth area-weighted normal visualization,
+its depth-tested bounds overlay must enclose the tile, and `F1` must reveal
+the fixed triangle split in wireframe. The textured cube must retain correct
+hidden-surface occlusion and perspective while the temporarily treated
+sky-blue cubemap fills the background. Translation must not move the sky,
+right-drag rotation must change its sampled direction, and resizing from a wide
+to a non-wide aspect must not stretch the scene. The exact source-resource orientation check is
 documented in [the skybox contract](SKYBOX.md).
 
 ## Graphics device checks
@@ -190,7 +198,8 @@ ownership, and runtime rules.
 
 ## Presentation checks
 
-Run the fixed cube-and-sky presentation contract on hardware and packaged WARP with:
+Run the fixed terrain/cube/sky presentation contract on hardware and packaged
+WARP with:
 
 ```powershell
 & .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe --present-smoke
@@ -198,7 +207,7 @@ Run the fixed cube-and-sky presentation contract on hardware and packaged WARP w
 ```
 
 Each command shows a real PMv2-aware window, presents exactly 1,000 successful
-two-pass frames, changes the physical client area from `1280x720` to
+three-pass frames, changes the physical client area from `1280x720` to
 `960x600`, proves the projection and `D32_FLOAT` depth extent follow the
 aspect-changing resize, proves no frame is submitted while minimized, restores,
 shuts down the presentation objects before the window, and checks new
@@ -213,34 +222,40 @@ heap. A context waits only when its own allocator cannot yet be reused because
 its preceding submission fence has not completed; that checkpoint protects the
 allocator, camera bytes, and probe destination.
 
-Creation records one `StaticCubeUpload` PIX event, one static direct-queue
-upload submission, and one bounded wait for the 24-vertex/36-index cube,
-deterministic `8x8` checker, and all six faces of the app-local `8x8` sRGB DDS
-cubemap. Every submitted frame records one outer `Frame` event with nested
-`TexturedCube` and `Skybox` events. Its four-import graph declares exact
-checker/cubemap pixel-shader reads, executes both passes, one dependency, four
-recorded transitions, and six elided transitions. It
-issues two 36-index draws, two texture bindings, and one reversed-Z depth clear;
-the sky uses the read-only DSV and writes no depth.
+Creation records one `StaticSceneUpload` PIX event, one static direct-queue
+upload submission, and one bounded wait for the cube and terrain vertex/index
+buffers, deterministic `8x8` checker, and all six faces of the app-local `8x8`
+sRGB DDS cubemap. The startup list ends with six initialization barriers.
+Every submitted frame records one outer `Frame` event with nested `Terrain`,
+`TexturedCube`, and `Skybox` events. Its eight-import graph declares exact
+vertex/index and checker/cubemap reads, executes all three passes, two
+dependencies, four recorded transitions, and 18 elided transitions. It issues
+one terrain triangle draw, one terrain-bounds line draw, one 36-index
+textured-cube draw, one 36-index skybox draw, two texture bindings, and one
+reversed-Z depth clear. Terrain owns the
+clear, the cube preserves it, and the sky uses the read-only DSV and writes no
+depth.
 
-The direct queue reports its timestamp frequency once. One 18-entry query heap
-and one 144-byte persistently mapped readback buffer are split into three
-six-query frame-context slices: frame begin, cube begin/end, sky begin/end, and
-frame end. The frame interval includes the diagnostic probe copy, four graph
-barriers, and both passes but excludes its own query resolve. Each pass interval
+The direct queue reports its timestamp frequency once. One 24-entry query heap
+and one 192-byte persistently mapped readback buffer are split into three
+eight-query frame-context slices: frame begin, terrain begin/end, cube
+begin/end, sky begin/end, and frame end. The frame interval includes the
+diagnostic probe copy, four graph barriers, and all three passes but excludes
+its own query resolve. Each pass interval
 covers only its callback commands and excludes graph barriers. Results are read
 only after the owning context fence completes, using an existing reuse wait or
 resize/shutdown drain; timing adds no normal-frame drain.
 
 The summary reports graph pass/barrier counts, PIX event counts, query
 high-water/capacity, timing sample count, average/maximum frame,
-`TexturedCube`, and `Skybox` milliseconds, both draw/index counts,
+`Terrain`, `TexturedCube`, and `Skybox` milliseconds, terrain solid/wireframe
+and bounds counts, all draw/index counts,
 scene/sky matrix changes, `depth_clear_count`, depth-resource/read-only-view
 creation counts, other resource creation counts,
 context reuse, blocking reuse waits, queue drains, and upload/descriptor
-high-water marks. The fixed diagnostics invariants require six queries and one
-resolve per frame, one completed timing sample per retired submission, and a
-six-query per-context high-water. Duration magnitude is deliberately not a
+high-water marks. The fixed diagnostics invariants require eight queries and one
+resolve per frame, one completed timing sample per retired submission, and an
+eight-query per-context high-water. Duration magnitude is deliberately not a
 performance gate because adapter speed and timestamp resolution vary.
 
 Run the focused planner, D3D12 executor, and GPU timestamp-state unit coverage
@@ -250,6 +265,7 @@ directly with:
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[render-graph]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[timestamps]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[skybox]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[assets][dds][cubemap]"
 ```
 
@@ -294,7 +310,8 @@ See [the GPU diagnostics contract](GPU_DIAGNOSTICS.md) for PIX names,
 timestamp boundaries, fence-delayed readback, smoke accounting, and manual
 capture acceptance. See [the DDS cubemap contract](DDS_CUBEMAP.md) for the
 tracked fixture, strict loader, app-local deployment, startup upload, and
-persistent texture-cube SRV.
+persistent texture-cube SRV. See [the terrain contract](TERRAIN.md) for the
+deterministic source, mesh, normal, bounds, and diagnostic-mode rules.
 
 ## Visual Studio
 

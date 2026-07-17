@@ -58,6 +58,27 @@ struct TextureCubeUploadView final {
     std::size_t subresource_count{};
 };
 
+// Terrain and its diagnostic bounds are copied synchronously during create().
+// Both vertex streams use interleaved float3 POSITION / float3 NORMAL data;
+// both index streams use uint16_t.
+struct TerrainMeshUploadView final {
+    const void* vertices{};
+    std::size_t vertex_count{};
+    std::size_t vertex_stride{};
+    const std::uint16_t* indices{};
+    std::size_t index_count{};
+    const void* bounds_vertices{};
+    std::size_t bounds_vertex_count{};
+    std::size_t bounds_vertex_stride{};
+    const std::uint16_t* bounds_indices{};
+    std::size_t bounds_index_count{};
+};
+
+enum class TerrainRenderMode : std::uint8_t {
+    solid = 1,
+    wireframe,
+};
+
 struct PresentationConfig final {
     void* native_window{};
     PresentationExtent extent{1280, 720};
@@ -66,13 +87,17 @@ struct PresentationConfig final {
     ShaderBytecodeView pixel_shader{};
     ShaderBytecodeView skybox_vertex_shader{};
     ShaderBytecodeView skybox_pixel_shader{};
+    ShaderBytecodeView terrain_vertex_shader{};
+    ShaderBytecodeView terrain_pixel_shader{};
     TextureCubeUploadView startup_cubemap{};
+    TerrainMeshUploadView terrain_mesh{};
     bool synchronize_to_vertical_refresh{true};
 };
 
 struct PresentationFrameData final {
     math::Matrix4x4 view_projection{};
     math::Matrix4x4 sky_view_projection{};
+    TerrainRenderMode terrain_mode{TerrainRenderMode::solid};
 };
 
 enum class PresentStatus : std::uint8_t {
@@ -107,6 +132,7 @@ struct PresentationStats final {
     std::uint64_t pix_static_upload_events{};
     std::uint64_t pix_frame_events{};
     std::uint64_t pix_pass_events{};
+    std::uint64_t pix_terrain_events{};
     std::uint64_t pix_textured_cube_events{};
     std::uint64_t pix_skybox_events{};
     std::uint64_t gpu_timestamp_frequency_hz{};
@@ -119,6 +145,10 @@ struct PresentationStats final {
     std::uint64_t gpu_frame_min_ticks{};
     std::uint64_t gpu_frame_max_ticks{};
     std::uint64_t gpu_frame_last_ticks{};
+    std::uint64_t gpu_terrain_total_ticks{};
+    std::uint64_t gpu_terrain_min_ticks{};
+    std::uint64_t gpu_terrain_max_ticks{};
+    std::uint64_t gpu_terrain_last_ticks{};
     std::uint64_t gpu_textured_cube_total_ticks{};
     std::uint64_t gpu_textured_cube_min_ticks{};
     std::uint64_t gpu_textured_cube_max_ticks{};
@@ -131,6 +161,16 @@ struct PresentationStats final {
     std::uint64_t cube_indices{};
     std::uint64_t skybox_draw_calls{};
     std::uint64_t skybox_indices{};
+    std::uint64_t terrain_draw_calls{};
+    std::uint64_t terrain_solid_draw_calls{};
+    std::uint64_t terrain_wireframe_draw_calls{};
+    std::uint64_t terrain_bounds_draw_calls{};
+    std::uint64_t terrain_indices{};
+    std::uint64_t terrain_bounds_indices{};
+    std::uint64_t terrain_vertex_count{};
+    std::uint64_t terrain_index_count{};
+    std::uint64_t terrain_bounds_vertex_count{};
+    std::uint64_t terrain_bounds_index_count{};
     std::uint64_t camera_constant_updates{};
     std::uint64_t camera_matrix_changes{};
     std::uint64_t skybox_matrix_changes{};

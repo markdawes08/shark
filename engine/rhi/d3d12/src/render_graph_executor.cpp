@@ -80,6 +80,12 @@ core::Result<D3D12_RESOURCE_STATES> legacy_resource_state(
     case ResourceState::pixel_shader_read:
         return core::Result<D3D12_RESOURCE_STATES>::success(
             D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    case ResourceState::vertex_buffer:
+        return core::Result<D3D12_RESOURCE_STATES>::success(
+            D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+    case ResourceState::index_buffer:
+        return core::Result<D3D12_RESOURCE_STATES>::success(
+            D3D12_RESOURCE_STATE_INDEX_BUFFER);
     case ResourceState::shader_read:
         return core::Result<D3D12_RESOURCE_STATES>::success(
             D3D12_RESOURCE_STATE_ALL_SHADER_RESOURCE);

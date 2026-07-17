@@ -35,11 +35,15 @@ core::Result<GpuTimingSample> GpuTimingAccumulator::consume(
     if (raw_timestamps.size() != gpu_timestamp_queries_per_frame) {
         return core::Result<GpuTimingSample>::failure(timestamp_error(
             core::ErrorCode::invalid_argument,
-            "A GPU timing sample requires exactly six timestamps"));
+            "A GPU timing sample requires exactly eight timestamps"));
     }
 
     const auto frame_begin =
         raw_timestamps[index_of(GpuTimestampQuery::frame_begin)];
+    const auto terrain_begin =
+        raw_timestamps[index_of(GpuTimestampQuery::terrain_begin)];
+    const auto terrain_end =
+        raw_timestamps[index_of(GpuTimestampQuery::terrain_end)];
     const auto textured_cube_begin = raw_timestamps[
         index_of(GpuTimestampQuery::textured_cube_begin)];
     const auto textured_cube_end = raw_timestamps[
@@ -50,25 +54,29 @@ core::Result<GpuTimingSample> GpuTimingAccumulator::consume(
         raw_timestamps[index_of(GpuTimestampQuery::skybox_end)];
     const auto frame_end =
         raw_timestamps[index_of(GpuTimestampQuery::frame_end)];
-    if (frame_begin > textured_cube_begin ||
+    if (frame_begin > terrain_begin ||
+        terrain_begin > terrain_end ||
+        terrain_end > textured_cube_begin ||
         textured_cube_begin > textured_cube_end ||
         textured_cube_end > skybox_begin ||
         skybox_begin > skybox_end ||
         skybox_end > frame_end) {
         return core::Result<GpuTimingSample>::failure(timestamp_error(
             core::ErrorCode::invalid_state,
-            "GPU timestamps must contain ordered textured-cube and "
-            "skybox intervals inside the frame interval"));
+            "GPU timestamps must contain ordered terrain, textured-cube, "
+            "and skybox intervals inside the frame interval"));
     }
 
     const GpuTimingSample sample{
         frame_end - frame_begin,
+        terrain_end - terrain_begin,
         textured_cube_end - textured_cube_begin,
         skybox_end - skybox_begin,
     };
     constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();
     if (sample_count_ == maximum ||
         sample.frame_ticks > maximum - frame_total_ticks_ ||
+        sample.terrain_ticks > maximum - terrain_total_ticks_ ||
         sample.textured_cube_ticks >
             maximum - textured_cube_total_ticks_ ||
         sample.skybox_ticks > maximum - skybox_total_ticks_) {
@@ -79,12 +87,16 @@ core::Result<GpuTimingSample> GpuTimingAccumulator::consume(
 
     if (sample_count_ == 0) {
         frame_min_ticks_ = sample.frame_ticks;
+        terrain_min_ticks_ = sample.terrain_ticks;
         textured_cube_min_ticks_ = sample.textured_cube_ticks;
         skybox_min_ticks_ = sample.skybox_ticks;
     } else {
         frame_min_ticks_ = std::min(
             frame_min_ticks_,
             sample.frame_ticks);
+        terrain_min_ticks_ = std::min(
+            terrain_min_ticks_,
+            sample.terrain_ticks);
         textured_cube_min_ticks_ = std::min(
             textured_cube_min_ticks_,
             sample.textured_cube_ticks);
@@ -95,6 +107,9 @@ core::Result<GpuTimingSample> GpuTimingAccumulator::consume(
     frame_max_ticks_ = std::max(
         frame_max_ticks_,
         sample.frame_ticks);
+    terrain_max_ticks_ = std::max(
+        terrain_max_ticks_,
+        sample.terrain_ticks);
     textured_cube_max_ticks_ = std::max(
         textured_cube_max_ticks_,
         sample.textured_cube_ticks);
@@ -102,9 +117,11 @@ core::Result<GpuTimingSample> GpuTimingAccumulator::consume(
         skybox_max_ticks_,
         sample.skybox_ticks);
     frame_last_ticks_ = sample.frame_ticks;
+    terrain_last_ticks_ = sample.terrain_ticks;
     textured_cube_last_ticks_ = sample.textured_cube_ticks;
     skybox_last_ticks_ = sample.skybox_ticks;
     frame_total_ticks_ += sample.frame_ticks;
+    terrain_total_ticks_ += sample.terrain_ticks;
     textured_cube_total_ticks_ += sample.textured_cube_ticks;
     skybox_total_ticks_ += sample.skybox_ticks;
     ++sample_count_;
@@ -134,6 +151,26 @@ std::uint64_t GpuTimingAccumulator::frame_max_ticks() const noexcept
 std::uint64_t GpuTimingAccumulator::frame_last_ticks() const noexcept
 {
     return frame_last_ticks_;
+}
+
+std::uint64_t GpuTimingAccumulator::terrain_total_ticks() const noexcept
+{
+    return terrain_total_ticks_;
+}
+
+std::uint64_t GpuTimingAccumulator::terrain_min_ticks() const noexcept
+{
+    return terrain_min_ticks_;
+}
+
+std::uint64_t GpuTimingAccumulator::terrain_max_ticks() const noexcept
+{
+    return terrain_max_ticks_;
+}
+
+std::uint64_t GpuTimingAccumulator::terrain_last_ticks() const noexcept
+{
+    return terrain_last_ticks_;
 }
 
 std::uint64_t

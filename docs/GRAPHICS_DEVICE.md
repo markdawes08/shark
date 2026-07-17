@@ -94,11 +94,11 @@ Selection rules are strict:
 `--gpu-smoke` and `--capabilities` create no window and exit after device
 verification. `--present-smoke` accepts the normal GPU selectors and optional
 GPU-based validation, creates a real window, presents exactly 1,000 successful
-frames containing both the indexed cube and skybox, verifies
+frames containing the indexed terrain, bounds, cube, and skybox, verifies
 camera/depth/resource/graph lifecycles, and exits. The default interactive path
-keeps the device alive while the free-fly camera, textured cube, and diagnostic
-cubemap sky run as the graph's `TexturedCube` and `Skybox` passes until the
-window is closed.
+keeps the device alive while the free-fly camera, diagnostic terrain, textured
+cube, and cubemap sky run as the graph's `Terrain`, `TexturedCube`, and
+`Skybox` passes until the window is closed.
 
 ## Required and optional capabilities
 
@@ -172,15 +172,16 @@ owner-scoped graph declarations, stable hazard-aware ordering,
 cycle/access/failure validation, transition elision, exact legacy state
 mapping/alias handling, and native binding rejection.
 The presentation smoke additionally verifies all three frame contexts are
-reused, every submission compiles and executes exactly two graph passes with
-four imports, one dependency, four emitted barriers, and six elided barriers,
+reused, every submission compiles and executes exactly three graph passes with
+eight imports, two dependencies, four emitted barriers, and 18 elided
+transitions,
 and every submission retires during explicit shutdown before frame resources
 are released.
 
-Presentation shutdown explicitly drains and releases its command list, cube
-and skybox PSOs, root signature, descriptor heap, checker/cubemap textures,
-vertex/index buffers, depth texture/DSVs, swap-chain resources, and frame
-contexts before
+Presentation shutdown explicitly drains and releases its command list,
+terrain/cube/skybox PSOs, both root signatures, descriptor heap,
+checker/cubemap textures, cube/terrain vertex/index buffers, depth texture/DSVs,
+swap-chain resources, and frame contexts before
 `Device::validate_debug_state` checks new D3D12 and DXGI messages plus live
 D3D12 child objects. Debug and Release must both build and pass all registered
 tests with zero DirectX corruption or error messages. See the
@@ -191,3 +192,5 @@ draw path. See [the camera and textured-cube contract](CAMERA_AND_CUBE.md) for
 the G-005 input, math, depth, static-resource, and acceptance rules. See
 [the minimal render-graph contract](RENDER_GRAPH.md) for the G-006
 platform-independent planner and D3D12 legacy-barrier executor.
+See [the terrain contract](TERRAIN.md) for the T-001 deterministic tile and
+diagnostic rendering modes.

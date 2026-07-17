@@ -2,9 +2,9 @@
 
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
-- **Last updated:** July 16, 2026
-- **Completed through:** `S-002` - cubemap skybox rendering
-- **Next increment:** `T-001` - deterministic heightmapped terrain tile
+- **Last updated:** July 17, 2026
+- **Completed through:** `T-001` - deterministic heightmapped terrain tile
+- **Next increment:** `T-002` - canonical terrain spatial queries
 
 ## 1. Project direction
 
@@ -236,6 +236,14 @@ flowchart TD
 | `Fluids` | water depth/momentum, solver, conservation accounting, coupling | presentation or material decisions |
 | `Diagnostics` | tests, scenario capture, debug HUD, timings, validation output | production simulation policy |
 
+Through T-001, the bootstrap `RHI/D3D12::Presentation` class still combines
+renderer pass orchestration with low-level D3D12 ownership inherited from the
+first-pixel increments. The canonical terrain module remains platform
+independent and lends only derived presentation data, so no simulation boundary
+depends on D3D12. This bootstrap placement is not the durable architecture:
+`REN-001` must move pass-specific configuration, statistics, and orchestration
+behind the `Renderer` boundary before terrain materials expand it.
+
 ### Non-negotiable ownership rules
 
 1. Full-resolution `TerrainData` is the single source of truth for collision and
@@ -302,8 +310,8 @@ unstable circular solve; iterative two-way coupling is a later milestone.
   descriptors, timestamps, and a completion set containing every queue fence
   that guards reuse. G-003 establishes one allocator, bounded upload/CPU
   descriptor staging, and one direct-fence checkpoint per context while sharing
-  one graphics command list. S-002 uses one fixed six-query timestamp/readback
-  slice per context, backed by one 18-query heap and one 144-byte buffer, and
+  one graphics command list. T-001 uses one fixed eight-query timestamp/readback
+  slice per context, backed by one 24-query heap and one 192-byte buffer, and
   reuses each slice only after the same direct-fence checkpoint completes.
   Multi-queue completion sets remain later.
 - Defer destruction of GPU resources, descriptors, pipelines, and upload storage
@@ -311,10 +319,10 @@ unstable circular solve; iterative two-way coupling is a later milestone.
   verifies whole-context transient reuse. G-005 creates one persistent root
   signature/PSO, cube vertex/index buffers, checker texture/SRV, and resize-owned
   depth target. S-002 adds a second immutable PSO that renders S-001's
-  persistent six-face cubemap while reusing the same geometry and bounded
-  static-upload submission; shutdown releases every persistent
-  object after the final drain. Generic fence-keyed deferred destruction
-  remains later.
+  persistent six-face cubemap. T-001 adds terrain vertex/index buffers plus
+  solid, wireframe, and bounds PSOs in the same bounded static-upload and
+  startup lifetime; shutdown releases every persistent object after the final
+  drain. Generic fence-keyed deferred destruction remains later.
 
 ### Resources and descriptors
 
@@ -371,8 +379,9 @@ It grows in three deliberate stages:
 
 1. **Simple:** direct queue, imported committed resources, declaration
    validation, stable hazard-aware topological compilation, cycle rejection,
-   and centralized legacy barrier encoding. S-002 keeps this first form and
-   executes ordered `TexturedCube` and `Skybox` passes.
+   and centralized legacy barrier encoding. T-001 keeps this first form and
+   executes ordered `Terrain`, `TexturedCube`, and `Skybox` passes with
+   explicit texture and input-assembler reads.
 2. **Managed:** lifetime analysis, graph-owned transient placed resources,
    resource pooling, subresource scopes, and aliasing.
 3. **Optimized:** pass merging, parallel recording, and compute/copy scheduling
@@ -386,12 +395,13 @@ across resources or frames.
 ### Diagnostics from the first executable
 
 - check every `HRESULT` and name every significant D3D12 object;
-- add PIX markers around every pass and major upload; S-002 names the current
-  `StaticCubeUpload`, `Frame`, `TexturedCube`, and `Skybox` boundaries;
+- add PIX markers around every pass and major upload; T-001 names the current
+  `StaticSceneUpload`, `Frame`, `Terrain`, `TexturedCube`, and `Skybox`
+  boundaries;
 - expose per-pass CPU/GPU timestamps, draws, dispatches, descriptors, memory,
-  and queue waits; G-007 begins with direct-queue GPU intervals for the frame
-  plus separate `TexturedCube` and `Skybox` intervals, while CPU timings and
-  broader counters remain later;
+  and queue waits; T-001 reports direct-queue GPU intervals for the frame plus
+  separate `Terrain`, `TexturedCube`, and `Skybox` intervals, while CPU timings
+  and broader counters remain later;
 - keep a WARP smoke path for device creation and a deterministic basic frame;
 - treat zero debug-layer errors as an acceptance gate; and
 - test real graphics on both the discrete and integrated adapters when their
@@ -573,6 +583,7 @@ the debug layer and readable in a PIX capture.
 |---|---:|---|---|
 | `T-001` | V | Render one deterministic height tile in solid and wireframe modes with inspectable normals/bounds | `feat(terrain): render a heightmapped tile` |
 | `T-002` | - | Add exact height, normal, bounds, and ray queries; a marker rests on the visible LOD0 triangle surface | `feat(terrain): add canonical terrain queries` |
+| `REN-001` | - | Move scene-pass configuration, statistics, and orchestration out of the bootstrap D3D12 presentation class and behind the `Renderer` boundary without changing pixels or smoke accounting | `refactor(render): separate renderer orchestration from D3D12 RHI` |
 | `T-003` | V | Blend PBR albedo/normal/roughness texture arrays by slope/height or weights with normal/material debug views | `feat(terrain): add layered PBR materials` |
 | `S-003` | V | Add HDR environment conversion plus diffuse/specular IBL and verify it on terrain and one material sphere | `feat(sky): add image-based environment lighting` |
 | `T-004` | V | Split the full-resolution terrain into several chunks and add frustum culling with visible bounds/counts | `feat(terrain): add chunk culling` |
@@ -702,19 +713,21 @@ entity scale or query patterns make it useful.
 
 ## 14. Immediate next increment
 
-After `S-002` is reviewed and committed by the owner, implement only `T-001`:
+After `T-001` is reviewed and committed by the owner, implement only `T-002`:
 
-- add one deterministic height tile with inspectable bounds and normals;
-- render it in solid and wireframe diagnostic modes through the established
-  camera, depth, graph, shader, and diagnostics contracts;
-- retain the visible skybox and checker-cube baseline while keeping the change
-  independently reviewable; and
-- stop before canonical CPU terrain queries (`T-002`), PBR materials, chunks,
-  LOD, streaming, collision, weather, or fluid coupling.
+- add exact CPU height and normal sampling against the fixed LOD0 triangle
+  split;
+- add bounds and ray queries against the same canonical CPU height data;
+- place a diagnostic marker on the queried visible LOD0 surface; and
+- stop before PBR materials, chunks, LOD, streaming, collision, weather, or
+  fluid coupling.
 
-`S-002` completes M2: rotation changes the visible cubemap, translation does
-not, the cube remains in front through read-only reversed-Z depth, and both
-named passes are covered by hardware/WARP validation and bounded diagnostics.
+`T-001` begins M3 with a deterministic `33x33` CPU-owned height tile, fixed
+cell triangulation, area-weighted presentation normals, normal-encoded solid
+and wireframe rendering, and an always-present, depth-tested bounds overlay. It
+deliberately does not yet expose the canonical spatial queries assigned to
+`T-002`; the renderer-boundary cleanup remains separately reviewable as
+`REN-001` before material work begins.
 
 ## 15. Primary technical references
 

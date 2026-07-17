@@ -189,6 +189,35 @@ TEST_CASE(
         texture_result.value(),
         ResourceState::pixel_shader_read));
 
+    const auto vertex_buffer_result = builder.import_resource(
+        "vertex-buffer",
+        ExternalResourceId{5},
+        ResourceState::vertex_buffer,
+        ResourceState::vertex_buffer);
+    const auto index_buffer_result = builder.import_resource(
+        "index-buffer",
+        ExternalResourceId{6},
+        ResourceState::index_buffer,
+        ResourceState::index_buffer);
+    REQUIRE(vertex_buffer_result);
+    REQUIRE(index_buffer_result);
+    REQUIRE(builder.read(
+        depth_reader.value(),
+        vertex_buffer_result.value(),
+        ResourceState::vertex_buffer));
+    REQUIRE(builder.read(
+        depth_reader.value(),
+        index_buffer_result.value(),
+        ResourceState::index_buffer));
+    REQUIRE_FALSE(builder.write(
+        invalid_depth_writer.value(),
+        vertex_buffer_result.value(),
+        ResourceState::vertex_buffer));
+    REQUIRE_FALSE(builder.write(
+        invalid_depth_writer.value(),
+        index_buffer_result.value(),
+        ResourceState::index_buffer));
+
     GraphBuilder foreign_builder;
     const auto foreign_resource = foreign_builder.import_resource(
         "foreign",
@@ -605,8 +634,8 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "cube then skybox graph compiles exact depth-read ordering",
-    "[render-graph][transitions][dependencies][skybox]")
+    "terrain cube then skybox graph compiles exact opaque ordering",
+    "[render-graph][transitions][dependencies][terrain][skybox]")
 {
     using namespace shark;
     using namespace render_graph;
@@ -614,40 +643,92 @@ TEST_CASE(
     std::vector<std::string> execution_order;
     GraphBuilder builder;
     const auto back_buffer = builder.import_resource(
-        "back-buffer",
-        ExternalResourceId{7},
+        "BackBuffer",
+        ExternalResourceId{1},
         ResourceState::present,
         ResourceState::present);
     const auto depth = builder.import_resource(
-        "depth",
-        ExternalResourceId{9},
+        "Depth",
+        ExternalResourceId{2},
         ResourceState::depth_write,
         ResourceState::depth_write);
     const auto checker = builder.import_resource(
-        "checker",
-        ExternalResourceId{11},
+        "Checker",
+        ExternalResourceId{3},
         ResourceState::pixel_shader_read,
         ResourceState::pixel_shader_read);
     const auto cubemap = builder.import_resource(
-        "cubemap",
-        ExternalResourceId{12},
+        "Cubemap",
+        ExternalResourceId{4},
         ResourceState::pixel_shader_read,
         ResourceState::pixel_shader_read);
+    const auto cube_vertex_buffer = builder.import_resource(
+        "CubeVertexBuffer",
+        ExternalResourceId{5},
+        ResourceState::vertex_buffer,
+        ResourceState::vertex_buffer);
+    const auto cube_index_buffer = builder.import_resource(
+        "CubeIndexBuffer",
+        ExternalResourceId{6},
+        ResourceState::index_buffer,
+        ResourceState::index_buffer);
+    const auto terrain_vertex_buffer = builder.import_resource(
+        "TerrainVertexBuffer",
+        ExternalResourceId{7},
+        ResourceState::vertex_buffer,
+        ResourceState::vertex_buffer);
+    const auto terrain_index_buffer = builder.import_resource(
+        "TerrainIndexBuffer",
+        ExternalResourceId{8},
+        ResourceState::index_buffer,
+        ResourceState::index_buffer);
     REQUIRE(back_buffer);
     REQUIRE(depth);
     REQUIRE(checker);
     REQUIRE(cubemap);
+    REQUIRE(cube_vertex_buffer);
+    REQUIRE(cube_index_buffer);
+    REQUIRE(terrain_vertex_buffer);
+    REQUIRE(terrain_index_buffer);
 
+    const auto terrain = builder.add_pass(
+        "Terrain",
+        [back_buffer = back_buffer.value(),
+         depth = depth.value(),
+         terrain_vertex_buffer = terrain_vertex_buffer.value(),
+         terrain_index_buffer = terrain_index_buffer.value(),
+         &execution_order](const PassContext& context) {
+            const auto color = context.write(back_buffer);
+            const auto depth_target = context.write(depth);
+            const auto vertices = context.read(
+                terrain_vertex_buffer);
+            const auto indices = context.read(
+                terrain_index_buffer);
+            if (!color || !depth_target || !vertices || !indices) {
+                return core::Result<void>::failure(core::Error{
+                    core::ErrorCategory::graphics,
+                    core::ErrorCode::invalid_state,
+                    "declared terrain resources were unavailable",
+                });
+            }
+            execution_order.emplace_back("Terrain");
+            return core::Result<void>::success();
+        });
     const auto cube = builder.add_pass(
         "TexturedCube",
         [back_buffer = back_buffer.value(),
          depth = depth.value(),
          checker = checker.value(),
+         cube_vertex_buffer = cube_vertex_buffer.value(),
+         cube_index_buffer = cube_index_buffer.value(),
          &execution_order](const PassContext& context) {
             const auto color = context.write(back_buffer);
             const auto depth_target = context.write(depth);
             const auto texture = context.read(checker);
-            if (!color || !depth_target || !texture) {
+            const auto vertices = context.read(cube_vertex_buffer);
+            const auto indices = context.read(cube_index_buffer);
+            if (!color || !depth_target || !texture ||
+                !vertices || !indices) {
                 return core::Result<void>::failure(core::Error{
                     core::ErrorCategory::graphics,
                     core::ErrorCode::invalid_state,
@@ -662,11 +743,16 @@ TEST_CASE(
         [back_buffer = back_buffer.value(),
          depth = depth.value(),
          cubemap = cubemap.value(),
+         cube_vertex_buffer = cube_vertex_buffer.value(),
+         cube_index_buffer = cube_index_buffer.value(),
          &execution_order](const PassContext& context) {
             const auto color = context.write(back_buffer);
             const auto depth_target = context.read(depth);
             const auto texture = context.read(cubemap);
-            if (!color || !depth_target || !texture) {
+            const auto vertices = context.read(cube_vertex_buffer);
+            const auto indices = context.read(cube_index_buffer);
+            if (!color || !depth_target || !texture ||
+                !vertices || !indices) {
                 return core::Result<void>::failure(core::Error{
                     core::ErrorCategory::graphics,
                     core::ErrorCode::invalid_state,
@@ -676,8 +762,25 @@ TEST_CASE(
             execution_order.emplace_back("Skybox");
             return core::Result<void>::success();
         });
+    REQUIRE(terrain);
     REQUIRE(cube);
     REQUIRE(skybox);
+    REQUIRE(builder.write(
+        terrain.value(),
+        back_buffer.value(),
+        ResourceState::render_target));
+    REQUIRE(builder.write(
+        terrain.value(),
+        depth.value(),
+        ResourceState::depth_write));
+    REQUIRE(builder.read(
+        terrain.value(),
+        terrain_vertex_buffer.value(),
+        ResourceState::vertex_buffer));
+    REQUIRE(builder.read(
+        terrain.value(),
+        terrain_index_buffer.value(),
+        ResourceState::index_buffer));
     REQUIRE(builder.write(
         cube.value(),
         back_buffer.value(),
@@ -690,6 +793,14 @@ TEST_CASE(
         cube.value(),
         checker.value(),
         ResourceState::pixel_shader_read));
+    REQUIRE(builder.read(
+        cube.value(),
+        cube_vertex_buffer.value(),
+        ResourceState::vertex_buffer));
+    REQUIRE(builder.read(
+        cube.value(),
+        cube_index_buffer.value(),
+        ResourceState::index_buffer));
     REQUIRE(builder.write(
         skybox.value(),
         back_buffer.value(),
@@ -702,64 +813,128 @@ TEST_CASE(
         skybox.value(),
         cubemap.value(),
         ResourceState::pixel_shader_read));
+    REQUIRE(builder.read(
+        skybox.value(),
+        cube_vertex_buffer.value(),
+        ResourceState::vertex_buffer));
+    REQUIRE(builder.read(
+        skybox.value(),
+        cube_index_buffer.value(),
+        ResourceState::index_buffer));
 
     auto graph = compile_graph(std::move(builder));
-    REQUIRE(graph.passes().size() == 2);
-    REQUIRE(graph.passes()[0].name == "TexturedCube");
-    REQUIRE(graph.passes()[1].name == "Skybox");
+    REQUIRE(graph.passes().size() == 3);
+    REQUIRE(graph.passes()[0].name == "Terrain");
+    REQUIRE(graph.passes()[1].name == "TexturedCube");
+    REQUIRE(graph.passes()[2].name == "Skybox");
 
+    const auto& compiled_terrain = find_pass(graph, "Terrain");
     const auto& compiled_cube = find_pass(graph, "TexturedCube");
     const auto& compiled_skybox = find_pass(graph, "Skybox");
-    REQUIRE(compiled_cube.dependencies.empty());
+    REQUIRE(compiled_terrain.dependencies.empty());
+    REQUIRE((compiled_cube.dependencies ==
+        std::vector<PassHandle>{terrain.value()}));
     REQUIRE((compiled_skybox.dependencies ==
         std::vector<PassHandle>{cube.value()}));
-    REQUIRE(compiled_cube.transitions.size() == 1);
-    REQUIRE((compiled_cube.transitions[0] == ResourceTransition{
+    REQUIRE(compiled_terrain.accesses.size() == 4);
+    REQUIRE(
+        compiled_terrain.accesses[2].resource ==
+        terrain_vertex_buffer.value());
+    REQUIRE(
+        compiled_terrain.accesses[2].state ==
+        ResourceState::vertex_buffer);
+    REQUIRE(
+        compiled_terrain.accesses[2].mode == AccessMode::read);
+    REQUIRE(
+        compiled_terrain.accesses[3].resource ==
+        terrain_index_buffer.value());
+    REQUIRE(
+        compiled_terrain.accesses[3].state ==
+        ResourceState::index_buffer);
+    REQUIRE(
+        compiled_terrain.accesses[3].mode == AccessMode::read);
+    REQUIRE(compiled_cube.accesses.size() == 5);
+    REQUIRE(
+        compiled_cube.accesses[3].resource ==
+        cube_vertex_buffer.value());
+    REQUIRE(
+        compiled_cube.accesses[3].state ==
+        ResourceState::vertex_buffer);
+    REQUIRE(compiled_cube.accesses[3].mode == AccessMode::read);
+    REQUIRE(
+        compiled_cube.accesses[4].resource ==
+        cube_index_buffer.value());
+    REQUIRE(
+        compiled_cube.accesses[4].state ==
+        ResourceState::index_buffer);
+    REQUIRE(compiled_cube.accesses[4].mode == AccessMode::read);
+    REQUIRE(compiled_skybox.accesses.size() == 5);
+    REQUIRE(
+        compiled_skybox.accesses[3].resource ==
+        cube_vertex_buffer.value());
+    REQUIRE(
+        compiled_skybox.accesses[3].state ==
+        ResourceState::vertex_buffer);
+    REQUIRE(compiled_skybox.accesses[3].mode == AccessMode::read);
+    REQUIRE(
+        compiled_skybox.accesses[4].resource ==
+        cube_index_buffer.value());
+    REQUIRE(
+        compiled_skybox.accesses[4].state ==
+        ResourceState::index_buffer);
+    REQUIRE(compiled_skybox.accesses[4].mode == AccessMode::read);
+    REQUIRE(compiled_terrain.transitions.size() == 1);
+    REQUIRE((compiled_terrain.transitions[0] == ResourceTransition{
         back_buffer.value(),
-        ExternalResourceId{7},
+        ExternalResourceId{1},
         ResourceState::present,
         ResourceState::render_target,
     }));
+    REQUIRE(compiled_cube.transitions.empty());
     REQUIRE(compiled_skybox.transitions.size() == 1);
     REQUIRE((compiled_skybox.transitions[0] == ResourceTransition{
         depth.value(),
-        ExternalResourceId{9},
+        ExternalResourceId{2},
         ResourceState::depth_write,
         ResourceState::depth_read,
     }));
     REQUIRE(graph.final_transitions().size() == 2);
     REQUIRE((graph.final_transitions()[0] == ResourceTransition{
         back_buffer.value(),
-        ExternalResourceId{7},
+        ExternalResourceId{1},
         ResourceState::render_target,
         ResourceState::present,
     }));
     REQUIRE((graph.final_transitions()[1] == ResourceTransition{
         depth.value(),
-        ExternalResourceId{9},
+        ExternalResourceId{2},
         ResourceState::depth_read,
         ResourceState::depth_write,
     }));
     REQUIRE((graph.stats() == CompiledGraphStats{
-        .imported_resource_count = 4,
-        .pass_count = 2,
-        .dependency_count = 1,
+        .imported_resource_count = 8,
+        .pass_count = 3,
+        .dependency_count = 2,
         .transition_count = 4,
-        .elided_transition_count = 6,
+        .elided_transition_count = 18,
     }));
 
     RecordingTransitionRecorder recorder;
     const auto execution = graph.execute(recorder);
     REQUIRE(execution);
     REQUIRE((execution.value() == ExecutionStats{
-        .passes_executed = 2,
+        .passes_executed = 3,
         .transitions_recorded = 4,
     }));
     REQUIRE((execution_order ==
-        std::vector<std::string>{"TexturedCube", "Skybox"}));
+        std::vector<std::string>{
+            "Terrain",
+            "TexturedCube",
+            "Skybox",
+        }));
     REQUIRE(recorder.transitions.size() == 4);
     REQUIRE(recorder.transitions[0] ==
-        compiled_cube.transitions[0]);
+        compiled_terrain.transitions[0]);
     REQUIRE(recorder.transitions[1] ==
         compiled_skybox.transitions[0]);
     REQUIRE(recorder.transitions[2] ==

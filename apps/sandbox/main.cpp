@@ -6,6 +6,7 @@
 #include <shark/platform/events.hpp>
 #include <shark/rhi/d3d12/device.hpp>
 #include <shark/rhi/d3d12/presentation.hpp>
+#include <shark/terrain/height_tile.hpp>
 #include <shark/world/camera.hpp>
 
 #include "camera_controller.hpp"
@@ -15,11 +16,15 @@
 #include <cube.vertex.hpp>
 #include <skybox.pixel.hpp>
 #include <skybox.vertex.hpp>
+#include <terrain.pixel.hpp>
+#include <terrain.vertex.hpp>
 
 #include <Windows.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
@@ -35,6 +40,16 @@
 #include <vector>
 
 namespace {
+
+struct TerrainGpuVertex final {
+    shark::math::Float3 position;
+    shark::math::Float3 normal;
+};
+
+static_assert(sizeof(TerrainGpuVertex) == sizeof(float) * 6U);
+static_assert(offsetof(TerrainGpuVertex, position) == 0);
+static_assert(
+    offsetof(TerrainGpuVertex, normal) == sizeof(float) * 3U);
 
 template<typename... Visitors>
 struct EventVisitor final : Visitors... {
@@ -570,6 +585,39 @@ void log_platform_event(const shark::platform::Event& event)
         ? rhi::d3d12::TextureDataFormat::rgba8_unorm_srgb
         : rhi::d3d12::TextureDataFormat::rgba8_unorm;
 
+    const auto terrain_tile =
+        terrain::make_deterministic_height_tile();
+    auto terrain_mesh_result = terrain::build_lod0_mesh(terrain_tile);
+    if (!terrain_mesh_result) {
+        return core::Result<void>::failure(
+            std::move(terrain_mesh_result).error());
+    }
+    auto terrain_mesh = std::move(terrain_mesh_result).value();
+    std::vector<TerrainGpuVertex> terrain_vertices;
+    terrain_vertices.reserve(terrain_mesh.positions.size());
+    for (std::size_t index = 0;
+         index < terrain_mesh.positions.size();
+         ++index) {
+        terrain_vertices.push_back({
+            terrain_mesh.positions[index],
+            terrain_mesh.normals[index],
+        });
+    }
+    std::array<TerrainGpuVertex, 8> terrain_bounds_vertices{};
+    constexpr math::Float3 bounds_diagnostic_color{
+        1.0F,
+        -1.0F,
+        1.0F,
+    };
+    for (std::size_t index = 0;
+         index < terrain_bounds_vertices.size();
+         ++index) {
+        terrain_bounds_vertices[index] = TerrainGpuVertex{
+            terrain_mesh.bounds_lines.positions[index],
+            bounds_diagnostic_color,
+        };
+    }
+
     rhi::d3d12::PresentationConfig presentation_config;
     presentation_config.native_window =
         application.native_window_handle().value;
@@ -591,6 +639,14 @@ void log_platform_event(const shark::platform::Event& event)
         shark_skybox_pixel_shader,
         sizeof(shark_skybox_pixel_shader),
     };
+    presentation_config.terrain_vertex_shader = {
+        shark_terrain_vertex_shader,
+        sizeof(shark_terrain_vertex_shader),
+    };
+    presentation_config.terrain_pixel_shader = {
+        shark_terrain_pixel_shader,
+        sizeof(shark_terrain_pixel_shader),
+    };
     presentation_config.startup_cubemap = {
         .width = cubemap.width(),
         .height = cubemap.height(),
@@ -598,6 +654,18 @@ void log_platform_event(const shark::platform::Event& event)
         .format = cubemap_format,
         .subresources = cubemap_subresources.data(),
         .subresource_count = cubemap_subresources.size(),
+    };
+    presentation_config.terrain_mesh = {
+        .vertices = terrain_vertices.data(),
+        .vertex_count = terrain_vertices.size(),
+        .vertex_stride = sizeof(TerrainGpuVertex),
+        .indices = terrain_mesh.indices.data(),
+        .index_count = terrain_mesh.indices.size(),
+        .bounds_vertices = terrain_bounds_vertices.data(),
+        .bounds_vertex_count = terrain_bounds_vertices.size(),
+        .bounds_vertex_stride = sizeof(TerrainGpuVertex),
+        .bounds_indices = terrain_mesh.bounds_lines.indices.data(),
+        .bounds_index_count = terrain_mesh.bounds_lines.indices.size(),
     };
     presentation_config.synchronize_to_vertical_refresh = !smoke_mode;
     auto presentation_result = rhi::d3d12::Presentation::create(
@@ -632,18 +700,40 @@ void log_platform_event(const shark::platform::Event& event)
 
     core::log_message(
         core::LogLevel::info,
+        "terrain",
+        std::string{"Built deterministic LOD0 height tile: samples="} +
+            std::to_string(terrain_tile.sample_columns) + "x" +
+            std::to_string(terrain_tile.sample_rows) +
+            ", vertices=" +
+            std::to_string(terrain_mesh.positions.size()) +
+            ", triangles=" +
+            std::to_string(terrain_mesh.indices.size() / 3U) +
+            ", bounds=[(" +
+            std::to_string(terrain_mesh.bounds.minimum.x) + ", " +
+            std::to_string(terrain_mesh.bounds.minimum.y) + ", " +
+            std::to_string(terrain_mesh.bounds.minimum.z) + "), (" +
+            std::to_string(terrain_mesh.bounds.maximum.x) + ", " +
+            std::to_string(terrain_mesh.bounds.maximum.y) + ", " +
+            std::to_string(terrain_mesh.bounds.maximum.z) + ")]");
+
+    core::log_message(
+        core::LogLevel::info,
         "sandbox",
         smoke_mode
             ? "Running fixed " +
                 std::to_string(required_smoke_frames) +
-                "-frame cube-and-sky presentation smoke test" +
+                "-frame terrain, cube, and sky presentation smoke test" +
                 (focused_gpu_validation
                     ? " with GPU-based validation"
                     : "")
-            : "Direct3D 12 cube-and-sky presentation initialized");
+            : "Direct3D 12 terrain, cube, and sky presentation "
+              "initialized; press F1 to toggle solid/wireframe terrain");
 
     world::Camera camera;
+    camera.transform.position = {0.0F, 4.0F, 10.0F};
+    camera.transform.pitch_radians = -0.35F;
     sandbox::CameraController camera_controller;
+    auto terrain_mode = rhi::d3d12::TerrainRenderMode::solid;
     auto previous_frame_time = std::chrono::steady_clock::now();
     const auto smoke_deadline =
         std::chrono::steady_clock::now() + smoke_deadline_duration;
@@ -670,6 +760,8 @@ void log_platform_event(const shark::platform::Event& event)
     std::uint64_t timestamp_queries_when_minimized = 0;
     std::uint64_t timestamp_resolves_when_minimized = 0;
     std::uint64_t timing_samples_when_minimized = 0;
+    std::uint64_t terrain_draws_when_minimized = 0;
+    std::uint64_t terrain_bounds_draws_when_minimized = 0;
     std::uint64_t cube_draws_when_minimized = 0;
     std::uint64_t skybox_draws_when_minimized = 0;
     std::uint64_t texture_bindings_when_minimized = 0;
@@ -690,6 +782,27 @@ void log_platform_event(const shark::platform::Event& event)
                     platform::WindowFocusChangedEvent>(&event);
                 focus != nullptr) {
                 camera_controller.set_focused(focus->focused);
+            }
+            if (!smoke_mode) {
+                const auto* const key =
+                    std::get_if<platform::KeyEvent>(&event);
+                if (key != nullptr &&
+                    key->virtual_key == VK_F1 &&
+                    key->action == platform::KeyAction::pressed &&
+                    !key->repeated) {
+                    terrain_mode =
+                        terrain_mode ==
+                            rhi::d3d12::TerrainRenderMode::solid
+                        ? rhi::d3d12::TerrainRenderMode::wireframe
+                        : rhi::d3d12::TerrainRenderMode::solid;
+                    core::log_message(
+                        core::LogLevel::info,
+                        "terrain",
+                        terrain_mode ==
+                                rhi::d3d12::TerrainRenderMode::solid
+                            ? "Terrain mode: solid normal visualization"
+                            : "Terrain mode: wireframe");
+                }
             }
             camera_controller.handle_event(event);
             log_platform_event(event);
@@ -847,6 +960,10 @@ void log_platform_event(const shark::platform::Event& event)
                     stats.timestamp_resolve_batches;
                 timing_samples_when_minimized =
                     stats.gpu_timing_samples;
+                terrain_draws_when_minimized =
+                    stats.terrain_draw_calls;
+                terrain_bounds_draws_when_minimized =
+                    stats.terrain_bounds_draw_calls;
                 cube_draws_when_minimized = stats.cube_draw_calls;
                 skybox_draws_when_minimized = stats.skybox_draw_calls;
                 texture_bindings_when_minimized = stats.texture_bindings;
@@ -886,6 +1003,10 @@ void log_platform_event(const shark::platform::Event& event)
                             timestamp_resolves_when_minimized ||
                         stats.gpu_timing_samples !=
                             timing_samples_when_minimized ||
+                        stats.terrain_draw_calls !=
+                            terrain_draws_when_minimized ||
+                        stats.terrain_bounds_draw_calls !=
+                            terrain_bounds_draws_when_minimized ||
                         stats.cube_draw_calls !=
                             cube_draws_when_minimized ||
                         stats.skybox_draw_calls !=
@@ -973,6 +1094,13 @@ void log_platform_event(const shark::platform::Event& event)
                 1.0F);
             smoke_camera_pose_changed = true;
         }
+        if (smoke_mode) {
+            terrain_mode =
+                presentation.stats().presented_frames >=
+                    required_smoke_frames / 2U
+                ? rhi::d3d12::TerrainRenderMode::wireframe
+                : rhi::d3d12::TerrainRenderMode::solid;
+        }
 
         const auto presentation_extent = presentation.extent();
         const auto aspect_ratio =
@@ -990,6 +1118,7 @@ void log_platform_event(const shark::platform::Event& event)
                 matrices_result.value().view_projection,
             .sky_view_projection =
                 matrices_result.value().sky_view_projection,
+            .terrain_mode = terrain_mode,
         };
         auto present_result = presentation.present_frame(frame_data);
         if (!present_result) {
@@ -1026,7 +1155,7 @@ void log_platform_event(const shark::platform::Event& event)
         constexpr std::uint32_t expected_context_mask =
             (std::uint32_t{1} << expected_context_count) - 1;
         constexpr std::uint64_t frame_probe_bytes = 256;
-        constexpr std::uint64_t timestamp_queries_per_frame = 6;
+        constexpr std::uint64_t timestamp_queries_per_frame = 8;
         const auto attempted_presents =
             stats.presented_frames + stats.occluded_frames;
         if (stats.frame_context_count != expected_context_count ||
@@ -1048,20 +1177,22 @@ void log_platform_event(const shark::platform::Event& event)
             stats.render_graph_executions !=
                 stats.frame_submissions ||
             stats.render_graph_resource_imports !=
-                stats.frame_submissions * 4 ||
+                stats.frame_submissions * 8 ||
             stats.render_graph_pass_executions !=
-                stats.frame_submissions * 2 ||
+                stats.frame_submissions * 3 ||
             stats.render_graph_dependencies !=
-                stats.frame_submissions ||
+                stats.frame_submissions * 2 ||
             stats.render_graph_transition_barriers !=
                 stats.frame_submissions * 4 ||
             stats.render_graph_elided_transitions !=
-                stats.frame_submissions * 6 ||
+                stats.frame_submissions * 18 ||
             stats.pix_static_upload_events !=
                 stats.static_upload_submissions ||
             stats.pix_frame_events != stats.frame_submissions ||
             stats.pix_pass_events !=
                 stats.render_graph_pass_executions ||
+            stats.pix_terrain_events !=
+                stats.frame_submissions ||
             stats.pix_textured_cube_events !=
                 stats.frame_submissions ||
             stats.pix_skybox_events !=
@@ -1079,29 +1210,56 @@ void log_platform_event(const shark::platform::Event& event)
                 stats.frame_submissions ||
             stats.gpu_timing_samples != stats.frame_submissions ||
             stats.gpu_frame_total_ticks <
-                stats.gpu_textured_cube_total_ticks +
+                stats.gpu_terrain_total_ticks +
+                    stats.gpu_textured_cube_total_ticks +
                     stats.gpu_skybox_total_ticks ||
             stats.gpu_frame_last_ticks <
-                stats.gpu_textured_cube_last_ticks +
+                stats.gpu_terrain_last_ticks +
+                    stats.gpu_textured_cube_last_ticks +
                     stats.gpu_skybox_last_ticks ||
+            stats.gpu_frame_max_ticks <
+                stats.gpu_terrain_max_ticks ||
             stats.gpu_frame_max_ticks <
                 stats.gpu_textured_cube_max_ticks ||
             stats.gpu_frame_max_ticks <
                 stats.gpu_skybox_max_ticks ||
             stats.gpu_frame_min_ticks >
                 stats.gpu_frame_max_ticks ||
+            stats.gpu_terrain_min_ticks >
+                stats.gpu_terrain_max_ticks ||
             stats.gpu_textured_cube_min_ticks >
                 stats.gpu_textured_cube_max_ticks ||
             stats.gpu_skybox_min_ticks >
                 stats.gpu_skybox_max_ticks ||
             stats.cube_draw_calls != stats.frame_submissions ||
             stats.skybox_draw_calls != stats.frame_submissions ||
-            stats.cube_draw_calls + stats.skybox_draw_calls !=
+            stats.terrain_draw_calls != stats.frame_submissions ||
+            stats.terrain_bounds_draw_calls !=
+                stats.frame_submissions ||
+            stats.terrain_solid_draw_calls == 0 ||
+            stats.terrain_wireframe_draw_calls == 0 ||
+            stats.terrain_solid_draw_calls +
+                    stats.terrain_wireframe_draw_calls !=
+                stats.terrain_draw_calls ||
+            stats.terrain_draw_calls +
+                    stats.cube_draw_calls +
+                    stats.skybox_draw_calls !=
                 stats.render_graph_pass_executions ||
             stats.cube_indices !=
                 stats.cube_draw_calls * 36 ||
             stats.skybox_indices !=
                 stats.skybox_draw_calls * 36 ||
+            stats.terrain_indices !=
+                stats.terrain_draw_calls *
+                    terrain::deterministic_tile_index_count ||
+            stats.terrain_bounds_indices !=
+                stats.terrain_bounds_draw_calls * 24 ||
+            stats.terrain_vertex_count !=
+                terrain::deterministic_tile_vertex_count ||
+            stats.terrain_index_count !=
+                terrain::deterministic_tile_index_count ||
+            stats.terrain_bounds_vertex_count != 8 ||
+            stats.terrain_bounds_index_count != 24 ||
             stats.camera_constant_updates !=
                 stats.frame_submissions ||
             stats.camera_matrix_changes < 3 ||
@@ -1113,7 +1271,7 @@ void log_platform_event(const shark::platform::Event& event)
                 stats.resize_count + 1 ||
             stats.texture_bindings != stats.frame_submissions * 2 ||
             stats.static_upload_submissions != 1 ||
-            stats.geometry_buffer_creations != 2 ||
+            stats.geometry_buffer_creations != 4 ||
             stats.checker_texture_creations != 1 ||
             stats.cubemap_texture_creations != 1 ||
             stats.texture_srv_creations != 2 ||
@@ -1183,6 +1341,15 @@ void log_platform_event(const shark::platform::Event& event)
         summary.append(format_gpu_milliseconds(
             stats.gpu_frame_max_ticks,
             stats.gpu_timestamp_frequency_hz));
+        summary.append(", gpu-Terrain-ms(avg/max)=");
+        summary.append(format_gpu_milliseconds(
+            stats.gpu_terrain_total_ticks,
+            stats.gpu_timestamp_frequency_hz,
+            stats.gpu_timing_samples));
+        summary.push_back('/');
+        summary.append(format_gpu_milliseconds(
+            stats.gpu_terrain_max_ticks,
+            stats.gpu_timestamp_frequency_hz));
         summary.append(", gpu-TexturedCube-ms(avg/max)=");
         summary.append(format_gpu_milliseconds(
             stats.gpu_textured_cube_total_ticks,
@@ -1201,6 +1368,15 @@ void log_platform_event(const shark::platform::Event& event)
         summary.append(format_gpu_milliseconds(
             stats.gpu_skybox_max_ticks,
             stats.gpu_timestamp_frequency_hz));
+        summary.append(", terrain(solid/wire/bounds)-draws=");
+        summary.append(std::to_string(
+            stats.terrain_solid_draw_calls));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.terrain_wireframe_draw_calls));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.terrain_bounds_draw_calls));
         summary.append(", cube/sky-draws=");
         summary.append(std::to_string(stats.cube_draw_calls));
         summary.push_back('/');

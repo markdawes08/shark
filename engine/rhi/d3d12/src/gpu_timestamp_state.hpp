@@ -8,12 +8,14 @@
 
 namespace shark::rhi::d3d12::detail {
 
-inline constexpr std::size_t gpu_timestamp_queries_per_frame = 6;
+inline constexpr std::size_t gpu_timestamp_queries_per_frame = 8;
 inline constexpr std::size_t gpu_timestamp_result_bytes_per_frame =
     gpu_timestamp_queries_per_frame * sizeof(std::uint64_t);
 
 enum class GpuTimestampQuery : std::size_t {
     frame_begin = 0,
+    terrain_begin,
+    terrain_end,
     textured_cube_begin,
     textured_cube_end,
     skybox_begin,
@@ -38,6 +40,7 @@ struct GpuTimestampSlice final {
 
 struct GpuTimingSample final {
     std::uint64_t frame_ticks{};
+    std::uint64_t terrain_ticks{};
     std::uint64_t textured_cube_ticks{};
     std::uint64_t skybox_ticks{};
 };
@@ -52,6 +55,10 @@ public:
     [[nodiscard]] std::uint64_t frame_min_ticks() const noexcept;
     [[nodiscard]] std::uint64_t frame_max_ticks() const noexcept;
     [[nodiscard]] std::uint64_t frame_last_ticks() const noexcept;
+    [[nodiscard]] std::uint64_t terrain_total_ticks() const noexcept;
+    [[nodiscard]] std::uint64_t terrain_min_ticks() const noexcept;
+    [[nodiscard]] std::uint64_t terrain_max_ticks() const noexcept;
+    [[nodiscard]] std::uint64_t terrain_last_ticks() const noexcept;
     [[nodiscard]] std::uint64_t textured_cube_total_ticks() const noexcept;
     [[nodiscard]] std::uint64_t textured_cube_min_ticks() const noexcept;
     [[nodiscard]] std::uint64_t textured_cube_max_ticks() const noexcept;
@@ -67,6 +74,10 @@ private:
     std::uint64_t frame_min_ticks_{};
     std::uint64_t frame_max_ticks_{};
     std::uint64_t frame_last_ticks_{};
+    std::uint64_t terrain_total_ticks_{};
+    std::uint64_t terrain_min_ticks_{};
+    std::uint64_t terrain_max_ticks_{};
+    std::uint64_t terrain_last_ticks_{};
     std::uint64_t textured_cube_total_ticks_{};
     std::uint64_t textured_cube_min_ticks_{};
     std::uint64_t textured_cube_max_ticks_{};

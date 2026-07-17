@@ -1,19 +1,21 @@
 # Static Cubemap Skybox Contract
 
-- **Completed through:** `S-002`
-- **Last verified:** July 16, 2026
+- **Completed through:** `T-001`
+- **Last verified:** July 17, 2026
 
 S-002 turns the validated S-001 DDS cubemap into Shark's second visible
 rendering feature. Every submitted frame draws the existing textured cube and
 then a named `Skybox` render-graph pass. Camera rotation changes the sampled
 direction, camera translation does not move the sky, and the existing
 reversed-Z depth buffer keeps the cube in front.
+T-001 now draws terrain before the cube, so both opaque features remain in
+front of the same far-depth sky.
 
 The source remains the project-owned `8x8` diagnostic orientation cubemap, not
 a photographed or procedural atmosphere. Its six faces use red-channel tags
 `32, 64, 96, 128, 160, 192` for `+X, -X, +Y, -Y, +Z, -Z`; green increases
-across each stored row and blue down each stored column. The default
-zero-yaw/zero-pitch camera samples the `-Z` face with tag `192`.
+across each stored row and blue down each stored column. The T-001 default
+camera still samples the `-Z` face with tag `192` at its center.
 
 For a calmer background while terrain work begins, the pixel shader temporarily
 mixes the decoded fixture RGB 96% toward a fixed sky-blue shader-space color.
@@ -88,9 +90,10 @@ allocator or material layout.
 
 ## Reversed-Z background policy
 
-The `D32_FLOAT` depth texture clears to `0`. `TexturedCube` uses
-`GREATER_EQUAL` with depth writes enabled, producing depths greater than zero
-where the cube is visible. `Skybox` then uses:
+The `D32_FLOAT` depth texture clears to `0`. `Terrain` owns that clear, then
+terrain and `TexturedCube` use `GREATER_EQUAL` with depth writes enabled,
+producing depths greater than zero where either opaque feature is visible.
+`Skybox` then uses:
 
 ```text
 clip depth       0
@@ -100,9 +103,9 @@ DSV              READ_ONLY_DEPTH
 resource state   DEPTH_READ
 ```
 
-At untouched pixels, `0 >= 0` passes. At cube pixels, `0` is less than the
-nearer stored depth and the sky fails. The sky therefore fills only the far
-background and cannot overwrite either the cube color or its depth.
+At untouched pixels, `0 >= 0` passes. At opaque terrain or cube pixels, `0` is
+less than the nearer stored depth and the sky fails. The sky therefore fills
+only the far background and cannot overwrite opaque color or depth.
 
 The CPU-only DSV heap holds two views of the same extent-matched texture: the
 normal writable DSV at slot 0 and a `D3D12_DSV_FLAG_READ_ONLY_DEPTH` view at
@@ -111,39 +114,41 @@ resize. Minimized windows create no zero-sized resource and submit no pass.
 
 ## Exact frame graph
 
-The frame graph imports the current back buffer and depth texture plus the
-persistent checker and cubemap in exact `pixel_shader_read` state. It compiles
-these passes in order:
+The frame graph imports the current back buffer, depth texture, persistent
+checker/cubemap, cube vertex/index buffers, and terrain vertex/index buffers in
+their exact states. It compiles these passes in order:
 
-1. `TexturedCube` writes the color target as `render_target`, writes depth as
-   `depth_write`, reads the checker as `pixel_shader_read`, clears both
-   attachments, and draws 36 indices.
-2. `Skybox` writes the same color target as `render_target`, reads depth as
+1. `Terrain` writes the color target as `render_target`, writes depth as
+   `depth_write`, reads its buffers, clears both attachments, and draws the
+   surface plus bounds.
+2. `TexturedCube` preserves the attachments, writes color/depth, reads its
+   buffers and checker, and draws 36 indices.
+3. `Skybox` writes the same color target as `render_target`, reads depth as
    `depth_read`, reads the cubemap as `pixel_shader_read`, binds descriptor slot
    1, and draws the reused 36 indices without clearing.
 
-The color write-after-write and depth read-after-write hazards produce one
-deduplicated dependency from `TexturedCube` to `Skybox`. One frame compiles:
+The hazards produce dependencies `Terrain -> TexturedCube -> Skybox`. One
+frame compiles:
 
 ```text
-imports                 4
-passes                  2
-dependencies            1
+imports                 8
+passes                  3
+dependencies            2
 emitted transitions     4
-elided transitions      6
+elided transitions      18
 ```
 
 The emitted barriers are:
 
 ```text
-BackBuffer  PRESENT       -> RENDER_TARGET  before TexturedCube
+BackBuffer  PRESENT       -> RENDER_TARGET  before Terrain
 DepthBuffer DEPTH_WRITE   -> DEPTH_READ     before Skybox
 BackBuffer  RENDER_TARGET -> PRESENT        after Skybox
 DepthBuffer DEPTH_READ    -> DEPTH_WRITE    after Skybox
 ```
 
-The cube's equal-state depth/checker accesses, sky's equal-state color/cubemap
-accesses, and both textures' equal final states are elided. The graph therefore
+Equal-state attachment, buffer, and texture accesses and final states are
+elided. The graph therefore
 owns the persistent texture-read declarations as well as all per-frame
 attachment transitions, without introducing a texture barrier.
 
@@ -152,38 +157,42 @@ attachment transitions, without introducing a texture barrier.
 The stable PIX hierarchy is:
 
 ```text
-StaticCubeUpload                    once during startup
+StaticSceneUpload                   once during startup
 Frame                               once per submitted frame
+  Terrain                           once per submitted frame
   TexturedCube                      once per submitted frame
   Skybox                            once per submitted frame
 ```
 
-Each frame context owns six query slots and 48 readback bytes:
+Each frame context owns eight query slots and 64 readback bytes:
 
 ```text
 0 frame_begin
-1 textured_cube_begin
-2 textured_cube_end
-3 skybox_begin
-4 skybox_end
-5 frame_end
+1 terrain_begin
+2 terrain_end
+3 textured_cube_begin
+4 textured_cube_end
+5 skybox_begin
+6 skybox_end
+7 frame_end
 ```
 
-Three contexts therefore use one fixed 18-query heap and a 144-byte mapped
-readback buffer, with query bases `0, 6, 12` and byte offsets `0, 48, 96`.
-Samples are consumed only after the existing context-completion fence; S-002
+Three contexts therefore use one fixed 24-query heap and a 192-byte mapped
+readback buffer, with query bases `0, 8, 16` and byte offsets `0, 64, 128`.
+Samples are consumed only after the existing context-completion fence; T-001
 adds no timing-only wait, normal-frame drain, or immediate GPU readback.
 
 After the fixed smoke's shutdown drain, every submitted frame must account for:
 
 ```text
-resource imports             4
-graph pass executions        2
-graph dependencies           1
+resource imports             8
+graph pass executions        3
+graph dependencies           2
 recorded transitions         4
-elided transitions           6
-PIX frame/pass events        1 / 2
-timestamp writes/resolves    6 / 1
+elided transitions           18
+PIX frame/pass events        1 / 3
+timestamp writes/resolves    8 / 1
+terrain/bounds draws         1 / 1
 cube/sky draws               1 / 1
 cube/sky indices             36 / 36
 texture bindings             2
@@ -191,10 +200,10 @@ camera uploads               1
 depth clears                 1
 ```
 
-Global query capacity is `18`, per-context high-water is `6`, and the final
+Global query capacity is `24`, per-context high-water is `8`, and the final
 sample count equals frame submissions. Frame duration encloses the probe copy,
-all four graph barriers, and both passes. `TexturedCube` and `Skybox` retain
-separate total/minimum/maximum/last tick aggregates. Timing magnitude is
+all four graph barriers, and all three passes. `Terrain`, `TexturedCube`, and
+`Skybox` retain separate total/minimum/maximum/last tick aggregates. Timing magnitude is
 diagnostic, not a performance threshold.
 
 Hardware and normal packaged WARP each run 1,000 successful presents, with
@@ -203,8 +212,9 @@ checkpoints. The focused packaged-WARP GPU-validation run uses the same
 resize and scripted-yaw checkpoints at frames 30 and 90, intentionally skips
 the already-covered minimize/restore interval, completes at 120 successful
 presents, has a 180-second internal deadline, and has a 240-second CTest
-timeout. Every path requires two 36-index draws, two texture bindings, two
-graph pass events, and six timestamps per submission; matching
+timeout. Every path requires one terrain surface draw, one bounds draw, one
+36-index textured-cube draw, one 36-index skybox draw, two texture bindings,
+three graph pass events, and eight timestamps per submission; matching
 writable/read-only DSV creation per depth-resource generation; no rendering
 progress while minimized on the normal paths that exercise it; full fence
 retirement; zero DirectX errors/corruption; and no live presentation children.
@@ -219,12 +229,13 @@ Run the interactive hardware path from the repository root:
 
 Then verify:
 
-1. The initial frame shows the checker cube surrounded by a predominantly
-   sky-blue background, not the old solid clear color or saturated fixture.
-2. Move with `W`, `A`, `S`, `D`, `Q`, and `E` without right-dragging. The cube's
+1. The initial frame shows terrain and the checker cube surrounded by a
+   predominantly sky-blue background, not the old solid clear color or
+   saturated fixture.
+2. Move with `W`, `A`, `S`, `D`, `Q`, and `E` without right-dragging. Opaque
    perspective changes, but the sky remains translation-invariant.
 3. Hold the right mouse button and drag. The subtle fixture contribution follows
-   the changed sample direction and the sky remains behind the cube.
+   the changed sample direction and the sky remains behind the opaque scene.
 4. Resize from a wide to a visibly different aspect. The sky fills the entire
    background without stretching, gaps, or validation messages.
 5. Minimize, restore, and close. No stale frame, depth artifact, or live-object
@@ -256,5 +267,5 @@ top-to-bottom stored gradients.
 S-002 adds no HDR conversion, image-based lighting, tone mapping, sun or
 atmosphere model, clouds, exposure, cubemap mip generation, reflection probes,
 texture streaming, general material loading, descriptor allocator, scene/ECS
-layer, pixel readback, or golden-image comparison. T-001 begins the first
-terrain tile; S-003 later owns HDR environment lighting.
+layer, pixel readback, or golden-image comparison. T-001 supplies only the
+current diagnostic terrain tile; S-003 later owns HDR environment lighting.

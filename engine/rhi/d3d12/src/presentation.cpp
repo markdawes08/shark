@@ -4,6 +4,7 @@
 #include "gpu_timestamp_state.hpp"
 #include "render_graph_executor.hpp"
 #include "skybox_scene_data.hpp"
+#include "terrain_scene_data.hpp"
 
 #include <directx/d3d12.h>
 #include <dxgi1_6.h>
@@ -64,12 +65,16 @@ constexpr render_graph::ExternalResourceId graph_back_buffer_id{1};
 constexpr render_graph::ExternalResourceId graph_depth_buffer_id{2};
 constexpr render_graph::ExternalResourceId graph_checker_texture_id{3};
 constexpr render_graph::ExternalResourceId graph_cubemap_id{4};
+constexpr render_graph::ExternalResourceId graph_cube_vertex_buffer_id{5};
+constexpr render_graph::ExternalResourceId graph_cube_index_buffer_id{6};
+constexpr render_graph::ExternalResourceId graph_terrain_vertex_buffer_id{7};
+constexpr render_graph::ExternalResourceId graph_terrain_index_buffer_id{8};
 
 static_assert(back_buffer_count <= 32);
 static_assert(camera_matrix_bytes == 64);
 static_assert(camera_constants_bytes == 128);
-static_assert(timestamp_query_count == 18);
-static_assert(timestamp_readback_bytes == 144);
+static_assert(timestamp_query_count == 24);
+static_assert(timestamp_readback_bytes == 192);
 
 class PixCommandListEvent final {
 public:
@@ -265,11 +270,90 @@ static_assert(
     return core::Result<void>::success();
 }
 
+[[nodiscard]] core::Result<void> validate_terrain_upload(
+    const TerrainMeshUploadView& terrain)
+{
+    constexpr auto maximum_view_bytes =
+        static_cast<std::size_t>(std::numeric_limits<UINT>::max());
+    constexpr std::size_t maximum_uint16_vertices =
+        static_cast<std::size_t>(
+            std::numeric_limits<std::uint16_t>::max()) + 1U;
+    constexpr std::size_t bounds_index_count = 24U;
+    constexpr std::size_t bounds_index_bytes =
+        bounds_index_count * sizeof(std::uint16_t);
+    const auto valid_vertex_stream = [=](
+        const void* const data,
+        const std::size_t count,
+        const std::size_t stride) {
+        return data != nullptr &&
+            count != 0 &&
+            count <= maximum_uint16_vertices &&
+            stride == detail::terrain_vertex_stride &&
+            count <= maximum_view_bytes / stride;
+    };
+    if (!valid_vertex_stream(
+            terrain.vertices,
+            terrain.vertex_count,
+            terrain.vertex_stride) ||
+        !valid_vertex_stream(
+            terrain.bounds_vertices,
+            terrain.bounds_vertex_count,
+            terrain.bounds_vertex_stride)) {
+        return core::Result<void>::failure(graphics_error(
+            core::ErrorCode::invalid_argument,
+            "Terrain vertex streams must use bounded interleaved float3 "
+            "position/normal data"));
+    }
+    if (terrain.indices == nullptr ||
+        terrain.index_count == 0 ||
+        terrain.index_count % 3U != 0 ||
+        terrain.index_count >
+            (maximum_view_bytes - bounds_index_bytes) /
+                sizeof(std::uint16_t) ||
+        terrain.bounds_indices == nullptr ||
+        terrain.bounds_vertex_count != 8 ||
+        terrain.bounds_index_count != bounds_index_count ||
+        terrain.bounds_index_count % 2U != 0) {
+        return core::Result<void>::failure(graphics_error(
+            core::ErrorCode::invalid_argument,
+            "Terrain index streams must contain bounded triangle and "
+            "eight-corner AABB line data"));
+    }
+    for (std::size_t index = 0;
+         index < terrain.index_count;
+         ++index) {
+        if (terrain.indices[index] >= terrain.vertex_count) {
+            return core::Result<void>::failure(graphics_error(
+                core::ErrorCode::invalid_argument,
+                "Terrain triangle indices reference a missing vertex"));
+        }
+    }
+    for (std::size_t index = 0;
+         index < terrain.bounds_index_count;
+         ++index) {
+        if (terrain.bounds_indices[index] >=
+            terrain.bounds_vertex_count) {
+            return core::Result<void>::failure(graphics_error(
+                core::ErrorCode::invalid_argument,
+                "Terrain AABB indices reference a missing vertex"));
+        }
+    }
+    return core::Result<void>::success();
+}
+
+[[nodiscard]] constexpr bool valid_terrain_mode(
+    const TerrainRenderMode mode) noexcept
+{
+    return mode == TerrainRenderMode::solid ||
+        mode == TerrainRenderMode::wireframe;
+}
+
 [[nodiscard]] bool valid_frame_data(
     const PresentationFrameData& frame_data) noexcept
 {
     return math::is_finite(frame_data.view_projection) &&
-        math::is_finite(frame_data.sky_view_projection);
+        math::is_finite(frame_data.sky_view_projection) &&
+        valid_terrain_mode(frame_data.terrain_mode);
 }
 
 [[nodiscard]] D3D12_BLEND_DESC opaque_blend_description() noexcept
@@ -313,6 +397,14 @@ static_assert(
     return description;
 }
 
+[[nodiscard]] D3D12_RASTERIZER_DESC terrain_rasterizer_description(
+    const D3D12_FILL_MODE fill_mode) noexcept
+{
+    auto description = cube_rasterizer_description();
+    description.FillMode = fill_mode;
+    return description;
+}
+
 [[nodiscard]] D3D12_DEPTH_STENCIL_DESC reversed_depth_description()
     noexcept
 {
@@ -340,6 +432,15 @@ static_assert(
     auto description = reversed_depth_description();
     description.DepthWriteMask = detail::skybox_depth_write_mask;
     description.DepthFunc = detail::skybox_depth_comparison;
+    return description;
+}
+
+[[nodiscard]] D3D12_DEPTH_STENCIL_DESC
+terrain_bounds_depth_description() noexcept
+{
+    auto description = reversed_depth_description();
+    description.DepthWriteMask =
+        detail::terrain_bounds_depth_write_mask;
     return description;
 }
 
@@ -572,7 +673,7 @@ public:
             return core::Result<UINT>::failure(graphics_error(
                 core::ErrorCode::invalid_state,
                 "The frame timestamp allocator returned an invalid "
-                "six-query slice"));
+                "eight-query slice"));
         }
 
         context.timestamp_query_base =
@@ -631,6 +732,14 @@ public:
             gpu_timing.frame_max_ticks();
         statistics.gpu_frame_last_ticks =
             gpu_timing.frame_last_ticks();
+        statistics.gpu_terrain_total_ticks =
+            gpu_timing.terrain_total_ticks();
+        statistics.gpu_terrain_min_ticks =
+            gpu_timing.terrain_min_ticks();
+        statistics.gpu_terrain_max_ticks =
+            gpu_timing.terrain_max_ticks();
+        statistics.gpu_terrain_last_ticks =
+            gpu_timing.terrain_last_ticks();
         statistics.gpu_textured_cube_total_ticks =
             gpu_timing.textured_cube_total_ticks();
         statistics.gpu_textured_cube_min_ticks =
@@ -842,53 +951,63 @@ public:
         return core::Result<void>::success();
     }
 
-    [[nodiscard]] core::Result<void> record_textured_cube_pass(
+    [[nodiscard]] core::Result<void> record_terrain_pass(
         const render_graph::PassContext& pass_context,
         const render_graph::ResourceHandle back_buffer_resource,
         const render_graph::ResourceHandle depth_buffer_resource,
-        const render_graph::ResourceHandle checker_texture_resource,
+        const render_graph::ResourceHandle terrain_vertex_resource,
+        const render_graph::ResourceHandle terrain_index_resource,
         FrameContext& context,
         const UINT back_buffer_index,
-        const UINT timestamp_query_base)
+        const UINT timestamp_query_base,
+        const TerrainRenderMode mode)
     {
-        auto back_buffer_access =
-            pass_context.write(back_buffer_resource);
+        auto back_buffer_access = pass_context.write(
+            back_buffer_resource);
         if (!back_buffer_access) {
             return core::Result<void>::failure(
                 std::move(back_buffer_access).error());
         }
-        auto depth_buffer_access =
-            pass_context.write(depth_buffer_resource);
+        auto depth_buffer_access = pass_context.write(
+            depth_buffer_resource);
         if (!depth_buffer_access) {
             return core::Result<void>::failure(
                 std::move(depth_buffer_access).error());
         }
-        auto checker_texture_access =
-            pass_context.read(checker_texture_resource);
-        if (!checker_texture_access) {
+        auto terrain_vertex_access = pass_context.read(
+            terrain_vertex_resource);
+        if (!terrain_vertex_access) {
             return core::Result<void>::failure(
-                std::move(checker_texture_access).error());
+                std::move(terrain_vertex_access).error());
+        }
+        auto terrain_index_access = pass_context.read(
+            terrain_index_resource);
+        if (!terrain_index_access) {
+            return core::Result<void>::failure(
+                std::move(terrain_index_access).error());
         }
         if (back_buffer_access.value() != graph_back_buffer_id ||
             depth_buffer_access.value() != graph_depth_buffer_id ||
-            checker_texture_access.value() !=
-                graph_checker_texture_id) {
+            terrain_vertex_access.value() !=
+                graph_terrain_vertex_buffer_id ||
+            terrain_index_access.value() !=
+                graph_terrain_index_buffer_id) {
             return core::Result<void>::failure(graphics_error(
                 core::ErrorCode::invalid_state,
-                "The textured-cube pass resolved unexpected graph "
-                "resource bindings"));
+                "The terrain pass resolved unexpected graph resource "
+                "bindings"));
         }
 
         PixCommandListEvent pass_event{
             command_list.Get(),
-            2,
-            "TexturedCube"};
+            4,
+            "Terrain"};
         command_list->EndQuery(
             timestamp_query_heap.Get(),
             D3D12_QUERY_TYPE_TIMESTAMP,
             timestamp_query_index(
                 timestamp_query_base,
-                detail::GpuTimestampQuery::textured_cube_begin));
+                detail::GpuTimestampQuery::terrain_begin));
 
         auto render_target =
             rtv_heap->GetCPUDescriptorHandleForHeapStart();
@@ -935,6 +1054,144 @@ public:
             static_cast<LONG>(current_extent.width),
             static_cast<LONG>(current_extent.height),
         };
+        command_list->SetPipelineState(
+            mode == TerrainRenderMode::wireframe
+                ? terrain_wireframe_pipeline.Get()
+                : terrain_solid_pipeline.Get());
+        command_list->SetGraphicsRootSignature(
+            terrain_root_signature.Get());
+        command_list->SetGraphicsRootConstantBufferView(
+            0,
+            context.upload_buffer->GetGPUVirtualAddress() +
+                context.staged_probe_offset);
+        command_list->RSSetViewports(1, &viewport);
+        command_list->RSSetScissorRects(1, &scissor_rectangle);
+        command_list->IASetVertexBuffers(
+            0,
+            1,
+            &terrain_vertex_buffer_view);
+        command_list->IASetIndexBuffer(&terrain_index_buffer_view);
+        command_list->IASetPrimitiveTopology(detail::terrain_topology);
+        command_list->DrawIndexedInstanced(
+            terrain_triangle_index_count,
+            1,
+            0,
+            0,
+            0);
+
+        command_list->SetPipelineState(terrain_bounds_pipeline.Get());
+        command_list->IASetPrimitiveTopology(
+            detail::terrain_bounds_topology);
+        command_list->DrawIndexedInstanced(
+            terrain_bounds_index_count,
+            1,
+            terrain_triangle_index_count,
+            static_cast<INT>(terrain_vertex_count),
+            0);
+
+        command_list->EndQuery(
+            timestamp_query_heap.Get(),
+            D3D12_QUERY_TYPE_TIMESTAMP,
+            timestamp_query_index(
+                timestamp_query_base,
+                detail::GpuTimestampQuery::terrain_end));
+        pass_event.end();
+        return core::Result<void>::success();
+    }
+
+    [[nodiscard]] core::Result<void> record_textured_cube_pass(
+        const render_graph::PassContext& pass_context,
+        const render_graph::ResourceHandle back_buffer_resource,
+        const render_graph::ResourceHandle depth_buffer_resource,
+        const render_graph::ResourceHandle checker_texture_resource,
+        const render_graph::ResourceHandle cube_vertex_resource,
+        const render_graph::ResourceHandle cube_index_resource,
+        FrameContext& context,
+        const UINT back_buffer_index,
+        const UINT timestamp_query_base)
+    {
+        auto back_buffer_access =
+            pass_context.write(back_buffer_resource);
+        if (!back_buffer_access) {
+            return core::Result<void>::failure(
+                std::move(back_buffer_access).error());
+        }
+        auto depth_buffer_access =
+            pass_context.write(depth_buffer_resource);
+        if (!depth_buffer_access) {
+            return core::Result<void>::failure(
+                std::move(depth_buffer_access).error());
+        }
+        auto checker_texture_access =
+            pass_context.read(checker_texture_resource);
+        if (!checker_texture_access) {
+            return core::Result<void>::failure(
+                std::move(checker_texture_access).error());
+        }
+        auto cube_vertex_access =
+            pass_context.read(cube_vertex_resource);
+        if (!cube_vertex_access) {
+            return core::Result<void>::failure(
+                std::move(cube_vertex_access).error());
+        }
+        auto cube_index_access =
+            pass_context.read(cube_index_resource);
+        if (!cube_index_access) {
+            return core::Result<void>::failure(
+                std::move(cube_index_access).error());
+        }
+        if (back_buffer_access.value() != graph_back_buffer_id ||
+            depth_buffer_access.value() != graph_depth_buffer_id ||
+            checker_texture_access.value() !=
+                graph_checker_texture_id ||
+            cube_vertex_access.value() !=
+                graph_cube_vertex_buffer_id ||
+            cube_index_access.value() !=
+                graph_cube_index_buffer_id) {
+            return core::Result<void>::failure(graphics_error(
+                core::ErrorCode::invalid_state,
+                "The textured-cube pass resolved unexpected graph "
+                "resource bindings"));
+        }
+
+        PixCommandListEvent pass_event{
+            command_list.Get(),
+            2,
+            "TexturedCube"};
+        command_list->EndQuery(
+            timestamp_query_heap.Get(),
+            D3D12_QUERY_TYPE_TIMESTAMP,
+            timestamp_query_index(
+                timestamp_query_base,
+                detail::GpuTimestampQuery::textured_cube_begin));
+
+        auto render_target =
+            rtv_heap->GetCPUDescriptorHandleForHeapStart();
+        render_target.ptr += static_cast<SIZE_T>(back_buffer_index) *
+            static_cast<SIZE_T>(rtv_descriptor_increment);
+        const auto depth_stencil =
+            dsv_heap->GetCPUDescriptorHandleForHeapStart();
+        command_list->OMSetRenderTargets(
+            1,
+            &render_target,
+            FALSE,
+            &depth_stencil);
+
+        const D3D12_VIEWPORT viewport{
+            0.0F,
+            0.0F,
+            static_cast<float>(current_extent.width),
+            static_cast<float>(current_extent.height),
+            0.0F,
+            1.0F,
+        };
+        const D3D12_RECT scissor_rectangle{
+            0,
+            0,
+            static_cast<LONG>(current_extent.width),
+            static_cast<LONG>(current_extent.height),
+        };
+        command_list->SetPipelineState(cube_pipeline.Get());
         command_list->SetGraphicsRootSignature(
             cube_root_signature.Get());
         ID3D12DescriptorHeap* descriptor_heaps[]{
@@ -984,6 +1241,8 @@ public:
         const render_graph::ResourceHandle back_buffer_resource,
         const render_graph::ResourceHandle depth_buffer_resource,
         const render_graph::ResourceHandle cubemap_resource,
+        const render_graph::ResourceHandle cube_vertex_resource,
+        const render_graph::ResourceHandle cube_index_resource,
         FrameContext& context,
         const UINT back_buffer_index,
         const UINT timestamp_query_base)
@@ -1005,9 +1264,25 @@ public:
             return core::Result<void>::failure(
                 std::move(cubemap_access).error());
         }
+        auto cube_vertex_access =
+            pass_context.read(cube_vertex_resource);
+        if (!cube_vertex_access) {
+            return core::Result<void>::failure(
+                std::move(cube_vertex_access).error());
+        }
+        auto cube_index_access =
+            pass_context.read(cube_index_resource);
+        if (!cube_index_access) {
+            return core::Result<void>::failure(
+                std::move(cube_index_access).error());
+        }
         if (back_buffer_access.value() != graph_back_buffer_id ||
             depth_buffer_access.value() != graph_depth_buffer_id ||
-            cubemap_access.value() != graph_cubemap_id) {
+            cubemap_access.value() != graph_cubemap_id ||
+            cube_vertex_access.value() !=
+                graph_cube_vertex_buffer_id ||
+            cube_index_access.value() !=
+                graph_cube_index_buffer_id) {
             return core::Result<void>::failure(graphics_error(
                 core::ErrorCode::invalid_state,
                 "The skybox pass resolved unexpected graph resource "
@@ -1114,7 +1389,8 @@ public:
         }
         context.timestamp_results_pending = true;
         ++statistics.pix_frame_events;
-        statistics.pix_pass_events += 2;
+        statistics.pix_pass_events += 3;
+        ++statistics.pix_terrain_events;
         ++statistics.pix_textured_cube_events;
         ++statistics.pix_skybox_events;
         statistics.timestamp_queries_written +=
@@ -1242,15 +1518,42 @@ public:
         return core::Result<void>::success();
     }
 
-    [[nodiscard]] core::Result<void> create_static_cube_resources(
-        const TextureCubeUploadView& cubemap)
+    [[nodiscard]] core::Result<void> create_static_scene_resources(
+        const TextureCubeUploadView& cubemap,
+        const TerrainMeshUploadView& terrain)
     {
         constexpr UINT64 vertex_bytes = sizeof(detail::cube_vertices);
         constexpr UINT64 index_bytes = sizeof(detail::cube_indices);
         constexpr UINT64 index_upload_offset =
             (vertex_bytes + 3U) & ~UINT64{3U};
-        constexpr UINT64 texture_upload_base =
-            (index_upload_offset + index_bytes +
+        const auto terrain_vertex_bytes =
+            static_cast<UINT64>(
+                terrain.vertex_count * terrain.vertex_stride);
+        const auto terrain_bounds_vertex_bytes =
+            static_cast<UINT64>(
+                terrain.bounds_vertex_count *
+                terrain.bounds_vertex_stride);
+        const auto terrain_index_bytes =
+            static_cast<UINT64>(
+                terrain.index_count * sizeof(std::uint16_t));
+        const auto terrain_bounds_index_bytes =
+            static_cast<UINT64>(
+                terrain.bounds_index_count *
+                sizeof(std::uint16_t));
+        const auto terrain_vertex_upload_offset =
+            (index_upload_offset + index_bytes + 3U) & ~UINT64{3U};
+        const auto terrain_bounds_vertex_upload_offset =
+            (terrain_vertex_upload_offset +
+             terrain_vertex_bytes + 3U) & ~UINT64{3U};
+        const auto terrain_index_upload_offset =
+            (terrain_bounds_vertex_upload_offset +
+             terrain_bounds_vertex_bytes + 3U) & ~UINT64{3U};
+        const auto terrain_bounds_index_upload_offset =
+            (terrain_index_upload_offset +
+             terrain_index_bytes + 3U) & ~UINT64{3U};
+        const auto texture_upload_base =
+            (terrain_bounds_index_upload_offset +
+             terrain_bounds_index_bytes +
              D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1U) &
             ~UINT64{D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1U};
 
@@ -1322,6 +1625,62 @@ public:
                 detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Object::SetName(cube indices)",
+                    result));
+        }
+        ++statistics.geometry_buffer_creations;
+
+        const auto terrain_vertex_description = buffer_description(
+            terrain_vertex_bytes + terrain_bounds_vertex_bytes);
+        result = native_device->CreateCommittedResource(
+            &default_heap,
+            D3D12_HEAP_FLAG_NONE,
+            &terrain_vertex_description,
+            D3D12_RESOURCE_STATE_COMMON,
+            nullptr,
+            IID_PPV_ARGS(&terrain_vertex_buffer));
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Device::CreateCommittedResource(terrain "
+                    "vertices)",
+                    result));
+        }
+        result = terrain_vertex_buffer->SetName(
+            L"Shark Terrain Vertex Buffer");
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Object::SetName(terrain vertices)",
+                    result));
+        }
+        ++statistics.geometry_buffer_creations;
+
+        const auto terrain_index_description = buffer_description(
+            terrain_index_bytes + terrain_bounds_index_bytes);
+        result = native_device->CreateCommittedResource(
+            &default_heap,
+            D3D12_HEAP_FLAG_NONE,
+            &terrain_index_description,
+            D3D12_RESOURCE_STATE_COMMON,
+            nullptr,
+            IID_PPV_ARGS(&terrain_index_buffer));
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Device::CreateCommittedResource(terrain "
+                    "indices)",
+                    result));
+        }
+        result = terrain_index_buffer->SetName(
+            L"Shark Terrain Index Buffer");
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Object::SetName(terrain indices)",
                     result));
         }
         ++statistics.geometry_buffer_creations;
@@ -1490,7 +1849,8 @@ public:
                     "ID3D12Device::CreateCommittedResource(static upload)",
                     result));
         }
-        result = upload_buffer->SetName(L"Shark Cube Static Upload Buffer");
+        result = upload_buffer->SetName(
+            L"Shark Static Scene Upload Buffer");
         if (FAILED(result)) {
             return core::Result<void>::failure(
                 detail::DeviceAccess::graphics_failure(
@@ -1546,6 +1906,24 @@ public:
             upload_data + index_upload_offset,
             detail::cube_indices.data(),
             index_bytes);
+        std::memcpy(
+            upload_data + terrain_vertex_upload_offset,
+            terrain.vertices,
+            static_cast<std::size_t>(terrain_vertex_bytes));
+        std::memcpy(
+            upload_data + terrain_bounds_vertex_upload_offset,
+            terrain.bounds_vertices,
+            static_cast<std::size_t>(
+                terrain_bounds_vertex_bytes));
+        std::memcpy(
+            upload_data + terrain_index_upload_offset,
+            terrain.indices,
+            static_cast<std::size_t>(terrain_index_bytes));
+        std::memcpy(
+            upload_data + terrain_bounds_index_upload_offset,
+            terrain.bounds_indices,
+            static_cast<std::size_t>(
+                terrain_bounds_index_bytes));
         constexpr UINT64 checker_source_row_bytes =
             detail::checker_width * 4U;
         static_assert(
@@ -1690,7 +2068,7 @@ public:
         PixCommandListEvent static_upload_event{
             command_list.Get(),
             3,
-            "StaticCubeUpload"};
+            "StaticSceneUpload"};
         command_list->CopyBufferRegion(
             vertex_buffer.Get(),
             0,
@@ -1703,6 +2081,30 @@ public:
             upload_buffer.Get(),
             index_upload_offset,
             index_bytes);
+        command_list->CopyBufferRegion(
+            terrain_vertex_buffer.Get(),
+            0,
+            upload_buffer.Get(),
+            terrain_vertex_upload_offset,
+            terrain_vertex_bytes);
+        command_list->CopyBufferRegion(
+            terrain_vertex_buffer.Get(),
+            terrain_vertex_bytes,
+            upload_buffer.Get(),
+            terrain_bounds_vertex_upload_offset,
+            terrain_bounds_vertex_bytes);
+        command_list->CopyBufferRegion(
+            terrain_index_buffer.Get(),
+            0,
+            upload_buffer.Get(),
+            terrain_index_upload_offset,
+            terrain_index_bytes);
+        command_list->CopyBufferRegion(
+            terrain_index_buffer.Get(),
+            terrain_index_bytes,
+            upload_buffer.Get(),
+            terrain_bounds_index_upload_offset,
+            terrain_bounds_index_bytes);
         D3D12_TEXTURE_COPY_LOCATION texture_destination{};
         texture_destination.pResource = checker_texture.Get();
         texture_destination.Type =
@@ -1741,7 +2143,7 @@ public:
 
         // G-006 manages frame color/depth attachments. These one-time
         // initialization transitions remain with the static upload batch.
-        std::array<D3D12_RESOURCE_BARRIER, 4> barriers{};
+        std::array<D3D12_RESOURCE_BARRIER, 6> barriers{};
         barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
         barriers[0].Transition.pResource = vertex_buffer.Get();
         barriers[0].Transition.Subresource =
@@ -1755,11 +2157,15 @@ public:
         barriers[1].Transition.StateAfter =
             D3D12_RESOURCE_STATE_INDEX_BUFFER;
         barriers[2] = barriers[0];
-        barriers[2].Transition.pResource = checker_texture.Get();
-        barriers[2].Transition.StateAfter =
+        barriers[2].Transition.pResource = terrain_vertex_buffer.Get();
+        barriers[3] = barriers[1];
+        barriers[3].Transition.pResource = terrain_index_buffer.Get();
+        barriers[4] = barriers[0];
+        barriers[4].Transition.pResource = checker_texture.Get();
+        barriers[4].Transition.StateAfter =
             D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-        barriers[3] = barriers[2];
-        barriers[3].Transition.pResource = startup_cubemap.Get();
+        barriers[5] = barriers[4];
+        barriers[5].Transition.pResource = startup_cubemap.Get();
         command_list->ResourceBarrier(
             static_cast<UINT>(barriers.size()),
             barriers.data());
@@ -1778,7 +2184,7 @@ public:
         ++statistics.pix_static_upload_events;
         ++statistics.static_upload_submissions;
         auto fence_result = signal_queue(
-            "ID3D12CommandQueue::Signal(static cube upload)");
+            "ID3D12CommandQueue::Signal(static scene upload)");
         if (!fence_result) {
             return core::Result<void>::failure(
                 std::move(fence_result).error());
@@ -1797,6 +2203,29 @@ public:
             index_buffer->GetGPUVirtualAddress();
         index_buffer_view.SizeInBytes = static_cast<UINT>(index_bytes);
         index_buffer_view.Format = DXGI_FORMAT_R16_UINT;
+        terrain_vertex_buffer_view.BufferLocation =
+            terrain_vertex_buffer->GetGPUVirtualAddress();
+        terrain_vertex_buffer_view.SizeInBytes = static_cast<UINT>(
+            terrain_vertex_bytes + terrain_bounds_vertex_bytes);
+        terrain_vertex_buffer_view.StrideInBytes =
+            detail::terrain_vertex_stride;
+        terrain_index_buffer_view.BufferLocation =
+            terrain_index_buffer->GetGPUVirtualAddress();
+        terrain_index_buffer_view.SizeInBytes = static_cast<UINT>(
+            terrain_index_bytes + terrain_bounds_index_bytes);
+        terrain_index_buffer_view.Format = detail::terrain_index_format;
+        terrain_vertex_count =
+            static_cast<UINT>(terrain.vertex_count);
+        terrain_triangle_index_count =
+            static_cast<UINT>(terrain.index_count);
+        terrain_bounds_index_count =
+            static_cast<UINT>(terrain.bounds_index_count);
+        statistics.terrain_vertex_count = terrain.vertex_count;
+        statistics.terrain_index_count = terrain.index_count;
+        statistics.terrain_bounds_vertex_count =
+            terrain.bounds_vertex_count;
+        statistics.terrain_bounds_index_count =
+            terrain.bounds_index_count;
         return core::Result<void>::success();
     }
 
@@ -1843,12 +2272,18 @@ public:
         release_back_buffers();
         swap_chain.Reset();
         command_list.Reset();
+        terrain_bounds_pipeline.Reset();
+        terrain_wireframe_pipeline.Reset();
+        terrain_solid_pipeline.Reset();
         skybox_pipeline.Reset();
         cube_pipeline.Reset();
+        terrain_root_signature.Reset();
         cube_root_signature.Reset();
         checker_descriptor_heap.Reset();
         startup_cubemap.Reset();
         checker_texture.Reset();
+        terrain_index_buffer.Reset();
+        terrain_vertex_buffer.Reset();
         index_buffer.Reset();
         vertex_buffer.Reset();
         for (auto& context : frame_contexts) {
@@ -1934,9 +2369,15 @@ public:
     ComPtr<ID3D12GraphicsCommandList> command_list;
     ComPtr<ID3D12PipelineState> cube_pipeline;
     ComPtr<ID3D12PipelineState> skybox_pipeline;
+    ComPtr<ID3D12PipelineState> terrain_solid_pipeline;
+    ComPtr<ID3D12PipelineState> terrain_wireframe_pipeline;
+    ComPtr<ID3D12PipelineState> terrain_bounds_pipeline;
     ComPtr<ID3D12RootSignature> cube_root_signature;
+    ComPtr<ID3D12RootSignature> terrain_root_signature;
     ComPtr<ID3D12Resource> vertex_buffer;
     ComPtr<ID3D12Resource> index_buffer;
+    ComPtr<ID3D12Resource> terrain_vertex_buffer;
+    ComPtr<ID3D12Resource> terrain_index_buffer;
     ComPtr<ID3D12Resource> checker_texture;
     ComPtr<ID3D12Resource> startup_cubemap;
     ComPtr<ID3D12Resource> depth_buffer;
@@ -1953,6 +2394,11 @@ public:
     UINT transient_descriptor_increment{};
     D3D12_VERTEX_BUFFER_VIEW vertex_buffer_view{};
     D3D12_INDEX_BUFFER_VIEW index_buffer_view{};
+    D3D12_VERTEX_BUFFER_VIEW terrain_vertex_buffer_view{};
+    D3D12_INDEX_BUFFER_VIEW terrain_index_buffer_view{};
+    UINT terrain_vertex_count{};
+    UINT terrain_triangle_index_count{};
+    UINT terrain_bounds_index_count{};
     std::array<float, 16> last_camera_matrix{};
     bool has_last_camera_matrix{};
     std::array<float, 16> last_skybox_matrix{};
@@ -2013,11 +2459,28 @@ core::Result<Presentation> Presentation::create(
             "Presentation skybox pixel shader bytecode is missing a "
             "DXIL container signature"));
     }
+    if (!valid_shader_bytecode(config.terrain_vertex_shader)) {
+        return core::Result<Presentation>::failure(graphics_error(
+            core::ErrorCode::invalid_argument,
+            "Presentation terrain vertex shader bytecode is missing a "
+            "DXIL container signature"));
+    }
+    if (!valid_shader_bytecode(config.terrain_pixel_shader)) {
+        return core::Result<Presentation>::failure(graphics_error(
+            core::ErrorCode::invalid_argument,
+            "Presentation terrain pixel shader bytecode is missing a "
+            "DXIL container signature"));
+    }
     auto cubemap_result = validate_cubemap_upload(
         config.startup_cubemap);
     if (!cubemap_result) {
         return core::Result<Presentation>::failure(
             std::move(cubemap_result).error());
+    }
+    auto terrain_result = validate_terrain_upload(config.terrain_mesh);
+    if (!terrain_result) {
+        return core::Result<Presentation>::failure(
+            std::move(terrain_result).error());
     }
 
     const auto native_window = static_cast<HWND>(config.native_window);
@@ -2412,6 +2875,47 @@ core::Result<Presentation> Presentation::create(
                 result));
     }
 
+    root_signature_description.NumParameters = 1;
+    root_signature_description.NumStaticSamplers = 0;
+    root_signature_description.pStaticSamplers = nullptr;
+    serialized_root_signature.Reset();
+    root_signature_diagnostics.Reset();
+    result = D3D12SerializeRootSignature(
+        &root_signature_description,
+        D3D_ROOT_SIGNATURE_VERSION_1,
+        &serialized_root_signature,
+        &root_signature_diagnostics);
+    if (FAILED(result)) {
+        const auto operation = root_signature_operation(
+            root_signature_diagnostics.Get());
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                operation,
+                result));
+    }
+    result = native.device->CreateRootSignature(
+        0,
+        serialized_root_signature->GetBufferPointer(),
+        serialized_root_signature->GetBufferSize(),
+        IID_PPV_ARGS(&implementation->terrain_root_signature));
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Device::CreateRootSignature(terrain)",
+                result));
+    }
+    result = implementation->terrain_root_signature->SetName(
+        L"Shark Terrain Root Signature");
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Object::SetName(terrain root signature)",
+                result));
+    }
+
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pipeline_description{};
     pipeline_description.pRootSignature =
         implementation->cube_root_signature.Get();
@@ -2495,11 +2999,102 @@ core::Result<Presentation> Presentation::create(
                 result));
     }
 
+    pipeline_description.pRootSignature =
+        implementation->terrain_root_signature.Get();
+    pipeline_description.VS = D3D12_SHADER_BYTECODE{
+        config.terrain_vertex_shader.data,
+        config.terrain_vertex_shader.size,
+    };
+    pipeline_description.PS = D3D12_SHADER_BYTECODE{
+        config.terrain_pixel_shader.data,
+        config.terrain_pixel_shader.size,
+    };
+    pipeline_description.RasterizerState =
+        terrain_rasterizer_description(
+            detail::terrain_solid_fill_mode);
+    pipeline_description.DepthStencilState =
+        reversed_depth_description();
+    pipeline_description.InputLayout = detail::terrain_input_layout;
+    pipeline_description.PrimitiveTopologyType =
+        D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    result = native.device->CreateGraphicsPipelineState(
+        &pipeline_description,
+        IID_PPV_ARGS(&implementation->terrain_solid_pipeline));
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Device::CreateGraphicsPipelineState(terrain "
+                "solid)",
+                result));
+    }
+    result = implementation->terrain_solid_pipeline->SetName(
+        L"Shark Terrain Solid Pipeline");
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Object::SetName(terrain solid pipeline)",
+                result));
+    }
+
+    pipeline_description.RasterizerState =
+        terrain_rasterizer_description(
+            detail::terrain_wireframe_fill_mode);
+    result = native.device->CreateGraphicsPipelineState(
+        &pipeline_description,
+        IID_PPV_ARGS(&implementation->terrain_wireframe_pipeline));
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Device::CreateGraphicsPipelineState(terrain "
+                "wireframe)",
+                result));
+    }
+    result = implementation->terrain_wireframe_pipeline->SetName(
+        L"Shark Terrain Wireframe Pipeline");
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Object::SetName(terrain wireframe pipeline)",
+                result));
+    }
+
+    pipeline_description.RasterizerState =
+        terrain_rasterizer_description(
+            detail::terrain_solid_fill_mode);
+    pipeline_description.DepthStencilState =
+        terrain_bounds_depth_description();
+    pipeline_description.PrimitiveTopologyType =
+        D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE;
+    result = native.device->CreateGraphicsPipelineState(
+        &pipeline_description,
+        IID_PPV_ARGS(&implementation->terrain_bounds_pipeline));
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Device::CreateGraphicsPipelineState(terrain "
+                "bounds)",
+                result));
+    }
+    result = implementation->terrain_bounds_pipeline->SetName(
+        L"Shark Terrain Bounds Pipeline");
+    if (FAILED(result)) {
+        return core::Result<Presentation>::failure(
+            detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Object::SetName(terrain bounds pipeline)",
+                result));
+    }
+
     result = native.device->CreateCommandList(
         0,
         D3D12_COMMAND_LIST_TYPE_DIRECT,
         implementation->frame_contexts[0].command_allocator.Get(),
-        implementation->cube_pipeline.Get(),
+        implementation->terrain_solid_pipeline.Get(),
         IID_PPV_ARGS(&implementation->command_list));
     if (FAILED(result)) {
         return core::Result<Presentation>::failure(
@@ -2692,8 +3287,9 @@ core::Result<Presentation> Presentation::create(
     }
 
     auto static_resources_result =
-        implementation->create_static_cube_resources(
-            config.startup_cubemap);
+        implementation->create_static_scene_resources(
+            config.startup_cubemap,
+            config.terrain_mesh);
     if (!static_resources_result) {
         return core::Result<Presentation>::failure(
             std::move(static_resources_result).error());
@@ -2717,7 +3313,7 @@ core::Result<Presentation> Presentation::create(
             std::to_string(config.extent.width) + "x" +
             std::to_string(config.extent.height) +
             " with three fence-gated frame contexts, reversed-Z depth, "
-            "and named TexturedCube/Skybox pipelines");
+            "and named Terrain/TexturedCube/Skybox pipelines");
     return core::Result<Presentation>::success(
         Presentation{std::move(implementation)});
 }
@@ -2739,7 +3335,8 @@ core::Result<PresentStatus> Presentation::present_frame(
     if (!valid_frame_data(frame_data)) {
         return core::Result<PresentStatus>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
-            "Presentation frame view-projection matrices must be finite"));
+            "Presentation frame view-projection matrices must be finite "
+            "and the terrain render mode must be valid"));
     }
 
     const auto back_buffer_index =
@@ -2821,6 +3418,117 @@ core::Result<PresentStatus> Presentation::present_frame(
     }
     const auto cubemap_resource = cubemap_resource_result.value();
 
+    auto cube_vertex_resource_result = graph_builder.import_resource(
+        "CubeVertexBuffer",
+        graph_cube_vertex_buffer_id,
+        render_graph::ResourceState::vertex_buffer,
+        render_graph::ResourceState::vertex_buffer);
+    if (!cube_vertex_resource_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(cube_vertex_resource_result).error());
+    }
+    const auto cube_vertex_resource =
+        cube_vertex_resource_result.value();
+
+    auto cube_index_resource_result = graph_builder.import_resource(
+        "CubeIndexBuffer",
+        graph_cube_index_buffer_id,
+        render_graph::ResourceState::index_buffer,
+        render_graph::ResourceState::index_buffer);
+    if (!cube_index_resource_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(cube_index_resource_result).error());
+    }
+    const auto cube_index_resource =
+        cube_index_resource_result.value();
+
+    auto terrain_vertex_resource_result =
+        graph_builder.import_resource(
+            "TerrainVertexBuffer",
+            graph_terrain_vertex_buffer_id,
+            render_graph::ResourceState::vertex_buffer,
+            render_graph::ResourceState::vertex_buffer);
+    if (!terrain_vertex_resource_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(terrain_vertex_resource_result).error());
+    }
+    const auto terrain_vertex_resource =
+        terrain_vertex_resource_result.value();
+
+    auto terrain_index_resource_result =
+        graph_builder.import_resource(
+            "TerrainIndexBuffer",
+            graph_terrain_index_buffer_id,
+            render_graph::ResourceState::index_buffer,
+            render_graph::ResourceState::index_buffer);
+    if (!terrain_index_resource_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(terrain_index_resource_result).error());
+    }
+    const auto terrain_index_resource =
+        terrain_index_resource_result.value();
+
+    auto terrain_pass_result = graph_builder.add_pass(
+        "Terrain",
+        [implementation = implementation_.get(),
+         context,
+         back_buffer_index,
+         back_buffer_resource,
+         depth_buffer_resource,
+         terrain_vertex_resource,
+         terrain_index_resource,
+         timestamp_query_base,
+         terrain_mode = frame_data.terrain_mode](
+            const render_graph::PassContext& pass_context) {
+            return implementation->record_terrain_pass(
+                pass_context,
+                back_buffer_resource,
+                depth_buffer_resource,
+                terrain_vertex_resource,
+                terrain_index_resource,
+                *context,
+                back_buffer_index,
+                timestamp_query_base,
+                terrain_mode);
+        });
+    if (!terrain_pass_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(terrain_pass_result).error());
+    }
+    const auto terrain_pass = terrain_pass_result.value();
+    auto terrain_color_result = graph_builder.write(
+        terrain_pass,
+        back_buffer_resource,
+        render_graph::ResourceState::render_target);
+    if (!terrain_color_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(terrain_color_result).error());
+    }
+    auto terrain_depth_result = graph_builder.write(
+        terrain_pass,
+        depth_buffer_resource,
+        render_graph::ResourceState::depth_write);
+    if (!terrain_depth_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(terrain_depth_result).error());
+    }
+    auto terrain_vertex_read_result = graph_builder.read(
+        terrain_pass,
+        terrain_vertex_resource,
+        render_graph::ResourceState::vertex_buffer);
+    if (!terrain_vertex_read_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(terrain_vertex_read_result).error());
+    }
+    auto terrain_index_read_result = graph_builder.read(
+        terrain_pass,
+        terrain_index_resource,
+        render_graph::ResourceState::index_buffer);
+    if (!terrain_index_read_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(terrain_index_read_result).error());
+    }
+
     auto cube_pass_result = graph_builder.add_pass(
         "TexturedCube",
         [implementation = implementation_.get(),
@@ -2829,6 +3537,8 @@ core::Result<PresentStatus> Presentation::present_frame(
          back_buffer_resource,
          depth_buffer_resource,
          checker_texture_resource,
+         cube_vertex_resource,
+         cube_index_resource,
          timestamp_query_base](
             const render_graph::PassContext& pass_context) {
             return implementation->record_textured_cube_pass(
@@ -2836,6 +3546,8 @@ core::Result<PresentStatus> Presentation::present_frame(
                 back_buffer_resource,
                 depth_buffer_resource,
                 checker_texture_resource,
+                cube_vertex_resource,
+                cube_index_resource,
                 *context,
                 back_buffer_index,
                 timestamp_query_base);
@@ -2870,6 +3582,22 @@ core::Result<PresentStatus> Presentation::present_frame(
         return core::Result<PresentStatus>::failure(
             std::move(checker_read_result).error());
     }
+    auto cube_vertex_read_result = graph_builder.read(
+        cube_pass,
+        cube_vertex_resource,
+        render_graph::ResourceState::vertex_buffer);
+    if (!cube_vertex_read_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(cube_vertex_read_result).error());
+    }
+    auto cube_index_read_result = graph_builder.read(
+        cube_pass,
+        cube_index_resource,
+        render_graph::ResourceState::index_buffer);
+    if (!cube_index_read_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(cube_index_read_result).error());
+    }
 
     auto skybox_pass_result = graph_builder.add_pass(
         "Skybox",
@@ -2879,6 +3607,8 @@ core::Result<PresentStatus> Presentation::present_frame(
          back_buffer_resource,
          depth_buffer_resource,
          cubemap_resource,
+         cube_vertex_resource,
+         cube_index_resource,
          timestamp_query_base](
             const render_graph::PassContext& pass_context) {
             return implementation->record_skybox_pass(
@@ -2886,6 +3616,8 @@ core::Result<PresentStatus> Presentation::present_frame(
                 back_buffer_resource,
                 depth_buffer_resource,
                 cubemap_resource,
+                cube_vertex_resource,
+                cube_index_resource,
                 *context,
                 back_buffer_index,
                 timestamp_query_base);
@@ -2919,6 +3651,22 @@ core::Result<PresentStatus> Presentation::present_frame(
         return core::Result<PresentStatus>::failure(
             std::move(cubemap_read_result).error());
     }
+    auto skybox_vertex_read_result = graph_builder.read(
+        skybox_pass,
+        cube_vertex_resource,
+        render_graph::ResourceState::vertex_buffer);
+    if (!skybox_vertex_read_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(skybox_vertex_read_result).error());
+    }
+    auto skybox_index_read_result = graph_builder.read(
+        skybox_pass,
+        cube_index_resource,
+        render_graph::ResourceState::index_buffer);
+    if (!skybox_index_read_result) {
+        return core::Result<PresentStatus>::failure(
+            std::move(skybox_index_read_result).error());
+    }
 
     auto compiled_graph_result = std::move(graph_builder).compile();
     if (!compiled_graph_result) {
@@ -2947,7 +3695,7 @@ core::Result<PresentStatus> Presentation::present_frame(
     }
     result = implementation_->command_list->Reset(
         context->command_allocator.Get(),
-        implementation_->cube_pipeline.Get());
+        implementation_->terrain_solid_pipeline.Get());
     if (FAILED(result)) {
         return core::Result<PresentStatus>::failure(
             detail::DeviceAccess::graphics_failure(
@@ -2993,6 +3741,22 @@ core::Result<PresentStatus> Presentation::present_frame(
         detail::RenderGraphResourceBinding{
             graph_cubemap_id,
             implementation_->startup_cubemap.Get(),
+        },
+        detail::RenderGraphResourceBinding{
+            graph_cube_vertex_buffer_id,
+            implementation_->vertex_buffer.Get(),
+        },
+        detail::RenderGraphResourceBinding{
+            graph_cube_index_buffer_id,
+            implementation_->index_buffer.Get(),
+        },
+        detail::RenderGraphResourceBinding{
+            graph_terrain_vertex_buffer_id,
+            implementation_->terrain_vertex_buffer.Get(),
+        },
+        detail::RenderGraphResourceBinding{
+            graph_terrain_index_buffer_id,
+            implementation_->terrain_index_buffer.Get(),
         },
     };
     auto graph_bindings_result =
@@ -3068,6 +3832,18 @@ core::Result<PresentStatus> Presentation::present_frame(
     ++implementation_->statistics.skybox_draw_calls;
     implementation_->statistics.skybox_indices +=
         detail::skybox_index_count;
+    ++implementation_->statistics.terrain_draw_calls;
+    if (frame_data.terrain_mode == TerrainRenderMode::wireframe) {
+        ++implementation_->statistics.terrain_wireframe_draw_calls;
+    }
+    else {
+        ++implementation_->statistics.terrain_solid_draw_calls;
+    }
+    ++implementation_->statistics.terrain_bounds_draw_calls;
+    implementation_->statistics.terrain_indices +=
+        implementation_->terrain_triangle_index_count;
+    implementation_->statistics.terrain_bounds_indices +=
+        implementation_->terrain_bounds_index_count;
 
     result = implementation_->swap_chain->Present(
         implementation_->synchronize_to_vertical_refresh ? 1 : 0,

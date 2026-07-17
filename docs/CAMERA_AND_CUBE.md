@@ -1,7 +1,7 @@
 # Camera, Reversed-Z Depth, Cube, and Skybox Contract
 
-- **Completed through:** `S-002`
-- **Last verified:** July 16, 2026
+- **Completed through:** `T-001`
+- **Last verified:** July 17, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
 engine-owned free-fly camera drives a resource-bound cube pipeline, a finite
@@ -11,6 +11,8 @@ G-006 keeps those visible and input conventions unchanged while executing the
 frame through the first render graph. S-002 adds a translation-free sky camera
 matrix and uses the same geometry, root signature, depth texture, and controls
 to render the static cubemap behind the cube.
+T-001 retains those contracts while changing the initial camera pose to frame
+the first terrain tile and drawing terrain before the cube.
 
 This remains a deliberately narrow proof. It establishes conventions and
 lifetime rules that later sky, terrain, rain, and water passes can reuse; it is
@@ -50,10 +52,11 @@ near/far mapping, matrix order, resize aspect change, local movement, pitch
 clamping, sky translation invariance and rotation response, and rejection of
 invalid or non-finite input.
 
-The sandbox defaults are a position of `(0, 0, 4)`, zero yaw/pitch, a 60-degree
+The sandbox defaults are a position of `(0, 4, 10)`, zero yaw, `-0.35` radians
+of pitch, a 60-degree
 vertical field of view, a `0.1 m` near plane, and a `100 m` far plane. The cube
-occupies `[-1, 1]` on each world axis, so the default camera looks directly at
-its center.
+occupies `[-1, 1]` on each world axis; the elevated, downward-pitched default
+pose frames it with the terrain tile.
 
 ## Free-fly camera controls
 
@@ -105,16 +108,17 @@ deterministically in memory. Adjacent texels alternate between
 identifier, color-space metadata, compression, mip generation, or streaming
 behavior.
 
-Presentation records the vertex-buffer, index-buffer, checker, and S-001
-cubemap copies into one direct-queue static-upload submission during startup.
-It transitions the buffers to their input-assembler states and both textures to
-`PIXEL_SHADER_RESOURCE`, signals the normal monotonic direct fence, and
-performs one bounded startup wait before releasing the temporary upload
-storage. No copy queue, background transfer, or per-frame static upload exists.
+Presentation records the cube and terrain vertex/index buffers, checker, and
+S-001 cubemap copies into one `StaticSceneUpload` direct-queue submission
+during startup. Six barriers transition the buffers to their input-assembler
+states and both textures to `PIXEL_SHADER_RESOURCE`, then it signals the normal
+monotonic direct fence and performs one bounded startup wait before releasing
+the temporary upload storage. No copy queue, background transfer, or per-frame
+static upload exists.
 
 ## Resource binding and shaders
 
-The G-005 root signature contains:
+The cube/sky root signature contains:
 
 - one root constant-buffer view at `b0` for the current scene and sky matrices;
 - one descriptor table containing one pixel-shader SRV at `t0`; and
@@ -140,7 +144,7 @@ The current visual treatment retains 4% of that decoded sample and mixes 96%
 toward a fixed sky-blue shader-space color; it does not alter the camera,
 descriptor, or TextureCube sampling contracts.
 
-The shared root signature and immutable cube/skybox PSOs are created
+The shared cube/sky root signature and immutable cube/skybox PSOs are created
 synchronously from pinned build-time DXIL. They survive swap-chain resize and are released only
 after explicit presentation shutdown drains and retires every submission.
 
@@ -157,8 +161,9 @@ normal writable DSV and slot 1 is a `READ_ONLY_DEPTH` view. The resource:
 - compares with `D3D12_COMPARISON_FUNC_GREATER_EQUAL`; and
 - has stencil disabled.
 
-Every submitted frame binds the writable DSV and clears it once for
-`TexturedCube`. The graph then transitions the resource to `DEPTH_READ`, and
+Every submitted frame binds the writable DSV and clears it once for `Terrain`.
+Terrain and `TexturedCube` write reversed-Z depth. The graph then transitions
+the resource to `DEPTH_READ`, and
 `Skybox` binds the read-only DSV with `GREATER_EQUAL`, forced depth zero, and
 depth writes disabled. The final graph transition restores `DEPTH_WRITE`.
 Both PSOs declare `DXGI_FORMAT_D32_FLOAT` and use viewport depth `[0, 1]`.
@@ -185,14 +190,15 @@ skips that already-covered interval.
 
 The permanent accounting contract requires:
 
-- one cube draw, one skybox draw, 36 indices per draw, two texture bindings,
-  one camera upload, and one depth clear per submitted frame;
-- one graph compilation/execution, two pass executions, four imports, one
-  dependency, four recorded transitions, and six elided transitions per frame;
+- one terrain draw, one bounds draw, one cube draw, one skybox draw, 36 indices
+  for each cube-based draw, two texture bindings, one camera upload, and one
+  depth clear per submitted frame;
+- one graph compilation/execution, three pass executions, eight imports, two
+  dependencies, four recorded transitions, and 18 elided transitions per frame;
 - frame submissions equal successful plus occluded present attempts;
 - all three DXGI-selected frame contexts are acquired and reused;
 - every submission retires before shutdown;
-- `static_upload_submissions == 1`, `geometry_buffer_creations == 2`,
+- `static_upload_submissions == 1`, `geometry_buffer_creations == 4`,
   `checker_texture_creations == 1`, `cubemap_texture_creations == 1`, and
   `texture_srv_creations == 2`; the startup submission completes through its
   bounded fence wait before the first frame;
@@ -229,10 +235,11 @@ Graphics coverage is registered as
 
 ## Explicit non-goals
 
-S-002 adds only the static diagnostic cubemap sky plus its temporary blue
-presentation treatment. It adds no general
+T-001 adds only the deterministic terrain tile and focused diagnostic modes
+beside the retained static sky treatment. It adds no general
 DDS/WIC/glTF importer, runtime mip generation, compression, texture streaming,
-HDR conversion, material/PBR system, lighting, terrain, or content database.
+HDR conversion, material/PBR system, lighting, terrain streaming/LOD, or
+content database.
 
 It also adds no general mesh/resource/descriptor manager, typed GPU handles,
 placed-resource pool, copy queue, deferred uploader, shader reflection, runtime
@@ -242,8 +249,10 @@ frustum culling, instancing, raw mouse input, cursor lock, configurable action
 map, gamepad support, fixed simulation clock, pixel readback, or golden-image
 testing.
 
-The graph remains frame-local and limited to imported whole attachments, now
-with ordered `TexturedCube` and `Skybox` passes. See
+The graph remains frame-local and limited to imported whole resources, now
+with ordered `Terrain`, `TexturedCube`, and `Skybox` passes. See
 [the render-graph contract](RENDER_GRAPH.md) for its exact ordering/barriers,
 [the DDS cubemap contract](DDS_CUBEMAP.md) for the source texture, and
 [the skybox contract](SKYBOX.md) for the visible sampling and orientation rules.
+See [the terrain contract](TERRAIN.md) for its separate geometry and
+diagnostic rendering contract.

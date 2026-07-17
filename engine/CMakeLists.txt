@@ -38,6 +38,8 @@ add_library(SharkEngine STATIC
     rhi/d3d12/src/presentation.cpp
     rhi/d3d12/src/render_graph_executor.cpp
     rhi/d3d12/src/render_graph_executor.hpp
+    terrain/include/shark/terrain/height_tile.hpp
+    terrain/src/height_tile.cpp
     world/include/shark/world/camera.hpp
     world/src/camera.cpp
 )
@@ -49,6 +51,7 @@ target_include_directories(SharkEngine
         "${CMAKE_CURRENT_SOURCE_DIR}/platform/windows/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/render_graph/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/rhi/d3d12/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/terrain/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/world/include"
 )
 

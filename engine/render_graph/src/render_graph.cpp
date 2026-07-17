@@ -48,6 +48,8 @@ std::atomic<std::uint64_t> next_builder_owner{1};
     case ResourceState::depth_write:
     case ResourceState::depth_read:
     case ResourceState::pixel_shader_read:
+    case ResourceState::vertex_buffer:
+    case ResourceState::index_buffer:
     case ResourceState::shader_read:
     case ResourceState::copy_source:
     case ResourceState::copy_destination:
@@ -77,6 +79,8 @@ std::atomic<std::uint64_t> next_builder_owner{1};
     if (mode == AccessMode::read) {
         return state == ResourceState::depth_read ||
             state == ResourceState::pixel_shader_read ||
+            state == ResourceState::vertex_buffer ||
+            state == ResourceState::index_buffer ||
             state == ResourceState::shader_read ||
             state == ResourceState::copy_source;
     }

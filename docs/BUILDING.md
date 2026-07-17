@@ -137,10 +137,11 @@ Run only the normal shader target and focused build checks with:
 
 For the visual acceptance check, run `SharkSandbox` without arguments. A
 clearly textured cube must retain correct hidden-surface occlusion and
-perspective while the diagnostic cubemap fills the background. Translation
-must not move the sky, right-drag rotation must change it, and resizing from a
-wide to a non-wide aspect must not stretch either feature. The exact face check
-is documented in [the skybox contract](SKYBOX.md).
+perspective while the temporarily treated sky-blue cubemap fills the
+background. Translation must not move the sky, right-drag rotation must change
+its sampled direction, and resizing from a wide to a non-wide aspect must not
+stretch either feature. The exact source-resource orientation check is
+documented in [the skybox contract](SKYBOX.md).
 
 ## Graphics device checks
 

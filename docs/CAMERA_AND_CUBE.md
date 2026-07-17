@@ -136,6 +136,9 @@ and passes UVs to the pixel shader. The pixel shader samples the checker and
 writes the opaque color target. The sky vertex shader uses the translation-free
 matrix, forces reversed-Z clip depth to zero, and passes cube position as the
 texture-cube direction; its pixel shader samples cubemap slot 1.
+The current visual treatment retains 4% of that decoded sample and mixes 96%
+toward a fixed sky-blue shader-space color; it does not alter the camera,
+descriptor, or TextureCube sampling contracts.
 
 The shared root signature and immutable cube/skybox PSOs are created
 synchronously from pinned build-time DXIL. They survive swap-chain resize and are released only
@@ -211,10 +214,10 @@ The permanent accounting contract requires:
   messages, or live presentation children.
 
 The smoke does not read back or compare pixels. Manual acceptance requires a
-clearly textured cube, the colored orientation cubemap behind it, sky movement
-under rotation but not translation, correct near/far occlusion, perspective
+clearly textured cube, the temporary sky-blue treatment behind it, unchanged
+sample direction under translation, correct near/far occlusion, perspective
 that does not stretch after resize, and clean minimize/restore and shutdown.
-See [the exact face-orientation procedure](SKYBOX.md#manual-orientation-acceptance).
+See [the source face-orientation procedure](SKYBOX.md#manual-visual-acceptance).
 
 CPU coverage is discovered through the existing `unit.` CTest prefix from
 `math_tests.cpp`, `camera_tests.cpp`, `camera_controller_tests.cpp`,
@@ -226,7 +229,8 @@ Graphics coverage is registered as
 
 ## Explicit non-goals
 
-S-002 adds only the static diagnostic cubemap sky. It adds no general
+S-002 adds only the static diagnostic cubemap sky plus its temporary blue
+presentation treatment. It adds no general
 DDS/WIC/glTF importer, runtime mip generation, compression, texture streaming,
 HDR conversion, material/PBR system, lighting, terrain, or content database.
 

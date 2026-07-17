@@ -9,14 +9,16 @@ then a named `Skybox` render-graph pass. Camera rotation changes the sampled
 direction, camera translation does not move the sky, and the existing
 reversed-Z depth buffer keeps the cube in front.
 
-The current image is deliberately diagnostic. It is the project-owned `8x8`
-orientation cubemap, not a photographed or procedural atmosphere. Its six
-faces use red-channel tags `32, 64, 96, 128, 160, 192` for `+X, -X, +Y, -Y,
-+Z, -Z`; green increases across each stored row and blue down each stored
-column. The default zero-yaw/zero-pitch camera looks toward `-Z`, so the
-background around the center cube begins on the `-Z` face with tag `192` and
-shows a coarse colored gradient. Blockiness and abrupt face colors are expected
-for this fixture.
+The source remains the project-owned `8x8` diagnostic orientation cubemap, not
+a photographed or procedural atmosphere. Its six faces use red-channel tags
+`32, 64, 96, 128, 160, 192` for `+X, -X, +Y, -Y, +Z, -Z`; green increases
+across each stored row and blue down each stored column. The default
+zero-yaw/zero-pitch camera samples the `-Z` face with tag `192`.
+
+For a calmer background while terrain work begins, the pixel shader temporarily
+mixes the decoded fixture RGB 96% toward a fixed sky-blue shader-space color.
+The resulting frame is predominantly blue with only a subtle diagnostic trace;
+the unchanged source texture and CPU tests remain the orientation authority.
 
 ## Rotation-only camera matrix
 
@@ -58,7 +60,19 @@ For Shark's reversed-Z convention, clip depth zero is the farthest depth. The
 pixel shader samples `TextureCube<float4>` at `t0` through the existing
 point-filtered wrap sampler at `s0`. The texture-cube SRV retains its
 `DXGI_FORMAT_R8G8B8A8_UNORM_SRGB` format, so D3D12 performs the required sRGB
-decode when sampling.
+decode when sampling. The temporary presentation treatment is evaluated in
+that decoded shader domain:
+
+```text
+output.rgb = 0.04 * decoded_cubemap.rgb
+           + 0.96 * float3(0.36, 0.62, 0.90)
+output.a   = 1
+```
+
+This is not a display-sRGB color guarantee: the current UNORM presentation
+path still has no final transfer function or tone map. Keeping the 4% source
+contribution prevents the real TextureCube sampling path from being replaced
+by a constant-color shader.
 
 Both immutable PSOs share the existing root signature and persistent two-slot
 shader-visible heap:
@@ -195,7 +209,7 @@ writable/read-only DSV creation per depth-resource generation; no rendering
 progress while minimized on the normal paths that exercise it; full fence
 retirement; zero DirectX errors/corruption; and no live presentation children.
 
-## Manual orientation acceptance
+## Manual visual acceptance
 
 Run the interactive hardware path from the repository root:
 
@@ -205,24 +219,23 @@ Run the interactive hardware path from the repository root:
 
 Then verify:
 
-1. The initial frame shows the checker cube surrounded by the coarse colored
-   orientation background, not the old solid clear color.
+1. The initial frame shows the checker cube surrounded by a predominantly
+   sky-blue background, not the old solid clear color or saturated fixture.
 2. Move with `W`, `A`, `S`, `D`, `Q`, and `E` without right-dragging. The cube's
-   perspective changes, but the sky pattern stays fixed on the display.
-3. Hold the right mouse button and drag. The sky pattern rotates with the view
-   and remains behind the cube.
+   perspective changes, but the sky remains translation-invariant.
+3. Hold the right mouse button and drag. The subtle fixture contribution follows
+   the changed sample direction and the sky remains behind the cube.
 4. Resize from a wide to a visibly different aspect. The sky fills the entire
    background without stretching, gaps, or validation messages.
 5. Minimize, restore, and close. No stale frame, depth artifact, or live-object
    error is allowed.
 
-For a rendered face check, restart the application to recover the default
-camera, inspect a background pixel close to (but not covered by) the center
-cube, and use right-drag to turn approximately a quarter turn. Dragging right
-from default must move from `-Z` toward `+X`; continuing to a half turn reaches
-`+Z`. Restarting and dragging left reaches `-X`; dragging upward/downward
-reaches `+Y`/`-Y`. PIX texture or pixel inspection can identify the raw face tag
-when the coarse display colors are not enough:
+The 4% contribution is intentionally too subtle to serve as a reliable visual
+face test. For an exact orientation check, inspect the source TextureCube in
+PIX rather than the blended output pixel. Dragging right from the default view
+moves from `-Z` toward `+X`; continuing to a half turn reaches `+Z`. Restarting
+and dragging left reaches `-X`; dragging upward/downward reaches `+Y`/`-Y`.
+The source-asset tags are:
 
 | View direction | DDS face | Red tag |
 |---|---|---:|
@@ -234,8 +247,9 @@ when the coarse display colors are not enough:
 | default `-Z` | `-Z` | 192 |
 
 No axis swap, Z negation, face reorder, row flip, or column flip is applied by
-the shader. CPU DDS tests remain the authoritative byte-level check for the
-green left-to-right and blue top-to-bottom stored gradients.
+the shader before the temporary RGB treatment. CPU DDS tests remain the
+authoritative byte-level check for the green left-to-right and blue
+top-to-bottom stored gradients.
 
 ## Explicit non-goals
 

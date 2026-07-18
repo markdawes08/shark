@@ -1,6 +1,6 @@
 # Building Shark
 
-- **Completed through:** `T-003`
+- **Completed through:** `S-003`
 - **Last verified:** July 18, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
@@ -50,7 +50,10 @@ WinPixEventRuntime so named command-list events remain available in Debug and
 Release. G-006's planner and executor remain engine-owned. S-001 privately
 links the pinned DirectXTex runtime behind the engine-owned DDS cubemap
 boundary. T-003's material fixture and mip generation are first-party CPU code
-and add no dependency or runtime content file.
+and add no dependency or runtime content file. S-003's deterministic HDR
+latitude-longitude source, environment conversion, convolution, GGX
+prefiltering, and BRDF integration are also first-party CPU code with no new
+dependency or runtime content file.
 
 The checked-in toolchain also scopes `UCRTContentRoot` to the complete Windows
 SDK payload for the CMake process. This avoids a Visual Studio 2026 installation
@@ -85,12 +88,20 @@ out/build/windows-vs2026/generated/shaders/Debug/skybox.vertex.dxil
 out/build/windows-vs2026/generated/shaders/Debug/skybox.pixel.dxil
 out/build/windows-vs2026/generated/shaders/Debug/terrain.vertex.dxil
 out/build/windows-vs2026/generated/shaders/Debug/terrain.pixel.dxil
+out/build/windows-vs2026/generated/shaders/Debug/material_sphere.vertex.dxil
+out/build/windows-vs2026/generated/shaders/Debug/material_sphere.pixel.dxil
+out/build/windows-vs2026/generated/shaders/Debug/tone_map.vertex.dxil
+out/build/windows-vs2026/generated/shaders/Debug/tone_map.pixel.dxil
 out/build/windows-vs2026/generated/shaders/Release/cube.vertex.dxil
 out/build/windows-vs2026/generated/shaders/Release/cube.pixel.dxil
 out/build/windows-vs2026/generated/shaders/Release/skybox.vertex.dxil
 out/build/windows-vs2026/generated/shaders/Release/skybox.pixel.dxil
 out/build/windows-vs2026/generated/shaders/Release/terrain.vertex.dxil
 out/build/windows-vs2026/generated/shaders/Release/terrain.pixel.dxil
+out/build/windows-vs2026/generated/shaders/Release/material_sphere.vertex.dxil
+out/build/windows-vs2026/generated/shaders/Release/material_sphere.pixel.dxil
+out/build/windows-vs2026/generated/shaders/Release/tone_map.vertex.dxil
+out/build/windows-vs2026/generated/shaders/Release/tone_map.pixel.dxil
 ```
 
 vcpkg deploys the spdlog/fmt, DirectXTex, and WinPixEventRuntime DLLs beside
@@ -103,14 +114,17 @@ local development and testing only and must never enter a packaged product.
 With no arguments, `SharkSandbox` initializes the highest-priority eligible
 hardware device, creates the validated canonical `HeightTileSurface`, and
 continuously draws its deterministic terrain, query-derived cyan normal pin,
-procedural-checker cube, and procedural daylight sky as named `Terrain`,
-`TexturedCube`, and `Skybox` graph passes. T-002 keeps the triple
-frame-resource lifecycle and resize-safe reversed-Z target and reports separate
-PIX/timestamp intervals for all three passes. REN-001 routes this through the
+material sphere, procedural-checker cube, and HDR environment through named
+`Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` graph passes. The first
+three render into a resize-owned `R16G16B16A16_FLOAT` scene target; `ToneMap`
+writes the final back buffer. The triple frame-resource lifecycle reports
+separate PIX/timestamp intervals for all four passes. REN-001 routes this through the
 public `shark::renderer::Renderer`; the sandbox creates the D3D12 `Device` and
 passes it to `Renderer::create` only at the composition root. Press `F1` to
 toggle terrain fill between solid and wireframe. Press `F2` to cycle shaded,
-ground/rock weight, and mapped world-normal views. Use `W`/`S` along the
+ground/rock weight, and mapped world-normal views. Press `F3` to toggle between
+HDR image-based lighting and the retained procedural-daylight fallback. Use
+`W`/`S` along the
 camera forward axis, `A`/`D` to strafe, `Q`/`E` to move down/up, hold `Shift`
 to move faster, and hold the right mouse button while dragging to look around.
 `Control` and `Space` are down/up aliases. Resize or minimize/restore the
@@ -126,15 +140,16 @@ neither required nor accepted. The compiler's sidecar `dxcompiler.dll` and
 `dxil.dll` remain beside that host tool; Shark does not link them or copy them
 beside `SharkSandbox.exe`.
 
-The build compiles the cube, skybox, and terrain `VSMain` entry points as
-`vs_6_0` and their `PSMain` entry points as `ps_6_0`, using HLSL 2021,
-row-major layout, strict mode, and warnings as errors. DXIL, generated C++
-byte arrays, PDBs, and dependency files are configuration-specific and stay
+The build compiles the cube, skybox, terrain, material-sphere, and tone-map
+`VSMain` entry points as `vs_6_0` and their `PSMain` entry points as `ps_6_0`,
+using HLSL 2021, row-major layout, strict mode, and warnings as errors. DXIL,
+generated C++ byte arrays, PDBs, and dependency files are
+configuration-specific and stay
 under ignored `out/build/windows-vs2026/generated/shaders/`. The dependency
-files make edits to the shared camera include rebuild every dependent cube,
-sky, and terrain stage. The S-002A sky and terrain stages also track the shared
-daylight include that owns the procedural sky, directional illumination, and
-linear-to-sRGB helpers.
+files make edits to the shared camera and PBR/IBL includes rebuild every
+dependent stage. The retained daylight include owns the procedural sky and
+directional illumination; final linear-to-sRGB conversion now belongs only to
+the tone-map pass.
 
 CTest adds three build checks: the shader depfiles must name the primary source
 and shared include, a build-tree include edit must actually regenerate the
@@ -146,26 +161,31 @@ missing tool or broken build target.
 Run only the normal shader target and focused build checks with:
 
 ```powershell
-& $cmake --build --preset windows-debug --target SharkCubeShaders SharkSkyboxShaders SharkTerrainShaders
+& $cmake --build --preset windows-debug --target SharkCubeShaders SharkSkyboxShaders SharkTerrainShaders SharkMaterialSphereShaders SharkToneMapShaders
 & $ctest --preset windows-debug -R '^build\.shader_'
 ```
 
 For the visual acceptance check, run `SharkSandbox` without arguments. A solid
 height tile must show tiled ground and rock materials blended by slope and
-height, mapped surface detail, and direct-sun roughness response under the
-shared daylight. Its magenta depth-tested bounds overlay must enclose the tile,
+height, mapped surface detail, and direct-sun plus environment response. The
+glossy neutral material sphere must reflect the same environment used by the
+terrain. Its magenta depth-tested bounds overlay must enclose the tile,
 and the cyan query pin must begin on the visible LOD0 surface and extend along
 its exact triangle normal. `F1` must reveal the fixed triangle split in
 wireframe without disconnecting or hiding the pin. `F2` must cycle shaded,
 complementary material-weight, and mapped world-normal views without changing
 the canonical geometry.
 The textured cube must retain correct hidden-surface occlusion and perspective.
-The background must form one continuous blue zenith/horizon/nadir gradient
-with a warm sun disk and restrained halo, without visible cube-face seams or
-painted-wall bands. Translation must not move the sky, right-drag rotation must
-move the fixed-world sun and gradient consistently, and resizing from a wide
-to a non-wide aspect must not stretch the scene. The exact daylight contract
-is documented in [the skybox contract](SKYBOX.md).
+The background must form one continuous HDR daylight environment without
+visible cube-face seams or painted-wall bands. Translation must not move the
+sky, right-drag rotation must move the fixed-world environment consistently,
+and resizing from a wide to a non-wide aspect must not stretch the scene.
+The analytic sun disk must remain smooth rather than appearing as a bright
+cubemap texel block, and terrain/sphere must not show duplicated sun energy.
+Pressing `F3` must visibly switch both the sky and scene lighting between HDR
+IBL and procedural daylight without changing geometry or camera state. The
+exact environment contract is documented in
+[the skybox contract](SKYBOX.md).
 
 ## Graphics device checks
 
@@ -223,7 +243,7 @@ WARP with:
 ```
 
 Each command shows a real PMv2-aware window, presents exactly 1,000 successful
-three-pass frames, changes the physical client area from `1280x720` to
+four-pass frames, changes the physical client area from `1280x720` to
 `960x600`, proves the projection and `D32_FLOAT` depth extent follow the
 aspect-changing resize, proves no frame is submitted while minimized, restores,
 shuts down `Renderer` before the window, and checks new
@@ -241,46 +261,48 @@ completed; that checkpoint protects all frame constants and the probe
 destination.
 
 Creation records one `StaticSceneUpload` PIX event, one static direct-queue
-upload submission, and one bounded wait for the cube and terrain vertex/index
-buffers, deterministic `8x8` checker, and all six faces of the app-local `8x8`
-sRGB DDS cubemap, plus the three two-layer `32x32` full-mip terrain material
-arrays. Those arrays contain six mips, 12 subresources each, 36 total
-subresources, and 32,760 meaningful source bytes. The terrain buffers pack the
-1,089-vertex/6,144-index
-surface, eight-vertex/24-index AABB, and six-vertex/six-index query marker
-without adding a resource. The retained cubemap remains a startup asset/upload
-proof; the procedural sky does not read or bind it per frame. The startup list
-ends with nine initialization barriers.
+upload submission, and one bounded wait for the cube and packed terrain/sphere
+vertex/index buffers, deterministic `8x8` checker, all six faces of the
+app-local `8x8` sRGB DDS cubemap, the three two-layer `32x32` full-mip terrain
+material arrays, and four derived HDR environment textures. The deterministic
+`64x32` linear-HDR source is CPU-only. Its GPU derivatives are a `32x32`
+six-mip radiance cube, `8x8` one-mip diffuse-irradiance cube, `32x32` six-mip
+GGX-prefiltered specular cube, and `32x32` split-sum BRDF LUT: 79 subresources
+and 284,608 meaningful RGBA32-float bytes. The terrain buffers also pack the
+266-vertex/1,584-index material sphere, so startup still creates four geometry
+buffers. The retained DDS cubemap remains a separate asset/upload proof. The
+startup list ends with 13 initialization barriers.
 
 Every submitted frame records one outer `Frame` event with nested `Terrain`,
-`TexturedCube`, and `Skybox` events. Its ten-import graph declares exact
-vertex/index reads plus the checker and three material-array pixel-shader reads,
-executes all three passes, two dependencies, four recorded transitions, and 22 elided
-transitions. It issues five indexed draws: terrain surface, terrain AABB,
-terrain query marker, 36-index textured cube, and 36-index skybox. It retains
-two texture-table bindings and one reversed-Z depth clear. Terrain owns the clear,
-cube preserves it, and sky uses the read-only DSV and writes no depth.
+`TexturedCube`, `Skybox`, and `ToneMap` events. Its exact graph has 15 imports,
+four passes, three dependencies, six recorded transitions, and 31 elided
+transitions. It issues six indexed draws: terrain surface, material sphere,
+terrain AABB, terrain query marker, 36-index textured cube, and 36-index
+skybox, followed by one non-indexed fullscreen-triangle tone-map draw. It
+retains four texture-table bindings and one reversed-Z depth clear. Terrain
+owns the clear, cube preserves it, sky uses the read-only DSV, and `ToneMap`
+reads the HDR scene target while writing the swap-chain back buffer.
 
-The direct queue reports its timestamp frequency once. One 24-entry query heap
-and one 192-byte persistently mapped readback buffer are split into three
-eight-query frame-context slices: frame begin, terrain begin/end, cube
-begin/end, sky begin/end, and frame end. The frame interval includes the
-diagnostic probe copy, four graph barriers, and all three passes but excludes
-its own query resolve. Each pass interval
+The direct queue reports its timestamp frequency once. One 30-entry query heap
+and one 240-byte persistently mapped readback buffer are split into three
+ten-query frame-context slices: frame begin, terrain begin/end, cube
+begin/end, sky begin/end, tone-map begin/end, and frame end. The frame interval
+includes the diagnostic probe copy, six graph barriers, and all four passes but
+excludes its own query resolve. Each pass interval
 covers only its callback commands and excludes graph barriers. Results are read
 only after the owning context fence completes, using an existing reuse wait or
 resize/shutdown drain; timing adds no normal-frame drain.
 
 The summary reports graph pass/barrier counts, PIX event counts, query
 high-water/capacity, timing sample count, average/maximum frame,
-`Terrain`, `TexturedCube`, and `Skybox` milliseconds, terrain
+`Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` milliseconds, terrain
 solid/wireframe/bounds/query-marker counts, all draw/index counts,
 scene/sky matrix changes, `depth_clear_count`, depth-resource/read-only-view
 creation counts, other resource creation counts,
 context reuse, blocking reuse waits, queue drains, and upload/descriptor
-high-water marks. The fixed diagnostics invariants require eight queries and one
-resolve per frame, one completed timing sample per retired submission, and an
-eight-query per-context high-water. Duration magnitude is deliberately not a
+high-water marks. The fixed diagnostics invariants require ten queries and one
+resolve per frame, one completed timing sample per retired submission, and a
+ten-query per-context high-water. Duration magnitude is deliberately not a
 performance gate because adapter speed and timestamp resolution vary.
 
 Run the focused renderer composer, planner, D3D12 executor, scene helpers, and
@@ -296,6 +318,8 @@ GPU timestamp-state unit coverage directly with:
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][material]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[assets][dds][cubemap]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[assets][environment][ibl]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[environment][sphere]"
 ```
 
 CTest registers hardware and WARP device and presentation paths as separate
@@ -342,9 +366,9 @@ tracked fixture, strict loader, app-local deployment, retained startup upload,
 and deliberately absent per-frame sky read. See
 [the terrain contract](TERRAIN.md) for canonical ownership, exact query
 semantics, material fixture, render-mesh separation, and diagnostic rules.
-`T-003` completed the bounded layered PBR terrain path on July 18, 2026.
-Debug and Release each pass the full `120/120` CTest suite. The upcoming
-increment is `S-003`, HDR environment lighting.
+`S-003` completed the bounded HDR environment-lighting path on July 18, 2026.
+The upcoming increment is `T-004`, terrain chunk culling, followed by `T-005`,
+bounded visual LOD.
 
 ## Visual Studio
 

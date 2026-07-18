@@ -37,6 +37,7 @@ struct ShaderBytecodeView final {
 enum class TextureDataFormat : std::uint8_t {
     rgba8_unorm = 1,
     rgba8_unorm_srgb,
+    rgba32_float,
 };
 
 struct TextureSubresourceDataView final {
@@ -52,6 +53,17 @@ struct TextureSubresourceDataView final {
 // +X mips, -X mips, +Y mips, -Y mips, +Z mips, -Z mips.
 // Renderer consumes these borrowed views synchronously during create().
 struct TextureCubeUploadView final {
+    std::uint32_t width{};
+    std::uint32_t height{};
+    std::uint32_t mip_levels{};
+    TextureDataFormat format{};
+    const TextureSubresourceDataView* subresources{};
+    std::size_t subresource_count{};
+};
+
+// A single two-dimensional texture with mip-minor subresources. Renderer
+// consumes these borrowed views synchronously during create().
+struct Texture2DUploadView final {
     std::uint32_t width{};
     std::uint32_t height{};
     std::uint32_t mip_levels{};
@@ -99,9 +111,18 @@ struct TerrainMaterialUploadView final {
     Texture2DArrayUploadView roughness;
 };
 
-// Temporary LDR daylight controls for the environment renderer boundary.
-// Six float4-compatible rows are copied directly after the two camera matrices
-// in b0.
+// S-003 consumes deterministic, offline-ready derived lighting data rather
+// than performing expensive environment convolution in the frame loop.
+struct EnvironmentLightingUploadView final {
+    TextureCubeUploadView radiance;
+    TextureCubeUploadView diffuse_irradiance;
+    TextureCubeUploadView prefiltered_specular;
+    Texture2DUploadView brdf_lut;
+};
+
+// Procedural-daylight fallback controls for the environment renderer
+// boundary. Six float4-compatible rows are copied directly after the two
+// camera matrices in b0.
 struct alignas(16) DaylightSettings final {
     // Unit vector from a shaded surface or sky sample toward the sun.
     math::Float3 direction_to_sun{
@@ -141,6 +162,11 @@ enum class TerrainMaterialView : std::uint32_t {
     shading_normal,
 };
 
+enum class EnvironmentLightingMode : std::uint32_t {
+    procedural_daylight = 1,
+    image_based,
+};
+
 struct RendererConfig final {
     void* native_window{};
     RenderExtent extent{1280, 720};
@@ -151,9 +177,14 @@ struct RendererConfig final {
     ShaderBytecodeView skybox_pixel_shader{};
     ShaderBytecodeView terrain_vertex_shader{};
     ShaderBytecodeView terrain_pixel_shader{};
+    ShaderBytecodeView material_sphere_vertex_shader{};
+    ShaderBytecodeView material_sphere_pixel_shader{};
+    ShaderBytecodeView tone_map_vertex_shader{};
+    ShaderBytecodeView tone_map_pixel_shader{};
     TextureCubeUploadView startup_cubemap{};
     TerrainMeshUploadView terrain_mesh{};
     TerrainMaterialUploadView terrain_materials{};
+    EnvironmentLightingUploadView environment_lighting{};
     bool synchronize_to_vertical_refresh{true};
 };
 
@@ -165,6 +196,8 @@ struct RenderFrameData final {
     TerrainRenderMode terrain_mode{TerrainRenderMode::solid};
     TerrainMaterialView terrain_material_view{
         TerrainMaterialView::shaded};
+    EnvironmentLightingMode environment_lighting_mode{
+        EnvironmentLightingMode::image_based};
 };
 
 enum class RenderStatus : std::uint8_t {
@@ -202,6 +235,7 @@ struct RendererStats final {
     std::uint64_t pix_terrain_events{};
     std::uint64_t pix_textured_cube_events{};
     std::uint64_t pix_skybox_events{};
+    std::uint64_t pix_tone_map_events{};
     std::uint64_t gpu_timestamp_frequency_hz{};
     std::uint64_t timestamp_query_capacity{};
     std::uint64_t timestamp_query_high_water{};
@@ -224,6 +258,10 @@ struct RendererStats final {
     std::uint64_t gpu_skybox_min_ticks{};
     std::uint64_t gpu_skybox_max_ticks{};
     std::uint64_t gpu_skybox_last_ticks{};
+    std::uint64_t gpu_tone_map_total_ticks{};
+    std::uint64_t gpu_tone_map_min_ticks{};
+    std::uint64_t gpu_tone_map_max_ticks{};
+    std::uint64_t gpu_tone_map_last_ticks{};
     std::uint64_t cube_draw_calls{};
     std::uint64_t cube_indices{};
     std::uint64_t skybox_draw_calls{};
@@ -236,21 +274,31 @@ struct RendererStats final {
     std::uint64_t terrain_shading_normal_draw_calls{};
     std::uint64_t terrain_bounds_draw_calls{};
     std::uint64_t terrain_query_marker_draw_calls{};
+    std::uint64_t material_sphere_draw_calls{};
+    std::uint64_t tone_map_draw_calls{};
     std::uint64_t terrain_indices{};
     std::uint64_t terrain_bounds_indices{};
     std::uint64_t terrain_query_marker_indices{};
+    std::uint64_t material_sphere_indices{};
     std::uint64_t terrain_vertex_count{};
     std::uint64_t terrain_index_count{};
     std::uint64_t terrain_bounds_vertex_count{};
     std::uint64_t terrain_bounds_index_count{};
     std::uint64_t terrain_query_marker_vertex_count{};
     std::uint64_t terrain_query_marker_index_count{};
+    std::uint64_t material_sphere_vertex_count{};
+    std::uint64_t material_sphere_index_count{};
+    std::uint64_t procedural_daylight_frames{};
+    std::uint64_t image_based_lighting_frames{};
     std::uint64_t camera_constant_updates{};
     std::uint64_t camera_matrix_changes{};
     std::uint64_t skybox_matrix_changes{};
     std::uint64_t depth_clear_count{};
     std::uint64_t depth_resource_creations{};
     std::uint64_t depth_read_view_creations{};
+    std::uint64_t hdr_scene_color_creations{};
+    std::uint64_t hdr_scene_color_rtv_creations{};
+    std::uint64_t hdr_scene_color_srv_creations{};
     std::uint64_t texture_bindings{};
     std::uint64_t terrain_material_bindings{};
     std::uint64_t static_upload_submissions{};
@@ -270,6 +318,12 @@ struct RendererStats final {
     std::uint64_t terrain_material_subresources_uploaded{};
     std::uint64_t terrain_material_source_bytes_uploaded{};
     std::uint64_t terrain_material_srgb_resources{};
+    std::uint64_t environment_texture_creations{};
+    std::uint64_t environment_srv_creations{};
+    std::uint64_t environment_cubemap_srv_creations{};
+    std::uint64_t environment_subresources_uploaded{};
+    std::uint64_t environment_source_bytes_uploaded{};
+    std::uint64_t environment_hdr_resources{};
     std::uint64_t persistent_texture_descriptors{};
     std::uint64_t cubemap_srgb_resources{};
     std::uint64_t last_submission_fence{};

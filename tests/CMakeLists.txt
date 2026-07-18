@@ -10,6 +10,7 @@ add_executable(SharkTests
     unit/camera_tests.cpp
     unit/assertion_tests.cpp
     unit/dds_cubemap_tests.cpp
+    unit/environment_lighting_tests.cpp
     unit/d3d12_device_contract_tests.cpp
     unit/d3d12_frame_resource_tests.cpp
     unit/d3d12_render_graph_executor_tests.cpp
@@ -20,6 +21,7 @@ add_executable(SharkTests
     unit/renderer_contract_tests.cpp
     unit/renderer_d3d12_cube_scene_data_tests.cpp
     unit/renderer_d3d12_daylight_scene_data_tests.cpp
+    unit/renderer_d3d12_environment_scene_data_tests.cpp
     unit/renderer_d3d12_gpu_timestamp_tests.cpp
     unit/renderer_d3d12_skybox_scene_data_tests.cpp
     unit/renderer_d3d12_terrain_scene_data_tests.cpp

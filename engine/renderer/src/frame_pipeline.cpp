@@ -45,6 +45,11 @@ core::Result<render_graph::CompiledGraph> compose_frame_pipeline(
             pipeline_error(
                 "Renderer frame pipeline requires a Skybox callback"));
     }
+    if (!callbacks.tone_map) {
+        return core::Result<render_graph::CompiledGraph>::failure(
+            pipeline_error(
+                "Renderer frame pipeline requires a ToneMap callback"));
+    }
 
     render_graph::GraphBuilder builder;
     auto back_buffer_result = builder.import_resource(
@@ -56,6 +61,16 @@ core::Result<render_graph::CompiledGraph> compose_frame_pipeline(
         return pipeline_failure(std::move(back_buffer_result));
     }
     const auto back_buffer = back_buffer_result.value();
+
+    auto scene_color_result = builder.import_resource(
+        "SceneColor",
+        frame_scene_color_external_id,
+        render_graph::ResourceState::pixel_shader_read,
+        render_graph::ResourceState::pixel_shader_read);
+    if (!scene_color_result) {
+        return pipeline_failure(std::move(scene_color_result));
+    }
+    const auto scene_color = scene_color_result.value();
 
     auto depth_buffer_result = builder.import_resource(
         "DepthBuffer",
@@ -154,14 +169,63 @@ core::Result<render_graph::CompiledGraph> compose_frame_pipeline(
     const auto terrain_roughness_layers =
         terrain_roughness_layers_result.value();
 
+    auto environment_radiance_result = builder.import_resource(
+        "EnvironmentRadiance",
+        frame_environment_radiance_external_id,
+        render_graph::ResourceState::pixel_shader_read,
+        render_graph::ResourceState::pixel_shader_read);
+    if (!environment_radiance_result) {
+        return pipeline_failure(std::move(environment_radiance_result));
+    }
+    const auto environment_radiance =
+        environment_radiance_result.value();
+
+    auto environment_irradiance_result = builder.import_resource(
+        "EnvironmentIrradiance",
+        frame_environment_irradiance_external_id,
+        render_graph::ResourceState::pixel_shader_read,
+        render_graph::ResourceState::pixel_shader_read);
+    if (!environment_irradiance_result) {
+        return pipeline_failure(std::move(environment_irradiance_result));
+    }
+    const auto environment_irradiance =
+        environment_irradiance_result.value();
+
+    auto environment_prefiltered_specular_result =
+        builder.import_resource(
+            "EnvironmentPrefilteredSpecular",
+            frame_environment_prefiltered_specular_external_id,
+            render_graph::ResourceState::pixel_shader_read,
+            render_graph::ResourceState::pixel_shader_read);
+    if (!environment_prefiltered_specular_result) {
+        return pipeline_failure(
+            std::move(environment_prefiltered_specular_result));
+    }
+    const auto environment_prefiltered_specular =
+        environment_prefiltered_specular_result.value();
+
+    auto environment_brdf_lut_result = builder.import_resource(
+        "EnvironmentBrdfLut",
+        frame_environment_brdf_lut_external_id,
+        render_graph::ResourceState::pixel_shader_read,
+        render_graph::ResourceState::pixel_shader_read);
+    if (!environment_brdf_lut_result) {
+        return pipeline_failure(std::move(environment_brdf_lut_result));
+    }
+    const auto environment_brdf_lut =
+        environment_brdf_lut_result.value();
+
     const TerrainPassResources terrain_resources{
-        back_buffer,
+        scene_color,
         depth_buffer,
         terrain_vertex_buffer,
         terrain_index_buffer,
         terrain_albedo_layers,
         terrain_normal_layers,
         terrain_roughness_layers,
+        environment_irradiance,
+        environment_prefiltered_specular,
+        environment_brdf_lut,
     };
     auto terrain_pass_result = builder.add_pass(
         "Terrain",
@@ -177,7 +241,7 @@ core::Result<render_graph::CompiledGraph> compose_frame_pipeline(
 
     auto terrain_color_result = builder.write(
         terrain_pass,
-        back_buffer,
+        scene_color,
         render_graph::ResourceState::render_target);
     if (!terrain_color_result) {
         return pipeline_failure(std::move(terrain_color_result));
@@ -224,9 +288,31 @@ core::Result<render_graph::CompiledGraph> compose_frame_pipeline(
     if (!terrain_roughness_result) {
         return pipeline_failure(std::move(terrain_roughness_result));
     }
+    auto terrain_irradiance_result = builder.read(
+        terrain_pass,
+        environment_irradiance,
+        render_graph::ResourceState::pixel_shader_read);
+    if (!terrain_irradiance_result) {
+        return pipeline_failure(std::move(terrain_irradiance_result));
+    }
+    auto terrain_prefiltered_specular_result = builder.read(
+        terrain_pass,
+        environment_prefiltered_specular,
+        render_graph::ResourceState::pixel_shader_read);
+    if (!terrain_prefiltered_specular_result) {
+        return pipeline_failure(
+            std::move(terrain_prefiltered_specular_result));
+    }
+    auto terrain_brdf_lut_result = builder.read(
+        terrain_pass,
+        environment_brdf_lut,
+        render_graph::ResourceState::pixel_shader_read);
+    if (!terrain_brdf_lut_result) {
+        return pipeline_failure(std::move(terrain_brdf_lut_result));
+    }
 
     const TexturedCubePassResources textured_cube_resources{
-        back_buffer,
+        scene_color,
         depth_buffer,
         checker_texture,
         cube_vertex_buffer,
@@ -247,7 +333,7 @@ core::Result<render_graph::CompiledGraph> compose_frame_pipeline(
 
     auto cube_color_result = builder.write(
         textured_cube_pass,
-        back_buffer,
+        scene_color,
         render_graph::ResourceState::render_target);
     if (!cube_color_result) {
         return pipeline_failure(std::move(cube_color_result));
@@ -282,10 +368,11 @@ core::Result<render_graph::CompiledGraph> compose_frame_pipeline(
     }
 
     const SkyboxPassResources skybox_resources{
-        back_buffer,
+        scene_color,
         depth_buffer,
         cube_vertex_buffer,
         cube_index_buffer,
+        environment_radiance,
     };
     auto skybox_pass_result = builder.add_pass(
         "Skybox",
@@ -301,7 +388,7 @@ core::Result<render_graph::CompiledGraph> compose_frame_pipeline(
 
     auto skybox_color_result = builder.write(
         skybox_pass,
-        back_buffer,
+        scene_color,
         render_graph::ResourceState::render_target);
     if (!skybox_color_result) {
         return pipeline_failure(std::move(skybox_color_result));
@@ -326,6 +413,44 @@ core::Result<render_graph::CompiledGraph> compose_frame_pipeline(
         render_graph::ResourceState::index_buffer);
     if (!skybox_index_result) {
         return pipeline_failure(std::move(skybox_index_result));
+    }
+    auto skybox_radiance_result = builder.read(
+        skybox_pass,
+        environment_radiance,
+        render_graph::ResourceState::pixel_shader_read);
+    if (!skybox_radiance_result) {
+        return pipeline_failure(std::move(skybox_radiance_result));
+    }
+
+    const ToneMapPassResources tone_map_resources{
+        back_buffer,
+        scene_color,
+    };
+    auto tone_map_pass_result = builder.add_pass(
+        "ToneMap",
+        [callback = std::move(callbacks.tone_map),
+         tone_map_resources](
+            const render_graph::PassContext& context) {
+            return callback(context, tone_map_resources);
+        });
+    if (!tone_map_pass_result) {
+        return pipeline_failure(std::move(tone_map_pass_result));
+    }
+    const auto tone_map_pass = tone_map_pass_result.value();
+
+    auto tone_map_color_result = builder.write(
+        tone_map_pass,
+        back_buffer,
+        render_graph::ResourceState::render_target);
+    if (!tone_map_color_result) {
+        return pipeline_failure(std::move(tone_map_color_result));
+    }
+    auto tone_map_scene_result = builder.read(
+        tone_map_pass,
+        scene_color,
+        render_graph::ResourceState::pixel_shader_read);
+    if (!tone_map_scene_result) {
+        return pipeline_failure(std::move(tone_map_scene_result));
     }
 
     return std::move(builder).compile();

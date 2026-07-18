@@ -1,6 +1,6 @@
 # Camera, Reversed-Z Depth, Cube, and Skybox Contract
 
-- **Completed through:** `T-003`
+- **Completed through:** `S-003`
 - **Last verified:** July 18, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
@@ -23,7 +23,9 @@ surface query. REN-001 preserves those results while moving public frame input
 to `shark::renderer::RenderFrameData` and the D3D12 scene helpers behind the
 private renderer backend. T-003 additionally passes finite camera world
 position for terrain specular evaluation; it does not change the camera,
-controller, matrix, cube, depth, or sky-motion contracts.
+controller, matrix, cube, depth, or sky-motion contracts. S-003 preserves
+those conventions while adding HDR IBL, a material sphere, and final tone
+mapping; `F3` switches the environment mode without changing camera state.
 
 This remains a deliberately narrow proof. It establishes conventions and
 lifetime rules that later sky, terrain, rain, and water passes can reuse; it is
@@ -122,28 +124,33 @@ behavior.
 The private D3D12 renderer backend records the cube and packed
 surface/bounds/query-marker terrain
 vertex/index buffers, checker, and S-001 cubemap copies into one
-`StaticSceneUpload` direct-queue submission during startup. Six barriers
-transition the buffers to their input-assembler states and both textures to
-`PIXEL_SHADER_RESOURCE`, then it signals the normal monotonic direct fence and
-performs one bounded startup wait before releasing the temporary upload
-storage. No copy queue, background transfer, or per-frame static upload exists.
+`StaticSceneUpload` direct-queue submission during startup. The same submission
+also copies three terrain material arrays and all 79 derived HDR environment
+subresources. Thirteen barriers establish final input/shader-read states, then
+it signals the normal monotonic direct fence and performs one bounded startup
+wait before releasing temporary upload storage. No copy queue, background
+transfer, or per-frame static upload exists.
 
 ## Resource binding and shaders
 
-The cube/sky root signature contains:
+The cube root signature contains:
 
 - one vertex/pixel-visible root constant-buffer view at `b0` for the current
   scene, sky, and daylight constants;
 - one descriptor table containing one pixel-shader SRV at `t0`; and
 - one point-filtered wrap static sampler at `s0`.
 
+The sky has its own focused root signature with the shared frame CBV,
+environment-mode constants, one HDR radiance-cube table, and a linear-clamp
+sampler.
+
 Unused hull, domain, and geometry shader root access remains denied. One
-persistent shader-visible CBV/SRV/UAV heap holds the checker SRV at slot 0 and
-the retained cubemap SRV at slot 1. The one-entry root table points at slot 0
-for `TexturedCube`; the procedural `Skybox` binds no texture table. Slot 1
-remains only as part of the S-001 startup upload/descriptor proof. This is not
-the stable-index persistent allocator or bindless heap planned for later
-renderer infrastructure.
+persistent ten-slot shader-visible CBV/SRV/UAV heap holds the checker at slot
+0, retained DDS cubemap at slot 1, three terrain material arrays at slots 2-4,
+three IBL maps at slots 5-7, HDR radiance at slot 8, and resize-owned HDR scene
+color at slot 9. `TexturedCube` points its table at slot 0; `Skybox` points its
+focused table at slot 8. Slot 1 remains only the S-001 startup proof. This is
+not a general persistent allocator or bindless heap.
 
 Each frame writes one 256-byte-aligned record into the acquired frame context's
 existing upload arena. Its first 64 bytes are the engine-owned
@@ -156,14 +163,16 @@ shader reads position and UV attributes, evaluates
 shader samples the checker and writes the opaque color target. The sky vertex
 shader uses the translation-free matrix, forces reversed-Z clip depth to zero,
 and passes cube position as a world direction. Its pixel shader normalizes that
-direction and evaluates the daylight zenith/horizon/nadir gradient, warm sun
-disk, and restrained halo without reading the retained cubemap. Sky and terrain
-apply an explicit linear-to-sRGB transfer before writing the current UNORM back
-buffer; this is not HDR tone mapping.
+direction and samples the generated HDR radiance cube or evaluates the
+procedural fallback. Cube, sky, terrain, and sphere write linear color to the
+`R16G16B16A16_FLOAT` scene target. The final `ToneMap` pass applies a fixed
+ACES-fitted curve and explicit linear-to-sRGB transfer to the UNORM back
+buffer.
 
-The shared cube/sky root signature and immutable cube/skybox PSOs are created
-synchronously from pinned build-time DXIL. They survive swap-chain resize and are released only
-after explicit renderer shutdown drains and retires every submission.
+The focused cube and sky root signatures plus immutable cube/skybox PSOs are
+created synchronously from pinned build-time DXIL. They survive swap-chain
+resize and are released only after explicit renderer shutdown drains and
+retires every submission.
 
 ## Reversed-Z depth resource
 
@@ -184,17 +193,18 @@ Terrain and `TexturedCube` write reversed-Z depth. The graph then transitions
 the resource to `DEPTH_READ`, and
 `Skybox` binds the read-only DSV with `GREATER_EQUAL`, forced depth zero, and
 depth writes disabled. The final graph transition restores `DEPTH_WRITE`.
-Both PSOs declare `DXGI_FORMAT_D32_FLOAT` and use viewport depth `[0, 1]`.
+All depth-using scene PSOs declare `DXGI_FORMAT_D32_FLOAT` and use viewport
+depth `[0, 1]`.
 
 Back-face culling is disabled for this first proof, making the depth target
 solely responsible for hiding the cube's farther triangles.
 
 On an effective nonzero resize, `Renderer::resize` makes the private backend
 drain the direct queue, retire the reusable contexts, release the old back
-buffers and depth texture, resize
-the swap chain, reacquires the RTVs, and creates a new matching depth texture
-a writable and read-only DSV. Minimization never creates a zero-size depth resource and never submits
-a draw or clear. A restore carrying the existing extent is a no-op.
+buffers, depth texture, and HDR scene target, resize the swap chain, reacquire
+the back-buffer RTVs, and create matching depth/DSV plus HDR scene RTV/SRV
+resources. Minimization never creates a zero-size resource and never submits a
+draw or clear. A restore carrying the existing extent is a no-op.
 
 ## Automated and manual acceptance
 
@@ -209,19 +219,20 @@ skips that already-covered interval.
 
 The permanent accounting contract requires:
 
-- five indexed draws per submitted frame: one terrain surface, one 24-index
-  bounds box, one six-index cyan query marker, one 36-index cube, and one
-  36-index skybox; plus checker and terrain-material bindings, one
-  frame-constant upload, and one depth clear;
-- one graph compilation/execution, three pass executions, ten imports, two
-  dependencies, four recorded transitions, and 22 elided transitions per frame;
+- six indexed draws per submitted frame: one terrain surface, one 1,584-index
+  material sphere, one 24-index bounds box, one six-index cyan query marker,
+  one 36-index cube, and one 36-index skybox; plus one fullscreen tone-map
+  draw, four texture-table bindings, one frame-constant upload, and one depth
+  clear;
+- one graph compilation/execution, four pass executions, 15 imports, three
+  dependencies, six recorded transitions, and 31 elided transitions per frame;
 - frame submissions equal successful plus occluded present attempts;
 - all three DXGI-selected frame contexts are acquired and reused;
 - every submission retires before shutdown;
 - `static_upload_submissions == 1`, `geometry_buffer_creations == 4`,
-  `checker_texture_creations == 1`, `cubemap_texture_creations == 1`, and
-  `texture_srv_creations == 5`; the startup submission completes through its
-  bounded fence wait before the first frame;
+  `checker_texture_creations == 1`, `cubemap_texture_creations == 1`, four
+  environment textures, and ten persistent texture descriptors; the startup
+  submission completes through its bounded fence wait before the first frame;
 - depth-resource and read-only DSV-view creations each equal
   `resize_count + 1`;
 - the normal paths prove no query-marker or other draw, texture bind,
@@ -240,18 +251,19 @@ The permanent accounting contract requires:
   messages, or live renderer-owned D3D12 children.
 
 The smoke does not read back or compare pixels. Manual acceptance requires a
-clearly textured cube, a continuous procedural daylight background with a warm
-fixed-world sun, unchanged sky direction under translation, correct near/far
-occlusion, a cyan terrain pin anchored to the displayed surface and pointing
-along its exact geometric normal, perspective that does not stretch after
-resize, and clean minimize/restore and shutdown. No cube face, edge, or corner
-may appear as a painted wall. See
-[the sky procedure](SKYBOX.md#manual-visual-acceptance).
+clearly textured cube, a continuous HDR environment with coherent terrain and
+sphere response, clean `F3` fallback switching, unchanged sky direction under
+translation, correct near/far occlusion, a cyan terrain pin anchored to the
+displayed surface and pointing along its exact geometric normal, perspective
+that does not stretch after resize, and clean minimize/restore and shutdown.
+No cube face, edge, or corner may appear as a painted wall. See
+[the sky procedure](SKYBOX.md#manual-acceptance).
 
 CPU coverage is discovered through the existing `unit.` CTest prefix from
 `math_tests.cpp`, `camera_tests.cpp`, `camera_controller_tests.cpp`,
 `d3d12_cube_scene_data_tests.cpp`, `d3d12_skybox_scene_data_tests.cpp`, and
-`d3d12_daylight_scene_data_tests.cpp`.
+`d3d12_daylight_scene_data_tests.cpp`, plus the S-003 environment-lighting and
+material-sphere scene-data suites.
 Graphics coverage is registered as
 `integration.gpu.hardware_cube_present`,
 `integration.gpu.warp_cube_present`, and
@@ -259,18 +271,17 @@ Graphics coverage is registered as
 
 ## Explicit non-goals
 
-T-003 retains the fixed LDR procedural daylight beside the retained S-001
-startup asset proof. It adds no general
+S-003 retains procedural daylight beside the retained S-001 startup asset
+proof. It adds no general
 DDS/WIC/glTF importer, runtime mip generation, compression, texture streaming,
-HDR conversion, arbitrary material graph/system, shadow map, atmospheric scattering,
-cloud, exposure, time-of-day, image-based lighting, terrain streaming/LOD, or
-content database.
+file-backed HDR conversion, arbitrary material graph/system, shadow map,
+atmospheric scattering, cloud, automatic exposure, time of day, terrain
+streaming/LOD, or content database.
 
 The query marker adds no camera state, control, matrix, GPU resource, PSO,
-graph pass, dependency, barrier, PIX event, or timestamp. T-003's material
-arrays establish ten imports, three passes, two dependencies, four barriers,
-22 elisions, four geometry buffers, and eight timestamps as the current exact
-contract.
+graph pass, dependency, barrier, PIX event, or timestamp. S-003 establishes 15
+imports, four passes, three dependencies, six barriers, 31 elisions, four
+geometry buffers, and ten timestamps as the current exact contract.
 
 It also adds no general mesh/resource/descriptor manager, typed GPU handles,
 placed-resource pool, copy queue, deferred uploader, shader reflection, runtime
@@ -281,10 +292,12 @@ map, gamepad support, fixed simulation clock, pixel readback, or golden-image
 testing.
 
 The graph remains frame-local and limited to imported whole resources, now
-with ordered `Terrain`, `TexturedCube`, and `Skybox` passes. See
+with ordered `Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` passes. See
 [the render-graph contract](RENDER_GRAPH.md) for its exact ordering/barriers,
 [the DDS cubemap contract](DDS_CUBEMAP.md) for the source texture, and
-[the skybox contract](SKYBOX.md) for the visible procedural daylight rules.
+[the skybox contract](SKYBOX.md) for the HDR environment and procedural
+fallback rules.
 See [the terrain contract](TERRAIN.md) for its separate geometry and
-canonical query/material/diagnostic rendering contract. `T-003` was completed
-on July 18, 2026. The next increment is `S-003`, HDR environment lighting.
+canonical query/material/diagnostic rendering contract. `S-003` was completed
+on July 18, 2026. The next increment is `T-004`, terrain chunk culling,
+followed by `T-005`, bounded visual LOD.

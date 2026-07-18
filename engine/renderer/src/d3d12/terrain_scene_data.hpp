@@ -71,13 +71,17 @@ inline constexpr std::uint32_t terrain_query_marker_index_count = 6;
 inline constexpr std::uint32_t terrain_material_layer_count = 2;
 inline constexpr std::uint32_t terrain_material_texture_count = 3;
 inline constexpr std::uint32_t terrain_material_maximum_dimension = 256;
-inline constexpr std::uint32_t terrain_material_root_constant_count = 4;
+inline constexpr std::uint32_t terrain_material_root_constant_count = 8;
 inline constexpr std::uint32_t terrain_camera_root_parameter = 0;
 inline constexpr std::uint32_t terrain_material_constants_root_parameter = 1;
 inline constexpr std::uint32_t terrain_material_table_root_parameter = 2;
 inline constexpr std::uint32_t terrain_material_albedo_descriptor = 0;
 inline constexpr std::uint32_t terrain_material_normal_descriptor = 1;
 inline constexpr std::uint32_t terrain_material_roughness_descriptor = 2;
+inline constexpr std::uint32_t terrain_environment_irradiance_descriptor = 3;
+inline constexpr std::uint32_t terrain_environment_specular_descriptor = 4;
+inline constexpr std::uint32_t terrain_environment_brdf_descriptor = 5;
+inline constexpr std::uint32_t terrain_shader_texture_count = 6;
 inline constexpr DXGI_FORMAT terrain_material_albedo_format =
     DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
 inline constexpr DXGI_FORMAT terrain_material_normal_format =
@@ -99,6 +103,12 @@ struct TerrainMaterialRootConstants final {
     math::Float3 camera_world_position{};
     std::uint32_t material_view{
         static_cast<std::uint32_t>(TerrainMaterialView::shaded)};
+    std::uint32_t environment_lighting_mode{
+        static_cast<std::uint32_t>(
+            EnvironmentLightingMode::image_based)};
+    float specular_max_lod{5.0F};
+    std::uint32_t reserved_zero{};
+    std::uint32_t reserved_one{};
 };
 
 [[nodiscard]] constexpr bool valid_terrain_material_view(
@@ -144,9 +154,12 @@ struct TerrainMaterialRootConstants final {
 static_assert(terrain_vertex_stride == 24);
 static_assert(terrain_normal_offset == 12);
 static_assert(std::is_standard_layout_v<TerrainMaterialRootConstants>);
-static_assert(sizeof(TerrainMaterialRootConstants) == 16);
+static_assert(sizeof(TerrainMaterialRootConstants) == 32);
 static_assert(
     terrain_material_texture_count ==
     terrain_material_roughness_descriptor + 1U);
+static_assert(
+    terrain_shader_texture_count ==
+    terrain_environment_brdf_descriptor + 1U);
 
 } // namespace shark::renderer::d3d12::detail

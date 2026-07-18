@@ -4,10 +4,16 @@ set(cube_shader_include
     "${CMAKE_CURRENT_SOURCE_DIR}/shared/camera_constants.hlsli")
 set(daylight_shader_include
     "${CMAKE_CURRENT_SOURCE_DIR}/shared/daylight.hlsli")
+set(pbr_ibl_shader_include
+    "${CMAKE_CURRENT_SOURCE_DIR}/shared/pbr_ibl.hlsli")
 set(skybox_shader_source
     "${CMAKE_CURRENT_SOURCE_DIR}/sky/skybox.hlsl")
 set(terrain_shader_source
     "${CMAKE_CURRENT_SOURCE_DIR}/terrain/terrain.hlsl")
+set(material_sphere_shader_source
+    "${CMAKE_CURRENT_SOURCE_DIR}/material_sphere/material_sphere.hlsl")
+set(tone_map_shader_source
+    "${CMAKE_CURRENT_SOURCE_DIR}/tone_map/tone_map.hlsl")
 
 shark_compile_hlsl(
     SOURCE "${cube_shader_source}"
@@ -133,9 +139,95 @@ add_custom_target(SharkTerrainShaders
     SOURCES
         "${terrain_shader_source}"
         "${cube_shader_include}"
-        "${daylight_shader_include}"
+        "${pbr_ibl_shader_include}"
 )
 set_property(TARGET SharkTerrainShaders PROPERTY FOLDER "Shark/Shaders")
+
+shark_compile_hlsl(
+    SOURCE "${material_sphere_shader_source}"
+    ENTRY_POINT VSMain
+    PROFILE vs_6_0
+    OUTPUT_NAME material_sphere.vertex
+    SYMBOL shark_material_sphere_vertex_shader
+    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+set(material_sphere_vertex_binary "${SHARK_SHADER_BINARY}")
+set(material_sphere_vertex_header "${SHARK_SHADER_HEADER}")
+set(material_sphere_vertex_pdb "${SHARK_SHADER_PDB}")
+set(material_sphere_vertex_depfile "${SHARK_SHADER_DEPFILE}")
+
+shark_compile_hlsl(
+    SOURCE "${material_sphere_shader_source}"
+    ENTRY_POINT PSMain
+    PROFILE ps_6_0
+    OUTPUT_NAME material_sphere.pixel
+    SYMBOL shark_material_sphere_pixel_shader
+    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+set(material_sphere_pixel_binary "${SHARK_SHADER_BINARY}")
+set(material_sphere_pixel_header "${SHARK_SHADER_HEADER}")
+set(material_sphere_pixel_pdb "${SHARK_SHADER_PDB}")
+set(material_sphere_pixel_depfile "${SHARK_SHADER_DEPFILE}")
+
+add_custom_target(SharkMaterialSphereShaders
+    DEPENDS
+        "${material_sphere_vertex_binary}"
+        "${material_sphere_vertex_depfile}"
+        "${material_sphere_vertex_header}"
+        "${material_sphere_vertex_pdb}"
+        "${material_sphere_pixel_binary}"
+        "${material_sphere_pixel_depfile}"
+        "${material_sphere_pixel_header}"
+        "${material_sphere_pixel_pdb}"
+    SOURCES
+        "${material_sphere_shader_source}"
+        "${cube_shader_include}"
+        "${pbr_ibl_shader_include}"
+)
+set_property(
+    TARGET SharkMaterialSphereShaders
+    PROPERTY FOLDER "Shark/Shaders"
+)
+
+shark_compile_hlsl(
+    SOURCE "${tone_map_shader_source}"
+    ENTRY_POINT VSMain
+    PROFILE vs_6_0
+    OUTPUT_NAME tone_map.vertex
+    SYMBOL shark_tone_map_vertex_shader
+    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+set(tone_map_vertex_binary "${SHARK_SHADER_BINARY}")
+set(tone_map_vertex_header "${SHARK_SHADER_HEADER}")
+set(tone_map_vertex_pdb "${SHARK_SHADER_PDB}")
+set(tone_map_vertex_depfile "${SHARK_SHADER_DEPFILE}")
+
+shark_compile_hlsl(
+    SOURCE "${tone_map_shader_source}"
+    ENTRY_POINT PSMain
+    PROFILE ps_6_0
+    OUTPUT_NAME tone_map.pixel
+    SYMBOL shark_tone_map_pixel_shader
+    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+set(tone_map_pixel_binary "${SHARK_SHADER_BINARY}")
+set(tone_map_pixel_header "${SHARK_SHADER_HEADER}")
+set(tone_map_pixel_pdb "${SHARK_SHADER_PDB}")
+set(tone_map_pixel_depfile "${SHARK_SHADER_DEPFILE}")
+
+add_custom_target(SharkToneMapShaders
+    DEPENDS
+        "${tone_map_vertex_binary}"
+        "${tone_map_vertex_depfile}"
+        "${tone_map_vertex_header}"
+        "${tone_map_vertex_pdb}"
+        "${tone_map_pixel_binary}"
+        "${tone_map_pixel_depfile}"
+        "${tone_map_pixel_header}"
+        "${tone_map_pixel_pdb}"
+    SOURCES "${tone_map_shader_source}"
+)
+set_property(TARGET SharkToneMapShaders PROPERTY FOLDER "Shark/Shaders")
 
 set(SHARK_CUBE_SHADER_TARGET
     SharkCubeShaders
@@ -207,6 +299,54 @@ set(SHARK_TERRAIN_VERTEX_DEPFILE
 )
 set(SHARK_TERRAIN_PIXEL_DEPFILE
     "${terrain_pixel_depfile}"
+    PARENT_SCOPE
+)
+set(SHARK_MATERIAL_SPHERE_SHADER_TARGET
+    SharkMaterialSphereShaders
+    PARENT_SCOPE
+)
+set(SHARK_MATERIAL_SPHERE_SHADER_INCLUDE_DIRECTORY
+    "${CMAKE_BINARY_DIR}/generated/shaders/$<CONFIG>"
+    PARENT_SCOPE
+)
+set(SHARK_MATERIAL_SPHERE_VERTEX_HEADER
+    "${material_sphere_vertex_header}"
+    PARENT_SCOPE
+)
+set(SHARK_MATERIAL_SPHERE_PIXEL_HEADER
+    "${material_sphere_pixel_header}"
+    PARENT_SCOPE
+)
+set(SHARK_MATERIAL_SPHERE_VERTEX_DEPFILE
+    "${material_sphere_vertex_depfile}"
+    PARENT_SCOPE
+)
+set(SHARK_MATERIAL_SPHERE_PIXEL_DEPFILE
+    "${material_sphere_pixel_depfile}"
+    PARENT_SCOPE
+)
+set(SHARK_TONE_MAP_SHADER_TARGET
+    SharkToneMapShaders
+    PARENT_SCOPE
+)
+set(SHARK_TONE_MAP_SHADER_INCLUDE_DIRECTORY
+    "${CMAKE_BINARY_DIR}/generated/shaders/$<CONFIG>"
+    PARENT_SCOPE
+)
+set(SHARK_TONE_MAP_VERTEX_HEADER
+    "${tone_map_vertex_header}"
+    PARENT_SCOPE
+)
+set(SHARK_TONE_MAP_PIXEL_HEADER
+    "${tone_map_pixel_header}"
+    PARENT_SCOPE
+)
+set(SHARK_TONE_MAP_VERTEX_DEPFILE
+    "${tone_map_vertex_depfile}"
+    PARENT_SCOPE
+)
+set(SHARK_TONE_MAP_PIXEL_DEPFILE
+    "${tone_map_pixel_depfile}"
     PARENT_SCOPE
 )
 

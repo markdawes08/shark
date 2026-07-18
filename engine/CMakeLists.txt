@@ -10,7 +10,9 @@ set_property(TARGET spdlog::spdlog PROPERTY INTERFACE_COMPILE_OPTIONS "")
 
 add_library(SharkEngine STATIC
     assets/include/shark/assets/dds_cubemap.hpp
+    assets/include/shark/assets/environment_lighting.hpp
     assets/src/dds_cubemap.cpp
+    assets/src/environment_lighting.cpp
     core/include/shark/core/assertion.hpp
     core/include/shark/core/error.hpp
     core/include/shark/core/engine_info.hpp
@@ -30,6 +32,7 @@ add_library(SharkEngine STATIC
     renderer/include/shark/renderer/renderer.hpp
     renderer/src/d3d12/cube_scene_data.hpp
     renderer/src/d3d12/daylight_scene_data.hpp
+    renderer/src/d3d12/environment_scene_data.hpp
     renderer/src/d3d12/gpu_timestamp_state.cpp
     renderer/src/d3d12/gpu_timestamp_state.hpp
     renderer/src/d3d12/renderer.cpp

@@ -27,6 +27,8 @@ VertexOutput VSMain(const VertexInput input)
 
 float4 PSMain(const VertexOutput input) : SV_Target0
 {
+    // The checker is a linear diagnostic color and now feeds Shark's HDR
+    // scene target; the final tone-map pass owns display encoding.
     return checker_texture.Sample(
         checker_sampler,
         input.texture_coordinates);

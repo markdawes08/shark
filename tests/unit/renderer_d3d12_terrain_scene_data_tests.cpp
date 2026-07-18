@@ -59,13 +59,19 @@ TEST_CASE(
     STATIC_REQUIRE(terrain_material_layer_count == 2);
     STATIC_REQUIRE(terrain_material_texture_count == 3);
     STATIC_REQUIRE(terrain_material_maximum_dimension == 256);
-    STATIC_REQUIRE(terrain_material_root_constant_count == 4);
+    STATIC_REQUIRE(terrain_material_root_constant_count == 8);
     STATIC_REQUIRE(terrain_camera_root_parameter == 0);
     STATIC_REQUIRE(terrain_material_constants_root_parameter == 1);
     STATIC_REQUIRE(terrain_material_table_root_parameter == 2);
     STATIC_REQUIRE(terrain_material_albedo_descriptor == 0);
     STATIC_REQUIRE(terrain_material_normal_descriptor == 1);
     STATIC_REQUIRE(terrain_material_roughness_descriptor == 2);
+    STATIC_REQUIRE(
+        terrain_environment_irradiance_descriptor == 3);
+    STATIC_REQUIRE(
+        terrain_environment_specular_descriptor == 4);
+    STATIC_REQUIRE(terrain_environment_brdf_descriptor == 5);
+    STATIC_REQUIRE(terrain_shader_texture_count == 6);
     STATIC_REQUIRE(
         terrain_material_albedo_format ==
         DXGI_FORMAT_R8G8B8A8_UNORM_SRGB);
@@ -84,13 +90,19 @@ TEST_CASE(
     STATIC_REQUIRE(terrain_material_height_blend_end == -0.4F);
     STATIC_REQUIRE(
         terrain_material_height_rock_contribution == 0.4F);
-    STATIC_REQUIRE(sizeof(TerrainMaterialRootConstants) == 16);
+    STATIC_REQUIRE(sizeof(TerrainMaterialRootConstants) == 32);
     STATIC_REQUIRE(
         offsetof(
             TerrainMaterialRootConstants,
             camera_world_position) == 0);
     STATIC_REQUIRE(
         offsetof(TerrainMaterialRootConstants, material_view) == 12);
+    STATIC_REQUIRE(
+        offsetof(
+            TerrainMaterialRootConstants,
+            environment_lighting_mode) == 16);
+    STATIC_REQUIRE(
+        offsetof(TerrainMaterialRootConstants, specular_max_lod) == 20);
 
     STATIC_REQUIRE(
         valid_terrain_material_view(TerrainMaterialView::shaded));

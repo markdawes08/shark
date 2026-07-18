@@ -1,6 +1,6 @@
 # DDS Cubemap Asset and Upload Contract
 
-- **Completed through:** `T-003`
+- **Completed through:** `S-003`
 - **Last verified:** July 18, 2026
 
 S-001 establishes Shark's first file-backed texture asset. It loads one
@@ -12,6 +12,8 @@ named `Skybox` pass. S-002A replaces that diagnostic image's visible use with
 a procedural daylight sky. The loader, app-local fixture, startup upload, GPU
 resource, and descriptor remain as the bounded S-001 proof, but the normal
 frame graph no longer imports, reads, or binds the cubemap.
+S-003 adds a separate project-generated linear-HDR environment path; it does
+not reinterpret or repurpose this sRGB orientation fixture.
 
 ## Tracked orientation fixture
 
@@ -158,21 +160,23 @@ cubemap_faces_uploaded == 6
 cubemap_mip_levels == 1
 cubemap_subresources_uploaded == 6
 cubemap_source_bytes_uploaded == 1536
-persistent_texture_descriptors == 5
-texture_srv_creations == 5
+persistent_texture_descriptors == 10
 cubemap_srgb_resources == 1
 ```
 
-The five-descriptor totals include T-003's three terrain material SRVs; the
-cubemap-specific creation, face, mip, byte, and sRGB counters remain unchanged.
+S-003 raises the complete fixed heap to ten descriptors by adding four
+environment/IBL SRVs and one resize-owned HDR scene SRV. The cubemap-specific
+creation, face, mip, byte, and sRGB counters remain unchanged; total SRV
+creation also includes scene-color recreation after resize.
 
 The startup path remains exactly one static submission, one
 `StaticSceneUpload` PIX event, and one bounded initialization wait. The normal
-frame graph now has ten imports, three ordered
-`Terrain`/`TexturedCube`/`Skybox` passes, two dependencies, four attachment
-transitions, 22 elided same-state transitions, one checker binding, one terrain
-material binding, five indexed draws, and eight timestamps per frame. T-002's query marker is packed
-into the existing terrain buffers, preserving four total geometry buffers.
+frame graph now has 15 imports, four ordered
+`Terrain`/`TexturedCube`/`Skybox`/`ToneMap` passes, three dependencies, six
+transitions, 31 elisions, four texture-table binds, six indexed draws plus the
+tone-map draw, and ten timestamps per frame. The query marker and S-003
+material sphere are packed into the existing terrain buffers, preserving four
+total geometry buffers.
 Cubemap creation/upload counters remain startup invariants, but there is no
 per-frame cubemap read or binding to count.
 Hardware and normal WARP execute 1,000 successful presents; focused WARP with
@@ -182,18 +186,19 @@ intentionally skipping the normal paths' minimize/restore interval, with a
 
 ## Explicit non-goals
 
-S-002A does not delete or generalize the S-001 loader, generate mips, convert
-HDR images, build irradiance/specular maps, stream textures, compress content,
-load general 2D materials, create asset IDs or caches, or establish a general
-descriptor allocator. The retained orientation resource is not a reflection
-environment, image-based light, or hidden color input to the procedural sky.
-See [the skybox contract](SKYBOX.md) for the current visible daylight path.
+S-003 does not delete or generalize the S-001 loader, generate mips for this
+DDS, reinterpret its color space, stream textures, compress content, load
+general 2D materials, create asset IDs/caches, or establish a general
+descriptor allocator. The retained orientation resource is not the reflection
+environment, image-based light, or hidden color input to either sky mode.
+See [the skybox contract](SKYBOX.md) for the current HDR environment and
+procedural fallback paths.
 T-002 adds canonical terrain queries without changing this retained asset
 proof. REN-001 moves the public upload view into `RendererConfig` and the
 upload implementation into `engine/renderer/src/d3d12`; the D3D12 RHI no
 longer exposes a public `Presentation` class. T-003 adds three separate
 terrain arrays and descriptors without repurposing or sampling the retained
-cubemap. T-003 was completed on July 18, 2026. The next increment is `S-003`,
-HDR environment lighting, which will define a separate environment-lighting
-asset contract rather than treating this orientation fixture as production
-content.
+cubemap. S-003 was completed on July 18, 2026 and defines its separate
+project-generated environment-lighting asset contract without treating this
+orientation fixture as production content. The next increment is `T-004`,
+terrain chunk culling, followed by `T-005`, bounded visual LOD.

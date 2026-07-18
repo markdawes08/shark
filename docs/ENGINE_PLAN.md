@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 18, 2026
-- **Latest completed:** `T-003` - layered PBR terrain materials
-- **Next increment:** `S-003` - HDR environment lighting
+- **Latest completed:** `S-003` - HDR image-based environment lighting
+- **Next increment:** `T-004` - terrain chunk culling
 
 ## 1. Project direction
 
@@ -18,7 +18,7 @@ convincing water into a physically meaningful surface-water simulation.
 The first vertical slice, **Environment Lab 0.1**, will contain:
 
 - a controllable free-fly camera;
-- a basic procedural daylight sky and sun, followed later by HDR
+- a basic procedural daylight fallback plus deterministic HDR
   image-based lighting;
 - heightmapped terrain with physically based textures;
 - bounded, wind-driven GPU rain with splashes and visual wetness;
@@ -375,8 +375,8 @@ unstable circular solve; iterative two-way coupling is a later milestone.
   descriptors, timestamps, and a completion set containing every queue fence
   that guards reuse. G-003 establishes one allocator, bounded upload/CPU
   descriptor staging, and one direct-fence checkpoint per context while sharing
-  one graphics command list. T-001 uses one fixed eight-query timestamp/readback
-  slice per context, backed by one 24-query heap and one 192-byte buffer, and
+  one graphics command list. S-003 uses one fixed ten-query timestamp/readback
+  slice per context, backed by one 30-query heap and one 240-byte buffer, and
   reuses each slice only after the same direct-fence checkpoint completes.
   Multi-queue completion sets remain later.
 - Defer destruction of GPU resources, descriptors, pipelines, and upload storage
@@ -389,7 +389,10 @@ unstable circular solve; iterative two-way coupling is a later milestone.
   solid, wireframe, and bounds PSOs in the same bounded static-upload and
   startup lifetime. T-003 adds three material arrays and a dedicated terrain
   root signature while splitting the procedural sky onto its own b0-only root
-  signature; shutdown releases every persistent object after the final drain.
+  signature. S-003 adds four derived HDR environment textures, a resize-owned
+  `R16G16B16A16_FLOAT` scene target, a material-sphere proof pipeline, and a
+  final tone-map pipeline; shutdown releases every persistent object after the
+  final drain.
   Generic fence-keyed deferred destruction remains later.
 
 ### Resources and descriptors
@@ -407,8 +410,11 @@ unstable circular solve; iterative two-way coupling is a later milestone.
   S-001 retains the uploaded orientation cubemap at slot 1 as an asset-path
   proof. S-002A makes `Skybox` b0-only and removes that dormant texture from
   the per-frame graph. T-003 fixes albedo, normal, and roughness array SRVs at
-  slots 2-4 and binds them as one three-entry terrain table; the stable-index
-  allocator remains future work.
+  slots 2-4. S-003 fixes diffuse irradiance, prefiltered specular, split-sum
+  BRDF LUT, radiance, and resize-owned HDR scene-color SRVs at slots 5-9.
+  Terrain binds one contiguous six-entry material/IBL table, while sky and
+  tone mapping bind focused one-entry tables; the stable-index allocator
+  remains future work.
 - Keep CPU-only RTV and DSV allocators separate.
 - Add upload and readback arenas, with a per-frame linear upload ring.
 - Expose descriptor use and DXGI video-memory budget in diagnostics before
@@ -430,9 +436,11 @@ unstable circular solve; iterative two-way coupling is a later milestone.
   translation-free sky matrices plus six packed daylight rows and is visible
   to vertex and pixel stages. The checker cube separately retains one
   single-SRV descriptor table and static sampler. T-003's terrain root adds
-  four b1 constants, one `t0..t2` array table, and an anisotropic sampler while
-  the sky retains a separate b0-only signature. This is not yet a versioned
-  renderer-wide layout.
+  material/view constants and one material table. S-003 extends that table to
+  `t0..t5` for the three material arrays plus irradiance, prefiltered
+  specular, and BRDF LUT; it also gives sky a radiance-cube table and adds a
+  focused tone-map signature for the HDR scene SRV. This is not yet a
+  versioned renderer-wide layout.
 - Key shader artifacts by source/include hashes, entry point, target, defines,
   flags, compiler version, and root-signature version.
 - Cache immutable PSOs by structural hash; never compile a surprise PSO in the
@@ -440,6 +448,8 @@ unstable circular solve; iterative two-way coupling is a later milestone.
   synchronously during renderer startup; generalized artifact keys and PSO
   caching remain later. S-002 creates a second immutable skybox PSO from pinned
   build-time DXIL and never compiles pipeline state inside the frame loop.
+  S-003 adds immutable material-sphere and tone-map PSOs without moving PSO
+  compilation into the frame loop.
 - Add development hot reload only after the offline build pipeline is reliable.
 
 ### Render graph growth
@@ -454,9 +464,9 @@ It grows in three deliberate stages:
 
 1. **Simple:** direct queue, imported committed resources, declaration
    validation, stable hazard-aware topological compilation, cycle rejection,
-   and centralized legacy barrier encoding. T-001 keeps this first form and
-   executes ordered `Terrain`, `TexturedCube`, and `Skybox` passes with
-   explicit texture and input-assembler reads.
+   and centralized legacy barrier encoding. S-003 keeps this first form and
+   executes ordered `Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` passes
+   with explicit HDR scene, environment, texture, and input-assembler reads.
 2. **Managed:** lifetime analysis, graph-owned transient placed resources,
    resource pooling, subresource scopes, and aliasing.
 3. **Optimized:** pass merging, parallel recording, and compute/copy scheduling
@@ -472,11 +482,11 @@ across resources or frames.
 - check every `HRESULT` and name every significant D3D12 object;
 - add PIX markers around every pass and major upload; T-001 names the current
   `StaticSceneUpload`, `Frame`, `Terrain`, `TexturedCube`, and `Skybox`
-  boundaries;
+  boundaries, and S-003 adds `ToneMap`;
 - expose per-pass CPU/GPU timestamps, draws, dispatches, descriptors, memory,
-  and queue waits; T-001 reports direct-queue GPU intervals for the frame plus
-  separate `Terrain`, `TexturedCube`, and `Skybox` intervals, while CPU timings
-  and broader counters remain later;
+  and queue waits; S-003 reports direct-queue GPU intervals for the frame plus
+  separate `Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` intervals, while
+  CPU timings and broader counters remain later;
 - keep a WARP smoke path for device creation and a deterministic basic frame;
 - treat zero debug-layer errors as an acceptance gate; and
 - test real graphics on both the discrete and integrated adapters when their
@@ -487,8 +497,11 @@ across resources or frames.
 ### Sky
 
 1. Load a small DDS cubemap and render it without camera translation (**V**).
-2. Add HDR cubemap conversion, diffuse irradiance, and specular prefiltering for
-   image-based lighting (**V**).
+2. Complete a bounded deterministic HDR path: generate one `64x32` linear
+   latitude-longitude daylight source, convert it to a `32x32` six-mip
+   radiance cube, derive an `8x8` diffuse-irradiance cube, a `32x32` six-mip
+   GGX-prefiltered specular cube, and a `32x32` split-sum BRDF LUT, then light
+   terrain and one material sphere from the same data (**V**, `S-003`).
 3. Improve the bounded analytic sky and fog only when an approved scene needs
    it (**V**). Volumetric cloud and atmosphere simulation stay outside the
    default scope.
@@ -667,7 +680,7 @@ the debug layer and readable in a PIX capture.
 | `T-002` | - | Add exact height, normal, bounds, and ray queries; a marker rests on the visible LOD0 triangle surface | `feat(terrain): add canonical terrain queries` |
 | `REN-001` | - | Complete: move scene-pass configuration, statistics, helpers, and production orchestration behind the public `Renderer` boundary without changing pixels or smoke accounting | `refactor(render): separate renderer orchestration from D3D12 RHI` |
 | `T-003` | V | Complete: blend two project-owned ground/rock layers from matching `32x32`, six-mip albedo/normal/roughness texture arrays by deterministic slope and height; add world-XZ tiling, tangent-free normal mapping, direct-sun dielectric GGX, and material-weight/world-normal views | `feat(terrain): add layered PBR materials` |
-| `S-003` | V | Add HDR environment conversion plus diffuse/specular IBL and verify it on terrain and one material sphere | `feat(sky): add image-based environment lighting` |
+| `S-003` | V | Complete: generate a deterministic `64x32` linear-HDR daylight source; derive a `32x32` six-mip radiance cube, `8x8` irradiance cube, `32x32` six-mip GGX specular cube, and `32x32` split-sum BRDF LUT; light terrain and one material sphere through an HDR scene target and final tone map; retain an `F3` procedural fallback | `feat(sky): add image-based environment lighting` |
 | `T-004` | V | Split the full-resolution terrain into several chunks and add frustum culling with visible bounds/counts | `feat(terrain): add chunk culling` |
 | `T-005` | V | Add one coarser derived LOD with crack-free seams and a measured geometric-error bound; collision remains full resolution | `feat(terrain): add bounded terrain LOD` |
 
@@ -846,25 +859,30 @@ online architecture is not implied.
 ## 14. Immediate next increment
 
 The San Andreas-class scope amendment does not change the current goalpost.
-After `T-003` is reviewed and committed by the owner, implement only `S-003`:
+After `S-003` is reviewed and committed by the owner, implement only `T-004`:
 
-- add a bounded HDR environment source and deterministic offline/runtime
-  conversion contract;
-- derive diffuse irradiance and specular prefilter data for image-based
-  lighting;
-- combine that environment response with the existing terrain BRDF and verify
-  the result on terrain plus one material sphere;
-- preserve the procedural daylight path as a clear fallback and retain the
-  canonical terrain/query ownership boundary; and
-- stop before terrain chunks/culling, visual LOD, streaming, dynamic
-  atmosphere/clouds, weather interaction, or physics.
+- divide the existing full-resolution canonical terrain fixture into several
+  render chunks without changing its authoritative query surface;
+- frustum-cull chunks from the current camera and expose visible/total chunk
+  counts plus inspectable bounds;
+- retain the S-003 HDR/IBL, procedural fallback, diagnostics, material views,
+  and exact LOD0 query agreement; and
+- stop before coarser visual LOD, seam repair, streaming, occlusion culling,
+  spatial acceleration for physics, or a generalized world partition.
 
-`T-003` completed the first visible layered terrain material path on
-July 18, 2026: two project-owned ground/rock layers, three matching `32x32`
-full-mip texture arrays, slope/height blending, world-XZ tiling, normal
-mapping, direct-sun dielectric GGX, and two diagnostic material views. It
-preserves the San Andreas-class feature ceiling while using a modern,
-independent Direct3D 12 implementation.
+`S-003` completed the bounded HDR environment path on July 18, 2026. Its
+deterministic `64x32` linear source derives 79 RGBA32-float subresources
+containing 284,608 meaningful bytes: a `32x32` six-mip radiance cube, `8x8`
+irradiance cube, `32x32` six-mip GGX specular cube, and `32x32` split-sum BRDF
+LUT. Terrain and one glossy dielectric sphere share that IBL, the scene renders
+to `R16G16B16A16_FLOAT`, and `ToneMap` produces the final back-buffer image.
+The bounded convolution excludes the analytic directional sun to avoid blocky
+and double-counted sun energy, and the shader applies the Lambert `1/pi`
+normalization to diffuse irradiance. `F3` keeps the procedural-daylight path
+available for direct comparison.
+`T-004` is next; `T-005` follows with one bounded coarser visual LOD. These
+remain independent modern Direct3D 12 implementations inside the San
+Andreas-class feature ceiling.
 
 ## 15. Primary technical references
 

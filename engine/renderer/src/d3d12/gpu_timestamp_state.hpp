@@ -8,7 +8,7 @@
 
 namespace shark::renderer::d3d12::detail {
 
-inline constexpr std::size_t gpu_timestamp_queries_per_frame = 8;
+inline constexpr std::size_t gpu_timestamp_queries_per_frame = 10;
 inline constexpr std::size_t gpu_timestamp_result_bytes_per_frame =
     gpu_timestamp_queries_per_frame * sizeof(std::uint64_t);
 
@@ -20,8 +20,14 @@ enum class GpuTimestampQuery : std::size_t {
     textured_cube_end,
     skybox_begin,
     skybox_end,
+    tone_map_begin,
+    tone_map_end,
     frame_end,
 };
+
+static_assert(
+    static_cast<std::size_t>(GpuTimestampQuery::frame_end) + 1U ==
+    gpu_timestamp_queries_per_frame);
 
 struct GpuTimestampSlice final {
     std::uint32_t query_base{};
@@ -43,6 +49,7 @@ struct GpuTimingSample final {
     std::uint64_t terrain_ticks{};
     std::uint64_t textured_cube_ticks{};
     std::uint64_t skybox_ticks{};
+    std::uint64_t tone_map_ticks{};
 };
 
 class GpuTimingAccumulator final {
@@ -67,6 +74,10 @@ public:
     [[nodiscard]] std::uint64_t skybox_min_ticks() const noexcept;
     [[nodiscard]] std::uint64_t skybox_max_ticks() const noexcept;
     [[nodiscard]] std::uint64_t skybox_last_ticks() const noexcept;
+    [[nodiscard]] std::uint64_t tone_map_total_ticks() const noexcept;
+    [[nodiscard]] std::uint64_t tone_map_min_ticks() const noexcept;
+    [[nodiscard]] std::uint64_t tone_map_max_ticks() const noexcept;
+    [[nodiscard]] std::uint64_t tone_map_last_ticks() const noexcept;
 
 private:
     std::uint64_t sample_count_{};
@@ -86,6 +97,10 @@ private:
     std::uint64_t skybox_min_ticks_{};
     std::uint64_t skybox_max_ticks_{};
     std::uint64_t skybox_last_ticks_{};
+    std::uint64_t tone_map_total_ticks_{};
+    std::uint64_t tone_map_min_ticks_{};
+    std::uint64_t tone_map_max_ticks_{};
+    std::uint64_t tone_map_last_ticks_{};
 };
 
 } // namespace shark::renderer::d3d12::detail

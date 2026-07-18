@@ -27,19 +27,32 @@ inline constexpr render_graph::ExternalResourceId
     frame_terrain_normal_layers_external_id{9};
 inline constexpr render_graph::ExternalResourceId
     frame_terrain_roughness_layers_external_id{10};
+inline constexpr render_graph::ExternalResourceId
+    frame_scene_color_external_id{11};
+inline constexpr render_graph::ExternalResourceId
+    frame_environment_radiance_external_id{12};
+inline constexpr render_graph::ExternalResourceId
+    frame_environment_irradiance_external_id{13};
+inline constexpr render_graph::ExternalResourceId
+    frame_environment_prefiltered_specular_external_id{14};
+inline constexpr render_graph::ExternalResourceId
+    frame_environment_brdf_lut_external_id{15};
 
 struct TerrainPassResources final {
-    render_graph::ResourceHandle back_buffer;
+    render_graph::ResourceHandle scene_color;
     render_graph::ResourceHandle depth_buffer;
     render_graph::ResourceHandle vertex_buffer;
     render_graph::ResourceHandle index_buffer;
     render_graph::ResourceHandle albedo_layers;
     render_graph::ResourceHandle normal_layers;
     render_graph::ResourceHandle roughness_layers;
+    render_graph::ResourceHandle environment_irradiance;
+    render_graph::ResourceHandle environment_prefiltered_specular;
+    render_graph::ResourceHandle environment_brdf_lut;
 };
 
 struct TexturedCubePassResources final {
-    render_graph::ResourceHandle back_buffer;
+    render_graph::ResourceHandle scene_color;
     render_graph::ResourceHandle depth_buffer;
     render_graph::ResourceHandle checker_texture;
     render_graph::ResourceHandle vertex_buffer;
@@ -47,10 +60,16 @@ struct TexturedCubePassResources final {
 };
 
 struct SkyboxPassResources final {
-    render_graph::ResourceHandle back_buffer;
+    render_graph::ResourceHandle scene_color;
     render_graph::ResourceHandle depth_buffer;
     render_graph::ResourceHandle vertex_buffer;
     render_graph::ResourceHandle index_buffer;
+    render_graph::ResourceHandle environment_radiance;
+};
+
+struct ToneMapPassResources final {
+    render_graph::ResourceHandle back_buffer;
+    render_graph::ResourceHandle scene_color;
 };
 
 using TerrainPassCallback = std::function<core::Result<void>(
@@ -62,11 +81,15 @@ using TexturedCubePassCallback = std::function<core::Result<void>(
 using SkyboxPassCallback = std::function<core::Result<void>(
     const render_graph::PassContext&,
     const SkyboxPassResources&)>;
+using ToneMapPassCallback = std::function<core::Result<void>(
+    const render_graph::PassContext&,
+    const ToneMapPassResources&)>;
 
 struct FramePipelineCallbacks final {
     TerrainPassCallback terrain;
     TexturedCubePassCallback textured_cube;
     SkyboxPassCallback skybox;
+    ToneMapPassCallback tone_map;
 };
 
 // The returned graph owns the callbacks. Captured per-frame backend state must

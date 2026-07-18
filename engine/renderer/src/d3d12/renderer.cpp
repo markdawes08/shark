@@ -1,5 +1,6 @@
 #include "cube_scene_data.hpp"
 #include "daylight_scene_data.hpp"
+#include "environment_scene_data.hpp"
 #include "skybox_scene_data.hpp"
 #include "terrain_scene_data.hpp"
 #include "../frame_pipeline.hpp"
@@ -48,6 +49,8 @@ using Microsoft::WRL::ComPtr;
 constexpr UINT back_buffer_count = 3;
 constexpr DXGI_FORMAT back_buffer_format =
     DXGI_FORMAT_R8G8B8A8_UNORM;
+constexpr DXGI_FORMAT hdr_scene_color_format =
+    DXGI_FORMAT_R16G16B16A16_FLOAT;
 constexpr DWORD fence_wait_slice_milliseconds = 250;
 constexpr std::uint32_t maximum_fence_wait_slices = 120;
 constexpr std::size_t upload_bytes_per_frame = 64U * 1024U;
@@ -67,29 +70,51 @@ constexpr std::size_t frame_constants_bytes =
 constexpr std::size_t frame_probe_offset = frame_constants_bytes;
 constexpr UINT root_camera_constants = 0;
 constexpr UINT root_checker_texture = 1;
+constexpr UINT root_sky_environment_constants = 1;
+constexpr UINT root_sky_environment_texture = 2;
+constexpr UINT root_tone_map_scene_texture = 0;
 constexpr UINT persistent_checker_descriptor = 0;
 constexpr UINT persistent_cubemap_descriptor = 1;
 constexpr UINT persistent_terrain_material_descriptor = 2;
-constexpr UINT persistent_texture_descriptor_count =
+constexpr UINT persistent_environment_irradiance_descriptor =
     persistent_terrain_material_descriptor +
     backend_detail::terrain_material_texture_count;
+constexpr UINT persistent_environment_specular_descriptor =
+    persistent_environment_irradiance_descriptor + 1U;
+constexpr UINT persistent_environment_brdf_descriptor =
+    persistent_environment_specular_descriptor + 1U;
+constexpr UINT persistent_environment_radiance_descriptor =
+    persistent_environment_brdf_descriptor + 1U;
+constexpr UINT persistent_hdr_scene_color_descriptor =
+    persistent_environment_radiance_descriptor + 1U;
+constexpr UINT persistent_texture_descriptor_count =
+    persistent_hdr_scene_color_descriptor + 1U;
 constexpr std::uint32_t cubemap_face_count = 6;
-constexpr std::size_t rgba8_bytes_per_pixel = 4;
+constexpr std::size_t environment_texture_count = 4;
+constexpr std::size_t environment_radiance_texture = 0;
+constexpr std::size_t environment_irradiance_texture = 1;
+constexpr std::size_t environment_specular_texture = 2;
+constexpr std::size_t environment_brdf_texture = 3;
 
 static_assert(back_buffer_count <= 32);
 static_assert(camera_matrix_bytes == 64);
 static_assert(camera_constants_bytes == 128);
 static_assert(frame_constants_bytes == 224);
 static_assert(frame_probe_offset == 224);
-static_assert(timestamp_query_count == 24);
-static_assert(timestamp_readback_bytes == 192);
+static_assert(timestamp_query_count == 30);
+static_assert(timestamp_readback_bytes == 240);
 static_assert(
     persistent_cubemap_descriptor ==
     persistent_checker_descriptor + 1U);
 static_assert(
     persistent_terrain_material_descriptor ==
     persistent_cubemap_descriptor + 1U);
-static_assert(persistent_texture_descriptor_count == 5);
+static_assert(persistent_environment_irradiance_descriptor == 5);
+static_assert(persistent_environment_specular_descriptor == 6);
+static_assert(persistent_environment_brdf_descriptor == 7);
+static_assert(persistent_environment_radiance_descriptor == 8);
+static_assert(persistent_hdr_scene_color_descriptor == 9);
+static_assert(persistent_texture_descriptor_count == 10);
 
 class PixCommandListEvent final {
 public:
@@ -203,8 +228,23 @@ static_assert(
         return DXGI_FORMAT_R8G8B8A8_UNORM;
     case TextureDataFormat::rgba8_unorm_srgb:
         return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+    case TextureDataFormat::rgba32_float:
+        return DXGI_FORMAT_R32G32B32A32_FLOAT;
     }
     return DXGI_FORMAT_UNKNOWN;
+}
+
+[[nodiscard]] constexpr std::size_t texture_texel_bytes(
+    const TextureDataFormat format) noexcept
+{
+    switch (format) {
+    case TextureDataFormat::rgba8_unorm:
+    case TextureDataFormat::rgba8_unorm_srgb:
+        return 4;
+    case TextureDataFormat::rgba32_float:
+        return 16;
+    }
+    return 0;
 }
 
 [[nodiscard]] core::Result<void> validate_cubemap_upload(
@@ -259,7 +299,7 @@ static_assert(
                 std::max(std::uint32_t{1}, cubemap.height >> mip);
             const auto minimum_row_pitch =
                 static_cast<std::size_t>(expected_width) *
-                rgba8_bytes_per_pixel;
+                texture_texel_bytes(cubemap.format);
             if (subresource.data == nullptr ||
                 subresource.width != expected_width ||
                 subresource.height != expected_height ||
@@ -351,7 +391,7 @@ static_assert(
                 std::max(std::uint32_t{1}, texture.height >> mip);
             const auto minimum_row_pitch =
                 static_cast<std::size_t>(expected_width) *
-                rgba8_bytes_per_pixel;
+                texture_texel_bytes(texture.format);
             if (subresource.data == nullptr ||
                 subresource.width != expected_width ||
                 subresource.height != expected_height ||
@@ -374,6 +414,167 @@ static_assert(
                         " contains truncated subresource storage"));
             }
         }
+    }
+    return core::Result<void>::success();
+}
+
+[[nodiscard]] core::Result<void> validate_texture_2d_upload(
+    const Texture2DUploadView& texture,
+    const std::string_view label)
+{
+    if (!valid_extent({texture.width, texture.height})) {
+        return core::Result<void>::failure(graphics_error(
+            core::ErrorCode::invalid_argument,
+            std::string{label} + " must have a nonzero bounded extent"));
+    }
+    if (native_texture_format(texture.format) == DXGI_FORMAT_UNKNOWN) {
+        return core::Result<void>::failure(graphics_error(
+            core::ErrorCode::unsupported,
+            std::string{label} + " uses an unsupported texture format"));
+    }
+    std::uint32_t maximum_mip_levels = 1;
+    for (auto dimension = std::max(texture.width, texture.height);
+         dimension > 1;
+         dimension >>= 1U) {
+        ++maximum_mip_levels;
+    }
+    if (texture.mip_levels == 0 ||
+        texture.mip_levels > maximum_mip_levels ||
+        texture.subresources == nullptr ||
+        texture.subresource_count != texture.mip_levels) {
+        return core::Result<void>::failure(graphics_error(
+            core::ErrorCode::invalid_argument,
+            std::string{label} + " has an invalid mip chain"));
+    }
+    for (std::uint32_t mip = 0; mip < texture.mip_levels; ++mip) {
+        const auto& subresource = texture.subresources[mip];
+        const auto expected_width =
+            std::max(std::uint32_t{1}, texture.width >> mip);
+        const auto expected_height =
+            std::max(std::uint32_t{1}, texture.height >> mip);
+        const auto minimum_row_pitch =
+            static_cast<std::size_t>(expected_width) *
+            texture_texel_bytes(texture.format);
+        if (subresource.data == nullptr ||
+            subresource.width != expected_width ||
+            subresource.height != expected_height ||
+            subresource.row_pitch < minimum_row_pitch ||
+            subresource.row_pitch >
+                std::numeric_limits<std::size_t>::max() /
+                    expected_height ||
+            subresource.slice_pitch <
+                subresource.row_pitch * expected_height ||
+            subresource.data_size < subresource.slice_pitch) {
+            return core::Result<void>::failure(graphics_error(
+                core::ErrorCode::invalid_argument,
+                std::string{label} +
+                    " contains an invalid subresource layout"));
+        }
+    }
+    return core::Result<void>::success();
+}
+
+[[nodiscard]] core::Result<void> validate_environment_lighting_upload(
+    const EnvironmentLightingUploadView& environment)
+{
+    const std::array cubemaps{
+        &environment.radiance,
+        &environment.diffuse_irradiance,
+        &environment.prefiltered_specular,
+    };
+    for (const auto* const cubemap : cubemaps) {
+        auto result = validate_cubemap_upload(*cubemap);
+        if (!result) {
+            return result;
+        }
+        if (cubemap->format != TextureDataFormat::rgba32_float) {
+            return core::Result<void>::failure(graphics_error(
+                core::ErrorCode::invalid_argument,
+                "S-003 environment cubemaps must use linear RGBA32_FLOAT"));
+        }
+    }
+    auto lut_result = validate_texture_2d_upload(
+        environment.brdf_lut,
+        "Environment BRDF LUT");
+    if (!lut_result) {
+        return lut_result;
+    }
+    if (environment.brdf_lut.format !=
+        TextureDataFormat::rgba32_float) {
+        return core::Result<void>::failure(graphics_error(
+            core::ErrorCode::invalid_argument,
+            "The S-003 environment BRDF LUT must use linear "
+            "RGBA32_FLOAT"));
+    }
+    if (environment.radiance.width != 32 ||
+        environment.radiance.height != 32 ||
+        environment.radiance.mip_levels != 6 ||
+        environment.diffuse_irradiance.width != 8 ||
+        environment.diffuse_irradiance.height != 8 ||
+        environment.diffuse_irradiance.mip_levels != 1 ||
+        environment.prefiltered_specular.width != 32 ||
+        environment.prefiltered_specular.height != 32 ||
+        environment.prefiltered_specular.mip_levels != 6 ||
+        environment.brdf_lut.width != 32 ||
+        environment.brdf_lut.height != 32 ||
+        environment.brdf_lut.mip_levels != 1) {
+        return core::Result<void>::failure(graphics_error(
+            core::ErrorCode::invalid_argument,
+            "Environment lighting must match the bounded S-003 "
+            "32/8/32/32 derived-map contract"));
+    }
+    const auto finite_nonnegative_texels = [](
+        const TextureSubresourceDataView* const subresources,
+        const std::size_t count) {
+        for (std::size_t subresource = 0;
+             subresource < count;
+             ++subresource) {
+            const auto& source = subresources[subresource];
+            for (std::uint32_t row = 0; row < source.height; ++row) {
+                const auto* const row_data =
+                    source.data +
+                    static_cast<std::size_t>(row) *
+                        source.row_pitch;
+                for (std::uint32_t column = 0;
+                     column < source.width;
+                     ++column) {
+                    for (std::size_t channel = 0;
+                         channel < 4;
+                         ++channel) {
+                        float value = 0.0F;
+                        std::memcpy(
+                            &value,
+                            row_data +
+                                static_cast<std::size_t>(column) *
+                                    4U * sizeof(float) +
+                                channel * sizeof(float),
+                            sizeof(value));
+                        if (!std::isfinite(value) || value < 0.0F) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        return true;
+    };
+    for (const auto* const cubemap : cubemaps) {
+        if (!finite_nonnegative_texels(
+                cubemap->subresources,
+                cubemap->subresource_count)) {
+            return core::Result<void>::failure(graphics_error(
+                core::ErrorCode::invalid_argument,
+                "Environment cubemaps must contain finite nonnegative "
+                "linear HDR texels"));
+        }
+    }
+    if (!finite_nonnegative_texels(
+            environment.brdf_lut.subresources,
+            environment.brdf_lut.subresource_count)) {
+        return core::Result<void>::failure(graphics_error(
+            core::ErrorCode::invalid_argument,
+            "The environment BRDF LUT must contain finite "
+            "nonnegative texels"));
     }
     return core::Result<void>::success();
 }
@@ -533,6 +734,13 @@ static_assert(
         mode == TerrainRenderMode::wireframe;
 }
 
+[[nodiscard]] constexpr bool valid_environment_lighting_mode(
+    const EnvironmentLightingMode mode) noexcept
+{
+    return mode == EnvironmentLightingMode::procedural_daylight ||
+        mode == EnvironmentLightingMode::image_based;
+}
+
 [[nodiscard]] bool valid_frame_data(
     const RenderFrameData& frame_data) noexcept
 {
@@ -542,7 +750,9 @@ static_assert(
         backend_detail::valid_daylight_settings(frame_data.daylight) &&
         valid_terrain_mode(frame_data.terrain_mode) &&
         backend_detail::valid_terrain_material_view(
-            frame_data.terrain_material_view);
+            frame_data.terrain_material_view) &&
+        valid_environment_lighting_mode(
+            frame_data.environment_lighting_mode);
 }
 
 [[nodiscard]] D3D12_BLEND_DESC opaque_blend_description() noexcept
@@ -862,7 +1072,7 @@ public:
             return core::Result<UINT>::failure(graphics_error(
                 core::ErrorCode::invalid_state,
                 "The frame timestamp allocator returned an invalid "
-                "eight-query slice"));
+                "ten-query slice"));
         }
 
         context.timestamp_query_base =
@@ -945,6 +1155,14 @@ public:
             gpu_timing.skybox_max_ticks();
         statistics.gpu_skybox_last_ticks =
             gpu_timing.skybox_last_ticks();
+        statistics.gpu_tone_map_total_ticks =
+            gpu_timing.tone_map_total_ticks();
+        statistics.gpu_tone_map_min_ticks =
+            gpu_timing.tone_map_min_ticks();
+        statistics.gpu_tone_map_max_ticks =
+            gpu_timing.tone_map_max_ticks();
+        statistics.gpu_tone_map_last_ticks =
+            gpu_timing.tone_map_last_ticks();
         context.timestamp_results_pending = false;
         return core::Result<void>::success();
     }
@@ -1146,25 +1364,28 @@ public:
 
     [[nodiscard]] core::Result<void> record_terrain_pass(
         const render_graph::PassContext& pass_context,
-        const render_graph::ResourceHandle back_buffer_resource,
+        const render_graph::ResourceHandle scene_color_resource,
         const render_graph::ResourceHandle depth_buffer_resource,
         const render_graph::ResourceHandle terrain_vertex_resource,
         const render_graph::ResourceHandle terrain_index_resource,
         const render_graph::ResourceHandle terrain_albedo_resource,
         const render_graph::ResourceHandle terrain_normal_resource,
         const render_graph::ResourceHandle terrain_roughness_resource,
+        const render_graph::ResourceHandle environment_irradiance_resource,
+        const render_graph::ResourceHandle environment_specular_resource,
+        const render_graph::ResourceHandle environment_brdf_resource,
         FrameContext& context,
-        const UINT back_buffer_index,
         const UINT timestamp_query_base,
         const TerrainRenderMode mode,
         const math::Float3 camera_world_position,
-        const TerrainMaterialView material_view)
+        const TerrainMaterialView material_view,
+        const EnvironmentLightingMode environment_mode)
     {
-        auto back_buffer_access = pass_context.write(
-            back_buffer_resource);
-        if (!back_buffer_access) {
+        auto scene_color_access = pass_context.write(
+            scene_color_resource);
+        if (!scene_color_access) {
             return core::Result<void>::failure(
-                std::move(back_buffer_access).error());
+                std::move(scene_color_access).error());
         }
         auto depth_buffer_access = pass_context.write(
             depth_buffer_resource);
@@ -1202,7 +1423,26 @@ public:
             return core::Result<void>::failure(
                 std::move(terrain_roughness_access).error());
         }
-        if (back_buffer_access.value() != detail::frame_back_buffer_external_id ||
+        auto environment_irradiance_access = pass_context.read(
+            environment_irradiance_resource);
+        if (!environment_irradiance_access) {
+            return core::Result<void>::failure(
+                std::move(environment_irradiance_access).error());
+        }
+        auto environment_specular_access = pass_context.read(
+            environment_specular_resource);
+        if (!environment_specular_access) {
+            return core::Result<void>::failure(
+                std::move(environment_specular_access).error());
+        }
+        auto environment_brdf_access = pass_context.read(
+            environment_brdf_resource);
+        if (!environment_brdf_access) {
+            return core::Result<void>::failure(
+                std::move(environment_brdf_access).error());
+        }
+        if (scene_color_access.value() !=
+                detail::frame_scene_color_external_id ||
             depth_buffer_access.value() != detail::frame_depth_buffer_external_id ||
             terrain_vertex_access.value() !=
                 detail::frame_terrain_vertex_buffer_external_id ||
@@ -1213,7 +1453,14 @@ public:
             terrain_normal_access.value() !=
                 detail::frame_terrain_normal_layers_external_id ||
             terrain_roughness_access.value() !=
-                detail::frame_terrain_roughness_layers_external_id) {
+                detail::frame_terrain_roughness_layers_external_id ||
+            environment_irradiance_access.value() !=
+                detail::frame_environment_irradiance_external_id ||
+            environment_specular_access.value() !=
+                detail::
+                    frame_environment_prefiltered_specular_external_id ||
+            environment_brdf_access.value() !=
+                detail::frame_environment_brdf_lut_external_id) {
             return core::Result<void>::failure(graphics_error(
                 core::ErrorCode::invalid_state,
                 "The terrain pass resolved unexpected graph resource "
@@ -1233,7 +1480,7 @@ public:
 
         auto render_target =
             rtv_heap->GetCPUDescriptorHandleForHeapStart();
-        render_target.ptr += static_cast<SIZE_T>(back_buffer_index) *
+        render_target.ptr += static_cast<SIZE_T>(back_buffer_count) *
             static_cast<SIZE_T>(rtv_descriptor_increment);
         const auto depth_stencil =
             dsv_heap->GetCPUDescriptorHandleForHeapStart();
@@ -1296,6 +1543,10 @@ public:
             material_constants{
                 camera_world_position,
                 static_cast<std::uint32_t>(material_view),
+                static_cast<std::uint32_t>(environment_mode),
+                5.0F,
+                0,
+                0,
             };
         command_list->SetGraphicsRoot32BitConstants(
             backend_detail::terrain_material_constants_root_parameter,
@@ -1329,6 +1580,19 @@ public:
             0,
             0);
 
+        command_list->SetPipelineState(material_sphere_pipeline.Get());
+        command_list->DrawIndexedInstanced(
+            material_sphere_index_count,
+            1,
+            terrain_triangle_index_count +
+                terrain_bounds_index_count +
+                terrain_query_marker_index_count,
+            static_cast<INT>(
+                terrain_vertex_count +
+                terrain_bounds_vertex_count +
+                backend_detail::terrain_query_marker_vertex_count),
+            0);
+
         command_list->SetPipelineState(terrain_bounds_pipeline.Get());
         command_list->IASetPrimitiveTopology(
             backend_detail::terrain_bounds_topology);
@@ -1360,20 +1624,19 @@ public:
 
     [[nodiscard]] core::Result<void> record_textured_cube_pass(
         const render_graph::PassContext& pass_context,
-        const render_graph::ResourceHandle back_buffer_resource,
+        const render_graph::ResourceHandle scene_color_resource,
         const render_graph::ResourceHandle depth_buffer_resource,
         const render_graph::ResourceHandle checker_texture_resource,
         const render_graph::ResourceHandle cube_vertex_resource,
         const render_graph::ResourceHandle cube_index_resource,
         FrameContext& context,
-        const UINT back_buffer_index,
         const UINT timestamp_query_base)
     {
-        auto back_buffer_access =
-            pass_context.write(back_buffer_resource);
-        if (!back_buffer_access) {
+        auto scene_color_access =
+            pass_context.write(scene_color_resource);
+        if (!scene_color_access) {
             return core::Result<void>::failure(
-                std::move(back_buffer_access).error());
+                std::move(scene_color_access).error());
         }
         auto depth_buffer_access =
             pass_context.write(depth_buffer_resource);
@@ -1399,7 +1662,8 @@ public:
             return core::Result<void>::failure(
                 std::move(cube_index_access).error());
         }
-        if (back_buffer_access.value() != detail::frame_back_buffer_external_id ||
+        if (scene_color_access.value() !=
+                detail::frame_scene_color_external_id ||
             depth_buffer_access.value() != detail::frame_depth_buffer_external_id ||
             checker_texture_access.value() !=
                 detail::frame_checker_texture_external_id ||
@@ -1426,7 +1690,7 @@ public:
 
         auto render_target =
             rtv_heap->GetCPUDescriptorHandleForHeapStart();
-        render_target.ptr += static_cast<SIZE_T>(back_buffer_index) *
+        render_target.ptr += static_cast<SIZE_T>(back_buffer_count) *
             static_cast<SIZE_T>(rtv_descriptor_increment);
         const auto depth_stencil =
             dsv_heap->GetCPUDescriptorHandleForHeapStart();
@@ -1498,19 +1762,20 @@ public:
 
     [[nodiscard]] core::Result<void> record_skybox_pass(
         const render_graph::PassContext& pass_context,
-        const render_graph::ResourceHandle back_buffer_resource,
+        const render_graph::ResourceHandle scene_color_resource,
         const render_graph::ResourceHandle depth_buffer_resource,
         const render_graph::ResourceHandle cube_vertex_resource,
         const render_graph::ResourceHandle cube_index_resource,
+        const render_graph::ResourceHandle environment_radiance_resource,
         FrameContext& context,
-        const UINT back_buffer_index,
-        const UINT timestamp_query_base)
+        const UINT timestamp_query_base,
+        const EnvironmentLightingMode environment_mode)
     {
-        auto back_buffer_access = pass_context.write(
-            back_buffer_resource);
-        if (!back_buffer_access) {
+        auto scene_color_access = pass_context.write(
+            scene_color_resource);
+        if (!scene_color_access) {
             return core::Result<void>::failure(
-                std::move(back_buffer_access).error());
+                std::move(scene_color_access).error());
         }
         auto depth_buffer_access = pass_context.read(
             depth_buffer_resource);
@@ -1530,12 +1795,21 @@ public:
             return core::Result<void>::failure(
                 std::move(cube_index_access).error());
         }
-        if (back_buffer_access.value() != detail::frame_back_buffer_external_id ||
+        auto environment_radiance_access =
+            pass_context.read(environment_radiance_resource);
+        if (!environment_radiance_access) {
+            return core::Result<void>::failure(
+                std::move(environment_radiance_access).error());
+        }
+        if (scene_color_access.value() !=
+                detail::frame_scene_color_external_id ||
             depth_buffer_access.value() != detail::frame_depth_buffer_external_id ||
             cube_vertex_access.value() !=
                 detail::frame_cube_vertex_buffer_external_id ||
             cube_index_access.value() !=
-                detail::frame_cube_index_buffer_external_id) {
+                detail::frame_cube_index_buffer_external_id ||
+            environment_radiance_access.value() !=
+                detail::frame_environment_radiance_external_id) {
             return core::Result<void>::failure(graphics_error(
                 core::ErrorCode::invalid_state,
                 "The skybox pass resolved unexpected graph resource "
@@ -1555,7 +1829,7 @@ public:
 
         auto render_target =
             rtv_heap->GetCPUDescriptorHandleForHeapStart();
-        render_target.ptr += static_cast<SIZE_T>(back_buffer_index) *
+        render_target.ptr += static_cast<SIZE_T>(back_buffer_count) *
             static_cast<SIZE_T>(rtv_descriptor_increment);
         auto read_only_depth =
             dsv_heap->GetCPUDescriptorHandleForHeapStart();
@@ -1588,6 +1862,27 @@ public:
             root_camera_constants,
             context.upload_buffer->GetGPUVirtualAddress() +
                 context.staged_probe_offset);
+        command_list->SetGraphicsRoot32BitConstant(
+            root_sky_environment_constants,
+            static_cast<std::uint32_t>(environment_mode),
+            0);
+        ID3D12DescriptorHeap* descriptor_heaps[]{
+            persistent_texture_descriptor_heap.Get(),
+        };
+        command_list->SetDescriptorHeaps(
+            static_cast<UINT>(std::size(descriptor_heaps)),
+            descriptor_heaps);
+        auto environment_table =
+            persistent_texture_descriptor_heap->
+                GetGPUDescriptorHandleForHeapStart();
+        environment_table.ptr +=
+            static_cast<UINT64>(
+                persistent_environment_radiance_descriptor *
+                persistent_descriptor_increment);
+        command_list->SetGraphicsRootDescriptorTable(
+            root_sky_environment_texture,
+            environment_table);
+        ++statistics.texture_bindings;
         command_list->RSSetViewports(1, &viewport);
         command_list->RSSetScissorRects(1, &scissor_rectangle);
         command_list->IASetPrimitiveTopology(
@@ -1611,6 +1906,106 @@ public:
         return core::Result<void>::success();
     }
 
+    [[nodiscard]] core::Result<void> record_tone_map_pass(
+        const render_graph::PassContext& pass_context,
+        const render_graph::ResourceHandle back_buffer_resource,
+        const render_graph::ResourceHandle scene_color_resource,
+        const UINT back_buffer_index,
+        const UINT timestamp_query_base)
+    {
+        auto back_buffer_access =
+            pass_context.write(back_buffer_resource);
+        if (!back_buffer_access) {
+            return core::Result<void>::failure(
+                std::move(back_buffer_access).error());
+        }
+        auto scene_color_access =
+            pass_context.read(scene_color_resource);
+        if (!scene_color_access) {
+            return core::Result<void>::failure(
+                std::move(scene_color_access).error());
+        }
+        if (back_buffer_access.value() !=
+                detail::frame_back_buffer_external_id ||
+            scene_color_access.value() !=
+                detail::frame_scene_color_external_id) {
+            return core::Result<void>::failure(graphics_error(
+                core::ErrorCode::invalid_state,
+                "The tone-map pass resolved unexpected graph resource "
+                "bindings"));
+        }
+
+        PixCommandListEvent pass_event{
+            command_list.Get(),
+            5,
+            "ToneMap"};
+        command_list->EndQuery(
+            timestamp_query_heap.Get(),
+            D3D12_QUERY_TYPE_TIMESTAMP,
+            timestamp_query_index(
+                timestamp_query_base,
+                backend_detail::GpuTimestampQuery::tone_map_begin));
+
+        auto render_target =
+            rtv_heap->GetCPUDescriptorHandleForHeapStart();
+        render_target.ptr += static_cast<SIZE_T>(back_buffer_index) *
+            static_cast<SIZE_T>(rtv_descriptor_increment);
+        command_list->OMSetRenderTargets(
+            1,
+            &render_target,
+            FALSE,
+            nullptr);
+        const D3D12_VIEWPORT viewport{
+            0.0F,
+            0.0F,
+            static_cast<float>(current_extent.width),
+            static_cast<float>(current_extent.height),
+            0.0F,
+            1.0F,
+        };
+        const D3D12_RECT scissor_rectangle{
+            0,
+            0,
+            static_cast<LONG>(current_extent.width),
+            static_cast<LONG>(current_extent.height),
+        };
+        command_list->SetPipelineState(tone_map_pipeline.Get());
+        command_list->SetGraphicsRootSignature(
+            tone_map_root_signature.Get());
+        ID3D12DescriptorHeap* descriptor_heaps[]{
+            persistent_texture_descriptor_heap.Get(),
+        };
+        command_list->SetDescriptorHeaps(
+            static_cast<UINT>(std::size(descriptor_heaps)),
+            descriptor_heaps);
+        auto scene_table =
+            persistent_texture_descriptor_heap->
+                GetGPUDescriptorHandleForHeapStart();
+        scene_table.ptr +=
+            static_cast<UINT64>(
+                persistent_hdr_scene_color_descriptor *
+                persistent_descriptor_increment);
+        command_list->SetGraphicsRootDescriptorTable(
+            root_tone_map_scene_texture,
+            scene_table);
+        ++statistics.texture_bindings;
+        command_list->RSSetViewports(1, &viewport);
+        command_list->RSSetScissorRects(1, &scissor_rectangle);
+        command_list->IASetPrimitiveTopology(
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        command_list->IASetVertexBuffers(0, 0, nullptr);
+        command_list->IASetIndexBuffer(nullptr);
+        command_list->DrawInstanced(3, 1, 0, 0);
+        command_list->EndQuery(
+            timestamp_query_heap.Get(),
+            D3D12_QUERY_TYPE_TIMESTAMP,
+            timestamp_query_index(
+                timestamp_query_base,
+                backend_detail::GpuTimestampQuery::tone_map_end));
+        pass_event.end();
+        return core::Result<void>::success();
+    }
+
     [[nodiscard]] core::Result<void> submit_frame(
         FrameContext& context)
     {
@@ -1627,10 +2022,11 @@ public:
         }
         context.timestamp_results_pending = true;
         ++statistics.pix_frame_events;
-        statistics.pix_pass_events += 3;
+        statistics.pix_pass_events += 4;
         ++statistics.pix_terrain_events;
         ++statistics.pix_textured_cube_events;
         ++statistics.pix_skybox_events;
+        ++statistics.pix_tone_map_events;
         statistics.timestamp_queries_written +=
             timestamp_queries_per_frame;
         ++statistics.timestamp_resolve_batches;
@@ -1756,11 +2152,130 @@ public:
         return core::Result<void>::success();
     }
 
+    [[nodiscard]] core::Result<void> create_hdr_scene_color(
+        const RenderExtent extent)
+    {
+        D3D12_FEATURE_DATA_FORMAT_SUPPORT format_support{};
+        format_support.Format = hdr_scene_color_format;
+        const auto format_result = native_device->CheckFeatureSupport(
+            D3D12_FEATURE_FORMAT_SUPPORT,
+            &format_support,
+            sizeof(format_support));
+        if (FAILED(format_result)) {
+            return core::Result<void>::failure(
+                rhi_detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Device::CheckFeatureSupport(HDR scene "
+                    "color)",
+                    format_result));
+        }
+        constexpr auto required_support =
+            static_cast<D3D12_FORMAT_SUPPORT1>(
+                D3D12_FORMAT_SUPPORT1_TEXTURE2D |
+                D3D12_FORMAT_SUPPORT1_RENDER_TARGET |
+                D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE);
+        if ((format_support.Support1 & required_support) !=
+            required_support) {
+            return core::Result<void>::failure(graphics_error(
+                core::ErrorCode::unsupported,
+                "The selected adapter cannot render and sample Shark's "
+                "R16G16B16A16_FLOAT scene color"));
+        }
+
+        D3D12_HEAP_PROPERTIES heap_properties{};
+        heap_properties.Type = D3D12_HEAP_TYPE_DEFAULT;
+        heap_properties.CPUPageProperty =
+            D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+        heap_properties.MemoryPoolPreference =
+            D3D12_MEMORY_POOL_UNKNOWN;
+        heap_properties.CreationNodeMask = 1;
+        heap_properties.VisibleNodeMask = 1;
+
+        D3D12_RESOURCE_DESC description{};
+        description.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        description.Alignment = 0;
+        description.Width = extent.width;
+        description.Height = extent.height;
+        description.DepthOrArraySize = 1;
+        description.MipLevels = 1;
+        description.Format = hdr_scene_color_format;
+        description.SampleDesc = DXGI_SAMPLE_DESC{1, 0};
+        description.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+        description.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+        D3D12_CLEAR_VALUE clear_value{};
+        clear_value.Format = hdr_scene_color_format;
+        clear_value.Color[0] = clear_color.red;
+        clear_value.Color[1] = clear_color.green;
+        clear_value.Color[2] = clear_color.blue;
+        clear_value.Color[3] = clear_color.alpha;
+        const auto result = native_device->CreateCommittedResource(
+            &heap_properties,
+            D3D12_HEAP_FLAG_NONE,
+            &description,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+            &clear_value,
+            IID_PPV_ARGS(&hdr_scene_color));
+        if (FAILED(result)) {
+            return core::Result<void>::failure(
+                rhi_detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Device::CreateCommittedResource(HDR scene "
+                    "color)",
+                    result));
+        }
+        const auto name_result = hdr_scene_color->SetName(
+            L"Shark Linear HDR Scene Color");
+        if (FAILED(name_result)) {
+            return core::Result<void>::failure(
+                rhi_detail::DeviceAccess::graphics_failure(
+                    *owner_device,
+                    "ID3D12Object::SetName(HDR scene color)",
+                    name_result));
+        }
+
+        auto rtv = rtv_heap->GetCPUDescriptorHandleForHeapStart();
+        rtv.ptr += static_cast<SIZE_T>(back_buffer_count) *
+            static_cast<SIZE_T>(rtv_descriptor_increment);
+        native_device->CreateRenderTargetView(
+            hdr_scene_color.Get(),
+            nullptr,
+            rtv);
+
+        auto srv =
+            persistent_texture_descriptor_heap->
+                GetCPUDescriptorHandleForHeapStart();
+        srv.ptr += static_cast<SIZE_T>(
+            persistent_hdr_scene_color_descriptor *
+            persistent_descriptor_increment);
+        D3D12_SHADER_RESOURCE_VIEW_DESC view{};
+        view.Format = hdr_scene_color_format;
+        view.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        view.Shader4ComponentMapping =
+            D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        view.Texture2D.MostDetailedMip = 0;
+        view.Texture2D.MipLevels = 1;
+        view.Texture2D.PlaneSlice = 0;
+        view.Texture2D.ResourceMinLODClamp = 0.0F;
+        native_device->CreateShaderResourceView(
+            hdr_scene_color.Get(),
+            &view,
+            srv);
+        ++statistics.hdr_scene_color_creations;
+        ++statistics.hdr_scene_color_rtv_creations;
+        ++statistics.hdr_scene_color_srv_creations;
+        ++statistics.texture_srv_creations;
+        return core::Result<void>::success();
+    }
+
     [[nodiscard]] core::Result<void> create_static_scene_resources(
         const TextureCubeUploadView& cubemap,
         const TerrainMeshUploadView& terrain,
-        const TerrainMaterialUploadView& materials)
+        const TerrainMaterialUploadView& materials,
+        const EnvironmentLightingUploadView& environment)
     {
+        const auto material_sphere =
+            backend_detail::make_material_sphere_mesh();
         constexpr UINT64 vertex_bytes = sizeof(backend_detail::cube_vertices);
         constexpr UINT64 index_bytes = sizeof(backend_detail::cube_indices);
         constexpr UINT64 index_upload_offset =
@@ -1776,6 +2291,10 @@ public:
             static_cast<UINT64>(
                 terrain.query_marker_vertex_count *
                 terrain.query_marker_vertex_stride);
+        const auto material_sphere_vertex_bytes =
+            static_cast<UINT64>(
+                material_sphere.vertices.size() *
+                sizeof(backend_detail::EnvironmentVertex));
         const auto terrain_index_bytes =
             static_cast<UINT64>(
                 terrain.index_count * sizeof(std::uint16_t));
@@ -1787,6 +2306,10 @@ public:
             static_cast<UINT64>(
                 terrain.query_marker_index_count *
                 sizeof(std::uint16_t));
+        const auto material_sphere_index_bytes =
+            static_cast<UINT64>(
+                material_sphere.indices.size() *
+                sizeof(std::uint16_t));
         const auto terrain_vertex_upload_offset =
             (index_upload_offset + index_bytes + 3U) & ~UINT64{3U};
         const auto terrain_bounds_vertex_upload_offset =
@@ -1795,18 +2318,24 @@ public:
         const auto terrain_query_marker_vertex_upload_offset =
             (terrain_bounds_vertex_upload_offset +
              terrain_bounds_vertex_bytes + 3U) & ~UINT64{3U};
-        const auto terrain_index_upload_offset =
+        const auto material_sphere_vertex_upload_offset =
             (terrain_query_marker_vertex_upload_offset +
              terrain_query_marker_vertex_bytes + 3U) & ~UINT64{3U};
+        const auto terrain_index_upload_offset =
+            (material_sphere_vertex_upload_offset +
+             material_sphere_vertex_bytes + 3U) & ~UINT64{3U};
         const auto terrain_bounds_index_upload_offset =
             (terrain_index_upload_offset +
              terrain_index_bytes + 3U) & ~UINT64{3U};
         const auto terrain_query_marker_index_upload_offset =
             (terrain_bounds_index_upload_offset +
              terrain_bounds_index_bytes + 3U) & ~UINT64{3U};
-        const auto texture_upload_base =
+        const auto material_sphere_index_upload_offset =
             (terrain_query_marker_index_upload_offset +
-             terrain_query_marker_index_bytes +
+             terrain_query_marker_index_bytes + 3U) & ~UINT64{3U};
+        const auto texture_upload_base =
+            (material_sphere_index_upload_offset +
+             material_sphere_index_bytes +
              D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1U) &
             ~UINT64{D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1U};
 
@@ -1885,7 +2414,8 @@ public:
         const auto terrain_vertex_description = buffer_description(
             terrain_vertex_bytes +
             terrain_bounds_vertex_bytes +
-            terrain_query_marker_vertex_bytes);
+            terrain_query_marker_vertex_bytes +
+            material_sphere_vertex_bytes);
         result = native_device->CreateCommittedResource(
             &default_heap,
             D3D12_HEAP_FLAG_NONE,
@@ -1915,7 +2445,8 @@ public:
         const auto terrain_index_description = buffer_description(
             terrain_index_bytes +
             terrain_bounds_index_bytes +
-            terrain_query_marker_index_bytes);
+            terrain_query_marker_index_bytes +
+            material_sphere_index_bytes);
         result = native_device->CreateCommittedResource(
             &default_heap,
             D3D12_HEAP_FLAG_NONE,
@@ -2147,6 +2678,150 @@ public:
             materials.albedo.mip_levels;
         statistics.terrain_material_srgb_resources = 1;
 
+        struct EnvironmentTextureUpload final {
+            std::uint32_t width{};
+            std::uint32_t height{};
+            std::uint32_t array_size{};
+            std::uint32_t mip_levels{};
+            TextureDataFormat format{};
+            const TextureSubresourceDataView* subresources{};
+            std::size_t subresource_count{};
+            bool cubemap{};
+        };
+        const std::array<EnvironmentTextureUpload,
+                         environment_texture_count>
+            environment_uploads{{
+                {
+                    environment.radiance.width,
+                    environment.radiance.height,
+                    cubemap_face_count,
+                    environment.radiance.mip_levels,
+                    environment.radiance.format,
+                    environment.radiance.subresources,
+                    environment.radiance.subresource_count,
+                    true,
+                },
+                {
+                    environment.diffuse_irradiance.width,
+                    environment.diffuse_irradiance.height,
+                    cubemap_face_count,
+                    environment.diffuse_irradiance.mip_levels,
+                    environment.diffuse_irradiance.format,
+                    environment.diffuse_irradiance.subresources,
+                    environment.diffuse_irradiance.subresource_count,
+                    true,
+                },
+                {
+                    environment.prefiltered_specular.width,
+                    environment.prefiltered_specular.height,
+                    cubemap_face_count,
+                    environment.prefiltered_specular.mip_levels,
+                    environment.prefiltered_specular.format,
+                    environment.prefiltered_specular.subresources,
+                    environment.prefiltered_specular.subresource_count,
+                    true,
+                },
+                {
+                    environment.brdf_lut.width,
+                    environment.brdf_lut.height,
+                    1,
+                    environment.brdf_lut.mip_levels,
+                    environment.brdf_lut.format,
+                    environment.brdf_lut.subresources,
+                    environment.brdf_lut.subresource_count,
+                    false,
+                },
+            }};
+        constexpr std::array<const wchar_t*,
+                             environment_texture_count>
+            environment_resource_names{
+                L"Shark HDR Environment Radiance",
+                L"Shark HDR Diffuse Irradiance",
+                L"Shark HDR Prefiltered Specular",
+                L"Shark Environment BRDF LUT",
+            };
+        std::array<D3D12_RESOURCE_DESC,
+                   environment_texture_count>
+            environment_descriptions{};
+        constexpr auto required_environment_support =
+            static_cast<D3D12_FORMAT_SUPPORT1>(
+                D3D12_FORMAT_SUPPORT1_TEXTURE2D |
+                D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE);
+        for (std::size_t index = 0;
+             index < environment_uploads.size();
+             ++index) {
+            const auto& upload = environment_uploads[index];
+            const auto format = native_texture_format(upload.format);
+            format_support = {};
+            format_support.Format = format;
+            result = native_device->CheckFeatureSupport(
+                D3D12_FEATURE_FORMAT_SUPPORT,
+                &format_support,
+                sizeof(format_support));
+            if (FAILED(result)) {
+                return core::Result<void>::failure(
+                    rhi_detail::DeviceAccess::graphics_failure(
+                        *owner_device,
+                        "ID3D12Device::CheckFeatureSupport(HDR "
+                        "environment format)",
+                        result));
+            }
+            auto required = required_environment_support;
+            if (upload.cubemap) {
+                required = static_cast<D3D12_FORMAT_SUPPORT1>(
+                    required |
+                    D3D12_FORMAT_SUPPORT1_TEXTURECUBE);
+            }
+            if ((format_support.Support1 & required) != required) {
+                return core::Result<void>::failure(graphics_error(
+                    core::ErrorCode::unsupported,
+                    "The selected adapter cannot sample Shark's "
+                    "RGBA32_FLOAT environment-lighting maps"));
+            }
+
+            auto& description = environment_descriptions[index];
+            description.Dimension =
+                D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+            description.Alignment = 0;
+            description.Width = upload.width;
+            description.Height = upload.height;
+            description.DepthOrArraySize =
+                static_cast<UINT16>(upload.array_size);
+            description.MipLevels =
+                static_cast<UINT16>(upload.mip_levels);
+            description.Format = format;
+            description.SampleDesc = DXGI_SAMPLE_DESC{1, 0};
+            description.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+            description.Flags = D3D12_RESOURCE_FLAG_NONE;
+            result = native_device->CreateCommittedResource(
+                &default_heap,
+                D3D12_HEAP_FLAG_NONE,
+                &description,
+                D3D12_RESOURCE_STATE_COPY_DEST,
+                nullptr,
+                IID_PPV_ARGS(&environment_textures[index]));
+            if (FAILED(result)) {
+                return core::Result<void>::failure(
+                    rhi_detail::DeviceAccess::graphics_failure(
+                        *owner_device,
+                        "ID3D12Device::CreateCommittedResource(HDR "
+                        "environment texture)",
+                        result));
+            }
+            result = environment_textures[index]->SetName(
+                environment_resource_names[index]);
+            if (FAILED(result)) {
+                return core::Result<void>::failure(
+                    rhi_detail::DeviceAccess::graphics_failure(
+                        *owner_device,
+                        "ID3D12Object::SetName(HDR environment "
+                        "texture)",
+                        result));
+            }
+            ++statistics.environment_texture_creations;
+            ++statistics.environment_hdr_resources;
+        }
+
         D3D12_PLACED_SUBRESOURCE_FOOTPRINT texture_footprint{};
         UINT texture_rows = 0;
         UINT64 texture_row_bytes = 0;
@@ -2212,6 +2887,40 @@ public:
                 return core::Result<void>::failure(graphics_error(
                     core::ErrorCode::operation_failed,
                     "D3D12 reported an empty terrain material upload"));
+            }
+        }
+
+        std::array<
+            std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT>,
+            environment_texture_count> environment_footprints;
+        std::array<std::vector<UINT>,
+                   environment_texture_count> environment_rows;
+        std::array<std::vector<UINT64>,
+                   environment_texture_count> environment_row_bytes;
+        std::array<UINT64,
+                   environment_texture_count> environment_upload_bytes{};
+        for (std::size_t map = 0;
+             map < environment_uploads.size();
+             ++map) {
+            const auto subresource_count =
+                static_cast<UINT>(
+                    environment_uploads[map].subresource_count);
+            environment_footprints[map].resize(subresource_count);
+            environment_rows[map].resize(subresource_count);
+            environment_row_bytes[map].resize(subresource_count);
+            native_device->GetCopyableFootprints(
+                &environment_descriptions[map],
+                0,
+                subresource_count,
+                0,
+                environment_footprints[map].data(),
+                environment_rows[map].data(),
+                environment_row_bytes[map].data(),
+                &environment_upload_bytes[map]);
+            if (environment_upload_bytes[map] == 0) {
+                return core::Result<void>::failure(graphics_error(
+                    core::ErrorCode::operation_failed,
+                    "D3D12 reported an empty HDR environment upload"));
             }
         }
 
@@ -2314,6 +3023,47 @@ public:
             }
         }
 
+        std::array<ComPtr<ID3D12Resource>, environment_texture_count>
+            environment_upload_buffers;
+        constexpr std::array<const wchar_t*, environment_texture_count>
+            environment_upload_buffer_names{
+                L"Shark HDR Radiance Upload Buffer",
+                L"Shark Diffuse Irradiance Upload Buffer",
+                L"Shark Prefiltered Specular Upload Buffer",
+                L"Shark BRDF LUT Upload Buffer",
+            };
+        for (std::size_t map = 0;
+             map < environment_upload_buffers.size();
+             ++map) {
+            const auto description =
+                buffer_description(environment_upload_bytes[map]);
+            result = native_device->CreateCommittedResource(
+                &upload_heap,
+                D3D12_HEAP_FLAG_NONE,
+                &description,
+                D3D12_RESOURCE_STATE_GENERIC_READ,
+                nullptr,
+                IID_PPV_ARGS(&environment_upload_buffers[map]));
+            if (FAILED(result)) {
+                return core::Result<void>::failure(
+                    rhi_detail::DeviceAccess::graphics_failure(
+                        *owner_device,
+                        "ID3D12Device::CreateCommittedResource(HDR "
+                        "environment upload)",
+                        result));
+            }
+            result = environment_upload_buffers[map]->SetName(
+                environment_upload_buffer_names[map]);
+            if (FAILED(result)) {
+                return core::Result<void>::failure(
+                    rhi_detail::DeviceAccess::graphics_failure(
+                        *owner_device,
+                        "ID3D12Object::SetName(HDR environment "
+                        "upload)",
+                        result));
+            }
+        }
+
         const D3D12_RANGE no_cpu_reads{0, 0};
         void* mapped_data = nullptr;
         result = upload_buffer->Map(0, &no_cpu_reads, &mapped_data);
@@ -2348,6 +3098,11 @@ public:
             static_cast<std::size_t>(
                 terrain_query_marker_vertex_bytes));
         std::memcpy(
+            upload_data + material_sphere_vertex_upload_offset,
+            material_sphere.vertices.data(),
+            static_cast<std::size_t>(
+                material_sphere_vertex_bytes));
+        std::memcpy(
             upload_data + terrain_index_upload_offset,
             terrain.indices,
             static_cast<std::size_t>(terrain_index_bytes));
@@ -2361,6 +3116,11 @@ public:
             terrain.query_marker_indices,
             static_cast<std::size_t>(
                 terrain_query_marker_index_bytes));
+        std::memcpy(
+            upload_data + material_sphere_index_upload_offset,
+            material_sphere.indices.data(),
+            static_cast<std::size_t>(
+                material_sphere_index_bytes));
         constexpr UINT64 checker_source_row_bytes =
             backend_detail::checker_width * 4U;
         static_assert(
@@ -2471,6 +3231,59 @@ public:
         statistics.terrain_material_source_bytes_uploaded =
             material_source_bytes_uploaded;
 
+        std::uint64_t environment_source_bytes_uploaded = 0;
+        std::uint64_t environment_subresources_uploaded = 0;
+        for (std::size_t map = 0;
+             map < environment_upload_buffers.size();
+             ++map) {
+            void* mapped_environment_data = nullptr;
+            result = environment_upload_buffers[map]->Map(
+                0,
+                &no_cpu_reads,
+                &mapped_environment_data);
+            if (FAILED(result)) {
+                return core::Result<void>::failure(
+                    rhi_detail::DeviceAccess::graphics_failure(
+                        *owner_device,
+                        "ID3D12Resource::Map(HDR environment upload)",
+                        result));
+            }
+            auto* const destination =
+                static_cast<std::byte*>(mapped_environment_data);
+            const auto& upload = environment_uploads[map];
+            for (std::size_t subresource = 0;
+                 subresource < upload.subresource_count;
+                 ++subresource) {
+                const auto& source =
+                    upload.subresources[subresource];
+                const auto& footprint =
+                    environment_footprints[map][subresource];
+                const auto row_count =
+                    environment_rows[map][subresource];
+                const auto row_bytes = static_cast<std::size_t>(
+                    environment_row_bytes[map][subresource]);
+                for (UINT row = 0; row < row_count; ++row) {
+                    std::memcpy(
+                        destination + footprint.Offset +
+                            static_cast<UINT64>(row) *
+                                footprint.Footprint.RowPitch,
+                        source.data +
+                            static_cast<std::size_t>(row) *
+                                source.row_pitch,
+                        row_bytes);
+                }
+                environment_source_bytes_uploaded +=
+                    static_cast<std::uint64_t>(row_bytes) *
+                    row_count;
+                ++environment_subresources_uploaded;
+            }
+            environment_upload_buffers[map]->Unmap(0, nullptr);
+        }
+        statistics.environment_subresources_uploaded =
+            environment_subresources_uploaded;
+        statistics.environment_source_bytes_uploaded =
+            environment_source_bytes_uploaded;
+
         D3D12_DESCRIPTOR_HEAP_DESC descriptor_heap_description{};
         descriptor_heap_description.Type =
             D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -2573,6 +3386,56 @@ public:
             ++statistics.texture_srv_creations;
             ++statistics.terrain_material_srv_creations;
         }
+        constexpr std::array<UINT, environment_texture_count>
+            environment_descriptor_indices{
+                persistent_environment_radiance_descriptor,
+                persistent_environment_irradiance_descriptor,
+                persistent_environment_specular_descriptor,
+                persistent_environment_brdf_descriptor,
+            };
+        for (std::size_t map = 0;
+             map < environment_uploads.size();
+             ++map) {
+            auto descriptor =
+                persistent_texture_descriptor_heap->
+                    GetCPUDescriptorHandleForHeapStart();
+            descriptor.ptr += static_cast<SIZE_T>(
+                environment_descriptor_indices[map] *
+                persistent_descriptor_increment);
+            D3D12_SHADER_RESOURCE_VIEW_DESC environment_view{};
+            environment_view.Format =
+                environment_descriptions[map].Format;
+            environment_view.Shader4ComponentMapping =
+                D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            if (environment_uploads[map].cubemap) {
+                environment_view.ViewDimension =
+                    D3D12_SRV_DIMENSION_TEXTURECUBE;
+                environment_view.TextureCube.MostDetailedMip = 0;
+                environment_view.TextureCube.MipLevels =
+                    environment_uploads[map].mip_levels;
+                environment_view.TextureCube.ResourceMinLODClamp =
+                    0.0F;
+            }
+            else {
+                environment_view.ViewDimension =
+                    D3D12_SRV_DIMENSION_TEXTURE2D;
+                environment_view.Texture2D.MostDetailedMip = 0;
+                environment_view.Texture2D.MipLevels =
+                    environment_uploads[map].mip_levels;
+                environment_view.Texture2D.PlaneSlice = 0;
+                environment_view.Texture2D.ResourceMinLODClamp =
+                    0.0F;
+            }
+            native_device->CreateShaderResourceView(
+                environment_textures[map].Get(),
+                &environment_view,
+                descriptor);
+            ++statistics.texture_srv_creations;
+            ++statistics.environment_srv_creations;
+            if (environment_uploads[map].cubemap) {
+                ++statistics.environment_cubemap_srv_creations;
+            }
+        }
         statistics.persistent_texture_descriptors =
             persistent_texture_descriptor_count;
 
@@ -2629,6 +3492,14 @@ public:
             terrain_query_marker_vertex_upload_offset,
             terrain_query_marker_vertex_bytes);
         command_list->CopyBufferRegion(
+            terrain_vertex_buffer.Get(),
+            terrain_vertex_bytes +
+                terrain_bounds_vertex_bytes +
+                terrain_query_marker_vertex_bytes,
+            upload_buffer.Get(),
+            material_sphere_vertex_upload_offset,
+            material_sphere_vertex_bytes);
+        command_list->CopyBufferRegion(
             terrain_index_buffer.Get(),
             0,
             upload_buffer.Get(),
@@ -2646,6 +3517,14 @@ public:
             upload_buffer.Get(),
             terrain_query_marker_index_upload_offset,
             terrain_query_marker_index_bytes);
+        command_list->CopyBufferRegion(
+            terrain_index_buffer.Get(),
+            terrain_index_bytes +
+                terrain_bounds_index_bytes +
+                terrain_query_marker_index_bytes,
+            upload_buffer.Get(),
+            material_sphere_index_upload_offset,
+            material_sphere_index_bytes);
         D3D12_TEXTURE_COPY_LOCATION texture_destination{};
         texture_destination.pResource = checker_texture.Get();
         texture_destination.Type =
@@ -2712,10 +3591,42 @@ public:
                     nullptr);
             }
         }
+        for (std::size_t map = 0;
+             map < environment_uploads.size();
+             ++map) {
+            const auto subresource_count =
+                static_cast<UINT>(
+                    environment_uploads[map].subresource_count);
+            for (UINT subresource = 0;
+                 subresource < subresource_count;
+                 ++subresource) {
+                D3D12_TEXTURE_COPY_LOCATION destination{};
+                destination.pResource =
+                    environment_textures[map].Get();
+                destination.Type =
+                    D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+                destination.SubresourceIndex = subresource;
+                D3D12_TEXTURE_COPY_LOCATION source{};
+                source.pResource =
+                    environment_upload_buffers[map].Get();
+                source.Type =
+                    D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+                source.PlacedFootprint =
+                    environment_footprints[map][subresource];
+                command_list->CopyTextureRegion(
+                    &destination,
+                    0,
+                    0,
+                    0,
+                    &source,
+                    nullptr);
+            }
+        }
 
         // G-006 manages frame color/depth attachments. These one-time
         // initialization transitions remain with the static upload batch.
-        std::array<D3D12_RESOURCE_BARRIER, 9> barriers{};
+        std::array<D3D12_RESOURCE_BARRIER,
+                   9 + environment_texture_count> barriers{};
         barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
         barriers[0].Transition.pResource = vertex_buffer.Get();
         barriers[0].Transition.Subresource =
@@ -2744,6 +3655,13 @@ public:
             barriers[6U + map] = barriers[4];
             barriers[6U + map].Transition.pResource =
                 terrain_material_textures[map].Get();
+        }
+        for (std::size_t map = 0;
+             map < environment_textures.size();
+             ++map) {
+            barriers[9U + map] = barriers[4];
+            barriers[9U + map].Transition.pResource =
+                environment_textures[map].Get();
         }
         command_list->ResourceBarrier(
             static_cast<UINT>(barriers.size()),
@@ -2787,7 +3705,8 @@ public:
         terrain_vertex_buffer_view.SizeInBytes = static_cast<UINT>(
             terrain_vertex_bytes +
             terrain_bounds_vertex_bytes +
-            terrain_query_marker_vertex_bytes);
+            terrain_query_marker_vertex_bytes +
+            material_sphere_vertex_bytes);
         terrain_vertex_buffer_view.StrideInBytes =
             backend_detail::terrain_vertex_stride;
         terrain_index_buffer_view.BufferLocation =
@@ -2795,7 +3714,8 @@ public:
         terrain_index_buffer_view.SizeInBytes = static_cast<UINT>(
             terrain_index_bytes +
             terrain_bounds_index_bytes +
-            terrain_query_marker_index_bytes);
+            terrain_query_marker_index_bytes +
+            material_sphere_index_bytes);
         terrain_index_buffer_view.Format = backend_detail::terrain_index_format;
         terrain_vertex_count =
             static_cast<UINT>(terrain.vertex_count);
@@ -2807,6 +3727,8 @@ public:
             static_cast<UINT>(terrain.bounds_index_count);
         terrain_query_marker_index_count =
             static_cast<UINT>(terrain.query_marker_index_count);
+        material_sphere_index_count =
+            static_cast<UINT>(material_sphere.indices.size());
         statistics.terrain_vertex_count = terrain.vertex_count;
         statistics.terrain_index_count = terrain.index_count;
         statistics.terrain_bounds_vertex_count =
@@ -2817,6 +3739,10 @@ public:
             terrain.query_marker_vertex_count;
         statistics.terrain_query_marker_index_count =
             terrain.query_marker_index_count;
+        statistics.material_sphere_vertex_count =
+            material_sphere.vertices.size();
+        statistics.material_sphere_index_count =
+            material_sphere.indices.size();
         return core::Result<void>::success();
     }
 
@@ -2852,6 +3778,7 @@ public:
 
     void release_back_buffers() noexcept
     {
+        hdr_scene_color.Reset();
         depth_buffer.Reset();
         for (auto& buffer : back_buffers) {
             buffer.Reset();
@@ -2863,15 +3790,21 @@ public:
         release_back_buffers();
         swap_chain.Reset();
         command_list.Reset();
+        tone_map_pipeline.Reset();
+        material_sphere_pipeline.Reset();
         terrain_bounds_pipeline.Reset();
         terrain_wireframe_pipeline.Reset();
         terrain_solid_pipeline.Reset();
         skybox_pipeline.Reset();
         cube_pipeline.Reset();
+        tone_map_root_signature.Reset();
         terrain_root_signature.Reset();
         skybox_root_signature.Reset();
         cube_root_signature.Reset();
         persistent_texture_descriptor_heap.Reset();
+        for (auto& texture : environment_textures) {
+            texture.Reset();
+        }
         for (auto& texture : terrain_material_textures) {
             texture.Reset();
         }
@@ -2967,9 +3900,12 @@ public:
     ComPtr<ID3D12PipelineState> terrain_solid_pipeline;
     ComPtr<ID3D12PipelineState> terrain_wireframe_pipeline;
     ComPtr<ID3D12PipelineState> terrain_bounds_pipeline;
+    ComPtr<ID3D12PipelineState> material_sphere_pipeline;
+    ComPtr<ID3D12PipelineState> tone_map_pipeline;
     ComPtr<ID3D12RootSignature> cube_root_signature;
     ComPtr<ID3D12RootSignature> skybox_root_signature;
     ComPtr<ID3D12RootSignature> terrain_root_signature;
+    ComPtr<ID3D12RootSignature> tone_map_root_signature;
     ComPtr<ID3D12Resource> vertex_buffer;
     ComPtr<ID3D12Resource> index_buffer;
     ComPtr<ID3D12Resource> terrain_vertex_buffer;
@@ -2977,7 +3913,10 @@ public:
     ComPtr<ID3D12Resource> checker_texture;
     ComPtr<ID3D12Resource> startup_cubemap;
     std::array<ComPtr<ID3D12Resource>, 3> terrain_material_textures;
+    std::array<ComPtr<ID3D12Resource>, environment_texture_count>
+        environment_textures;
     ComPtr<ID3D12Resource> depth_buffer;
+    ComPtr<ID3D12Resource> hdr_scene_color;
     ComPtr<ID3D12DescriptorHeap> persistent_texture_descriptor_heap;
     ComPtr<ID3D12DescriptorHeap> rtv_heap;
     ComPtr<ID3D12DescriptorHeap> dsv_heap;
@@ -2998,6 +3937,7 @@ public:
     UINT terrain_bounds_vertex_count{};
     UINT terrain_bounds_index_count{};
     UINT terrain_query_marker_index_count{};
+    UINT material_sphere_index_count{};
     std::array<float, 16> last_camera_matrix{};
     bool has_last_camera_matrix{};
     std::array<float, 16> last_skybox_matrix{};
@@ -3072,6 +4012,22 @@ core::Result<Renderer> Renderer::create(
             "Renderer terrain pixel shader bytecode is missing a "
             "DXIL container signature"));
     }
+    if (!valid_shader_bytecode(
+            config.material_sphere_vertex_shader) ||
+        !valid_shader_bytecode(
+            config.material_sphere_pixel_shader)) {
+        return core::Result<Renderer>::failure(graphics_error(
+            core::ErrorCode::invalid_argument,
+            "Renderer material-sphere shaders are missing DXIL "
+            "container signatures"));
+    }
+    if (!valid_shader_bytecode(config.tone_map_vertex_shader) ||
+        !valid_shader_bytecode(config.tone_map_pixel_shader)) {
+        return core::Result<Renderer>::failure(graphics_error(
+            core::ErrorCode::invalid_argument,
+            "Renderer tone-map shaders are missing DXIL container "
+            "signatures"));
+    }
     auto cubemap_result = validate_cubemap_upload(
         config.startup_cubemap);
     if (!cubemap_result) {
@@ -3088,6 +4044,12 @@ core::Result<Renderer> Renderer::create(
     if (!material_result) {
         return core::Result<Renderer>::failure(
             std::move(material_result).error());
+    }
+    auto environment_result = validate_environment_lighting_upload(
+        config.environment_lighting);
+    if (!environment_result) {
+        return core::Result<Renderer>::failure(
+            std::move(environment_result).error());
     }
 
     const auto native_window = static_cast<HWND>(config.native_window);
@@ -3315,7 +4277,7 @@ core::Result<Renderer> Renderer::create(
 
     D3D12_DESCRIPTOR_HEAP_DESC heap_description{};
     heap_description.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-    heap_description.NumDescriptors = back_buffer_count;
+    heap_description.NumDescriptors = back_buffer_count + 1U;
     heap_description.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
     heap_description.NodeMask = 0;
     result = native.device->CreateDescriptorHeap(
@@ -3482,9 +4444,42 @@ core::Result<Renderer> Renderer::create(
                 result));
     }
 
-    root_signature_description.NumParameters = 1;
-    root_signature_description.NumStaticSamplers = 0;
-    root_signature_description.pStaticSamplers = nullptr;
+    std::array<D3D12_ROOT_PARAMETER, 3> sky_root_parameters{};
+    sky_root_parameters[0] = root_parameters[root_camera_constants];
+    sky_root_parameters[root_sky_environment_constants].ParameterType =
+        D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    sky_root_parameters[
+        root_sky_environment_constants].Constants.ShaderRegister = 1;
+    sky_root_parameters[
+        root_sky_environment_constants].Constants.RegisterSpace = 0;
+    sky_root_parameters[
+        root_sky_environment_constants].Constants.Num32BitValues = 4;
+    sky_root_parameters[
+        root_sky_environment_constants].ShaderVisibility =
+        D3D12_SHADER_VISIBILITY_PIXEL;
+    sky_root_parameters[root_sky_environment_texture].ParameterType =
+        D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    sky_root_parameters[
+        root_sky_environment_texture].DescriptorTable.NumDescriptorRanges =
+        1;
+    sky_root_parameters[
+        root_sky_environment_texture].DescriptorTable.pDescriptorRanges =
+        &checker_range;
+    sky_root_parameters[
+        root_sky_environment_texture].ShaderVisibility =
+        D3D12_SHADER_VISIBILITY_PIXEL;
+    auto sky_sampler = checker_sampler;
+    sky_sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    sky_sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sky_sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sky_sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+
+    root_signature_description.NumParameters =
+        static_cast<UINT>(sky_root_parameters.size());
+    root_signature_description.pParameters =
+        sky_root_parameters.data();
+    root_signature_description.NumStaticSamplers = 1;
+    root_signature_description.pStaticSamplers = &sky_sampler;
     serialized_root_signature.Reset();
     root_signature_diagnostics.Reset();
     result = D3D12SerializeRootSignature(
@@ -3514,7 +4509,7 @@ core::Result<Renderer> Renderer::create(
                 result));
     }
     result = implementation->skybox_root_signature->SetName(
-        L"Shark Procedural Sky Root Signature");
+        L"Shark HDR Environment Sky Root Signature");
     if (FAILED(result)) {
         return core::Result<Renderer>::failure(
             rhi_detail::DeviceAccess::graphics_failure(
@@ -3527,7 +4522,7 @@ core::Result<Renderer> Renderer::create(
     terrain_material_range.RangeType =
         D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     terrain_material_range.NumDescriptors =
-        backend_detail::terrain_material_texture_count;
+        backend_detail::terrain_shader_texture_count;
     terrain_material_range.BaseShaderRegister = 0;
     terrain_material_range.RegisterSpace = 0;
     terrain_material_range.OffsetInDescriptorsFromTableStart =
@@ -3614,6 +4609,56 @@ core::Result<Renderer> Renderer::create(
                 result));
     }
 
+    D3D12_ROOT_PARAMETER tone_map_parameter{};
+    tone_map_parameter.ParameterType =
+        D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    tone_map_parameter.DescriptorTable.NumDescriptorRanges = 1;
+    tone_map_parameter.DescriptorTable.pDescriptorRanges =
+        &checker_range;
+    tone_map_parameter.ShaderVisibility =
+        D3D12_SHADER_VISIBILITY_PIXEL;
+    root_signature_description.NumParameters = 1;
+    root_signature_description.pParameters = &tone_map_parameter;
+    root_signature_description.NumStaticSamplers = 0;
+    root_signature_description.pStaticSamplers = nullptr;
+    serialized_root_signature.Reset();
+    root_signature_diagnostics.Reset();
+    result = D3D12SerializeRootSignature(
+        &root_signature_description,
+        D3D_ROOT_SIGNATURE_VERSION_1,
+        &serialized_root_signature,
+        &root_signature_diagnostics);
+    if (FAILED(result)) {
+        const auto operation = root_signature_operation(
+            root_signature_diagnostics.Get());
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
+                device,
+                operation,
+                result));
+    }
+    result = native.device->CreateRootSignature(
+        0,
+        serialized_root_signature->GetBufferPointer(),
+        serialized_root_signature->GetBufferSize(),
+        IID_PPV_ARGS(&implementation->tone_map_root_signature));
+    if (FAILED(result)) {
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Device::CreateRootSignature(tone map)",
+                result));
+    }
+    result = implementation->tone_map_root_signature->SetName(
+        L"Shark Tone Map Root Signature");
+    if (FAILED(result)) {
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Object::SetName(tone map root signature)",
+                result));
+    }
+
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pipeline_description{};
     pipeline_description.pRootSignature =
         implementation->cube_root_signature.Get();
@@ -3641,7 +4686,7 @@ core::Result<Renderer> Renderer::create(
     pipeline_description.PrimitiveTopologyType =
         D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     pipeline_description.NumRenderTargets = 1;
-    pipeline_description.RTVFormats[0] = back_buffer_format;
+    pipeline_description.RTVFormats[0] = hdr_scene_color_format;
     pipeline_description.DSVFormat = backend_detail::cube_depth_format;
     pipeline_description.SampleDesc = DXGI_SAMPLE_DESC{1, 0};
     pipeline_description.NodeMask = 0;
@@ -3690,7 +4735,7 @@ core::Result<Renderer> Renderer::create(
                 result));
     }
     result = implementation->skybox_pipeline->SetName(
-        L"Shark Procedural Daylight Sky Pipeline");
+        L"Shark Environment Sky Pipeline");
     if (FAILED(result)) {
         return core::Result<Renderer>::failure(
             rhi_detail::DeviceAccess::graphics_failure(
@@ -3737,6 +4782,43 @@ core::Result<Renderer> Renderer::create(
                 "ID3D12Object::SetName(terrain solid pipeline)",
                 result));
     }
+
+    pipeline_description.VS = D3D12_SHADER_BYTECODE{
+        config.material_sphere_vertex_shader.data,
+        config.material_sphere_vertex_shader.size,
+    };
+    pipeline_description.PS = D3D12_SHADER_BYTECODE{
+        config.material_sphere_pixel_shader.data,
+        config.material_sphere_pixel_shader.size,
+    };
+    result = native.device->CreateGraphicsPipelineState(
+        &pipeline_description,
+        IID_PPV_ARGS(&implementation->material_sphere_pipeline));
+    if (FAILED(result)) {
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Device::CreateGraphicsPipelineState(material "
+                "sphere)",
+                result));
+    }
+    result = implementation->material_sphere_pipeline->SetName(
+        L"Shark Environment Material Sphere Pipeline");
+    if (FAILED(result)) {
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Object::SetName(material sphere pipeline)",
+                result));
+    }
+    pipeline_description.VS = D3D12_SHADER_BYTECODE{
+        config.terrain_vertex_shader.data,
+        config.terrain_vertex_shader.size,
+    };
+    pipeline_description.PS = D3D12_SHADER_BYTECODE{
+        config.terrain_pixel_shader.data,
+        config.terrain_pixel_shader.size,
+    };
 
     pipeline_description.RasterizerState =
         terrain_rasterizer_description(
@@ -3787,6 +4869,49 @@ core::Result<Renderer> Renderer::create(
             rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Object::SetName(terrain bounds pipeline)",
+                result));
+    }
+
+    D3D12_DEPTH_STENCIL_DESC no_depth{};
+    no_depth.DepthEnable = FALSE;
+    no_depth.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+    no_depth.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+    no_depth.StencilEnable = FALSE;
+    pipeline_description.pRootSignature =
+        implementation->tone_map_root_signature.Get();
+    pipeline_description.VS = D3D12_SHADER_BYTECODE{
+        config.tone_map_vertex_shader.data,
+        config.tone_map_vertex_shader.size,
+    };
+    pipeline_description.PS = D3D12_SHADER_BYTECODE{
+        config.tone_map_pixel_shader.data,
+        config.tone_map_pixel_shader.size,
+    };
+    pipeline_description.RasterizerState =
+        cube_rasterizer_description();
+    pipeline_description.DepthStencilState = no_depth;
+    pipeline_description.InputLayout = D3D12_INPUT_LAYOUT_DESC{};
+    pipeline_description.PrimitiveTopologyType =
+        D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    pipeline_description.RTVFormats[0] = back_buffer_format;
+    pipeline_description.DSVFormat = DXGI_FORMAT_UNKNOWN;
+    result = native.device->CreateGraphicsPipelineState(
+        &pipeline_description,
+        IID_PPV_ARGS(&implementation->tone_map_pipeline));
+    if (FAILED(result)) {
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Device::CreateGraphicsPipelineState(tone map)",
+                result));
+    }
+    result = implementation->tone_map_pipeline->SetName(
+        L"Shark HDR Tone Map Pipeline");
+    if (FAILED(result)) {
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Object::SetName(tone map pipeline)",
                 result));
     }
 
@@ -3990,7 +5115,8 @@ core::Result<Renderer> Renderer::create(
         implementation->create_static_scene_resources(
             config.startup_cubemap,
             config.terrain_mesh,
-            config.terrain_materials);
+            config.terrain_materials,
+            config.environment_lighting);
     if (!static_resources_result) {
         return core::Result<Renderer>::failure(
             std::move(static_resources_result).error());
@@ -4006,6 +5132,12 @@ core::Result<Renderer> Renderer::create(
         return core::Result<Renderer>::failure(
             std::move(depth_result).error());
     }
+    auto hdr_result =
+        implementation->create_hdr_scene_color(config.extent);
+    if (!hdr_result) {
+        return core::Result<Renderer>::failure(
+            std::move(hdr_result).error());
+    }
 
     core::log_message(
         core::LogLevel::info,
@@ -4014,7 +5146,8 @@ core::Result<Renderer> Renderer::create(
             std::to_string(config.extent.width) + "x" +
             std::to_string(config.extent.height) +
             " with three fence-gated frame contexts, reversed-Z depth, "
-            "and named Terrain/TexturedCube/Skybox pipelines");
+            "linear HDR scene color, and named "
+            "Terrain/TexturedCube/Skybox/ToneMap pipelines");
     return core::Result<Renderer>::success(
         Renderer{std::move(implementation)});
 }
@@ -4038,7 +5171,7 @@ core::Result<RenderStatus> Renderer::render_frame(
             core::ErrorCode::invalid_argument,
             "Renderer frame view-projection matrices must be finite "
             "and its camera, daylight settings, terrain fill mode, and "
-            "material view must be valid"));
+            "material/environment views must be valid"));
     }
 
     const auto back_buffer_index =
@@ -4077,63 +5210,80 @@ core::Result<RenderStatus> Renderer::render_frame(
             .terrain =
                 [implementation = implementation_.get(),
                  context,
-                 back_buffer_index,
                  timestamp_query_base,
                  terrain_mode = frame_data.terrain_mode,
                  camera_world_position =
                     frame_data.camera_world_position,
                  material_view =
-                    frame_data.terrain_material_view](
+                    frame_data.terrain_material_view,
+                 environment_mode =
+                    frame_data.environment_lighting_mode](
                     const render_graph::PassContext& pass_context,
                     const detail::TerrainPassResources& resources) {
                     return implementation->record_terrain_pass(
                         pass_context,
-                        resources.back_buffer,
+                        resources.scene_color,
                         resources.depth_buffer,
                         resources.vertex_buffer,
                         resources.index_buffer,
                         resources.albedo_layers,
                         resources.normal_layers,
                         resources.roughness_layers,
+                        resources.environment_irradiance,
+                        resources.environment_prefiltered_specular,
+                        resources.environment_brdf_lut,
                         *context,
-                        back_buffer_index,
                         timestamp_query_base,
                         terrain_mode,
                         camera_world_position,
-                        material_view);
+                        material_view,
+                        environment_mode);
                 },
             .textured_cube =
                 [implementation = implementation_.get(),
                  context,
-                 back_buffer_index,
                  timestamp_query_base](
                     const render_graph::PassContext& pass_context,
                     const detail::TexturedCubePassResources& resources) {
                     return implementation->record_textured_cube_pass(
                         pass_context,
-                        resources.back_buffer,
+                        resources.scene_color,
                         resources.depth_buffer,
                         resources.checker_texture,
                         resources.vertex_buffer,
                         resources.index_buffer,
                         *context,
-                        back_buffer_index,
                         timestamp_query_base);
                 },
             .skybox =
                 [implementation = implementation_.get(),
                  context,
-                 back_buffer_index,
-                 timestamp_query_base](
+                 timestamp_query_base,
+                 environment_mode =
+                    frame_data.environment_lighting_mode](
                     const render_graph::PassContext& pass_context,
                     const detail::SkyboxPassResources& resources) {
                     return implementation->record_skybox_pass(
                         pass_context,
-                        resources.back_buffer,
+                        resources.scene_color,
                         resources.depth_buffer,
                         resources.vertex_buffer,
                         resources.index_buffer,
+                        resources.environment_radiance,
                         *context,
+                        timestamp_query_base,
+                        environment_mode);
+                },
+            .tone_map =
+                [implementation = implementation_.get(),
+                 back_buffer_index,
+                 timestamp_query_base](
+                    const render_graph::PassContext& pass_context,
+                    const detail::ToneMapPassResources& resources) {
+                    return implementation->record_tone_map_pass(
+                        pass_context,
+                        resources.back_buffer,
+                        resources.scene_color,
                         back_buffer_index,
                         timestamp_query_base);
                 },
@@ -4200,6 +5350,10 @@ core::Result<RenderStatus> Renderer::render_frame(
             implementation_->back_buffers[back_buffer_index].Get(),
         },
         rhi_detail::RenderGraphResourceBinding{
+            detail::frame_scene_color_external_id,
+            implementation_->hdr_scene_color.Get(),
+        },
+        rhi_detail::RenderGraphResourceBinding{
             detail::frame_depth_buffer_external_id,
             implementation_->depth_buffer.Get(),
         },
@@ -4234,6 +5388,27 @@ core::Result<RenderStatus> Renderer::render_frame(
         rhi_detail::RenderGraphResourceBinding{
             detail::frame_terrain_roughness_layers_external_id,
             implementation_->terrain_material_textures[2].Get(),
+        },
+        rhi_detail::RenderGraphResourceBinding{
+            detail::frame_environment_radiance_external_id,
+            implementation_->environment_textures[
+                environment_radiance_texture].Get(),
+        },
+        rhi_detail::RenderGraphResourceBinding{
+            detail::frame_environment_irradiance_external_id,
+            implementation_->environment_textures[
+                environment_irradiance_texture].Get(),
+        },
+        rhi_detail::RenderGraphResourceBinding{
+            detail::
+                frame_environment_prefiltered_specular_external_id,
+            implementation_->environment_textures[
+                environment_specular_texture].Get(),
+        },
+        rhi_detail::RenderGraphResourceBinding{
+            detail::frame_environment_brdf_lut_external_id,
+            implementation_->environment_textures[
+                environment_brdf_texture].Get(),
         },
     };
     auto graph_bindings_result =
@@ -4309,6 +5484,10 @@ core::Result<RenderStatus> Renderer::render_frame(
     ++implementation_->statistics.skybox_draw_calls;
     implementation_->statistics.skybox_indices +=
         backend_detail::skybox_index_count;
+    ++implementation_->statistics.material_sphere_draw_calls;
+    implementation_->statistics.material_sphere_indices +=
+        implementation_->material_sphere_index_count;
+    ++implementation_->statistics.tone_map_draw_calls;
     ++implementation_->statistics.terrain_draw_calls;
     if (frame_data.terrain_mode == TerrainRenderMode::wireframe) {
         ++implementation_->statistics.terrain_wireframe_draw_calls;
@@ -4337,6 +5516,13 @@ core::Result<RenderStatus> Renderer::render_frame(
         implementation_->terrain_bounds_index_count;
     implementation_->statistics.terrain_query_marker_indices +=
         implementation_->terrain_query_marker_index_count;
+    if (frame_data.environment_lighting_mode ==
+        EnvironmentLightingMode::image_based) {
+        ++implementation_->statistics.image_based_lighting_frames;
+    }
+    else {
+        ++implementation_->statistics.procedural_daylight_frames;
+    }
 
     result = implementation_->swap_chain->Present(
         implementation_->synchronize_to_vertical_refresh ? 1 : 0,
@@ -4420,6 +5606,11 @@ core::Result<void> Renderer::resize(
     auto depth_result = implementation_->create_depth_buffer(extent);
     if (!depth_result) {
         return depth_result;
+    }
+    auto hdr_result =
+        implementation_->create_hdr_scene_color(extent);
+    if (!hdr_result) {
+        return hdr_result;
     }
     implementation_->current_extent = extent;
     ++implementation_->statistics.resize_count;

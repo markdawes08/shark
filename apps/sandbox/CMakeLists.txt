@@ -6,6 +6,10 @@ add_executable(SharkSandbox
     "${SHARK_SKYBOX_VERTEX_HEADER}"
     "${SHARK_TERRAIN_PIXEL_HEADER}"
     "${SHARK_TERRAIN_VERTEX_HEADER}"
+    "${SHARK_MATERIAL_SPHERE_PIXEL_HEADER}"
+    "${SHARK_MATERIAL_SPHERE_VERTEX_HEADER}"
+    "${SHARK_TONE_MAP_PIXEL_HEADER}"
+    "${SHARK_TONE_MAP_VERTEX_HEADER}"
     agility_sdk_exports.cpp
     camera_controller.cpp
     camera_controller.hpp
@@ -19,6 +23,8 @@ add_dependencies(
     "${SHARK_CUBE_SHADER_TARGET}"
     "${SHARK_SKYBOX_SHADER_TARGET}"
     "${SHARK_TERRAIN_SHADER_TARGET}"
+    "${SHARK_MATERIAL_SPHERE_SHADER_TARGET}"
+    "${SHARK_TONE_MAP_SHADER_TARGET}"
 )
 
 target_include_directories(SharkSandbox
@@ -27,6 +33,8 @@ target_include_directories(SharkSandbox
         "${SHARK_CUBE_SHADER_INCLUDE_DIRECTORY}"
         "${SHARK_SKYBOX_SHADER_INCLUDE_DIRECTORY}"
         "${SHARK_TERRAIN_SHADER_INCLUDE_DIRECTORY}"
+        "${SHARK_MATERIAL_SPHERE_SHADER_INCLUDE_DIRECTORY}"
+        "${SHARK_TONE_MAP_SHADER_INCLUDE_DIRECTORY}"
 )
 
 target_link_libraries(SharkSandbox

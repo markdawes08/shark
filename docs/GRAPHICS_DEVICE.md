@@ -1,6 +1,6 @@
 # Direct3D 12 Device Contract
 
-- **Completed through:** `T-003`
+- **Completed through:** `S-003`
 - **Last verified:** July 18, 2026
 
 G-001 establishes adapter discovery, diagnostics, capability reporting, and
@@ -76,7 +76,9 @@ scene-named timestamp layout and accumulator. Generic frame-resource,
 device-access, and legacy-transition helpers remain private D3D12 RHI
 implementation details. T-003 adds fixed renderer-owned material resources and
 bindings without changing adapter selection, feature-level requirements,
-device ownership, validation, or removal diagnostics.
+device ownership, validation, or removal diagnostics. S-003 adds fixed HDR
+environment, scene-color, material-sphere, and tone-map resources while
+preserving that same device contract and baseline.
 
 If a debugger is attached, corruption and error messages also request a debug
 break. Unattended processes count and report those severities instead of
@@ -108,14 +110,15 @@ Selection rules are strict:
 `--gpu-smoke` and `--capabilities` create no window and exit after device
 verification. `--present-smoke` accepts the normal GPU selectors and optional
 GPU-based validation, creates a real window, presents exactly 1,000 successful
-frames containing the indexed terrain surface, bounds, cyan terrain-query
-marker, cube, and skybox, verifies camera/depth/resource/graph lifecycles, and
-exits. The default interactive path keeps the device alive while the free-fly
-camera, daylight-lit diagnostic terrain and query-normal pin, textured cube,
-and procedural daylight sky run as the graph's `Terrain`, `TexturedCube`, and
-`Skybox` passes until the window is closed. The startup cubemap remains
-allocated as an asset/upload proof but is not imported, bound, or sampled per
-frame.
+frames normally or 120 in the focused GPU-validation mode, containing the
+indexed terrain surface, material sphere, bounds, cyan terrain-query marker,
+cube, and skybox plus final tone mapping, verifies
+camera/depth/HDR/resource/graph lifecycles, and exits. The default interactive
+path keeps the device alive while the free-fly camera, IBL-lit terrain and
+query-normal pin, material sphere, textured cube, and HDR sky run as
+`Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` passes. `F3` retains the
+procedural-daylight fallback. The startup DDS cubemap remains an asset/upload
+proof and is not imported, bound, or sampled per frame.
 
 ## Required and optional capabilities
 
@@ -189,18 +192,17 @@ owner-scoped graph declarations, stable hazard-aware ordering,
 cycle/access/failure validation, transition elision, exact legacy state
 mapping/alias handling, and native binding rejection.
 The presentation smoke additionally verifies all three frame contexts are
-reused, every submission compiles and executes exactly three graph passes with
-ten imports, two dependencies, four emitted barriers, and 22 elided
-transitions plus checker and terrain-material table bindings, and every
-submission retires during explicit shutdown before frame resources are
-released. T-002 retains
-four geometry buffers and eight timestamps per frame while requiring five
-indexed draws: surface, bounds, query marker, cube, and sky.
+reused, every submission compiles and executes exactly four graph passes with
+15 imports, three dependencies, six emitted barriers, and 31 elided
+transitions plus four texture-table bindings, and every submission retires
+during explicit shutdown before frame resources are released. S-003 retains
+four geometry buffers while requiring six indexed draws plus one fullscreen
+tone-map draw and ten timestamps per frame.
 
-Renderer shutdown explicitly drains and releases its command list,
-terrain/cube/skybox PSOs, all three root signatures, descriptor heap,
-checker/cubemap/material textures, cube/terrain vertex/index buffers, depth texture/DSVs,
-swap-chain resources, and frame contexts before
+Renderer shutdown explicitly drains and releases its command list, all scene
+and tone-map PSOs/root signatures, descriptor heap, checker/cubemap/material/
+environment textures, HDR scene target, cube/terrain vertex/index buffers,
+depth texture/DSVs, swap-chain resources, and frame contexts before
 `Device::validate_debug_state` checks new D3D12 and DXGI messages plus live
 D3D12 child objects. Debug and Release must both build and pass all registered
 tests with zero DirectX corruption or error messages. See the
@@ -213,8 +215,8 @@ the G-005 input, math, depth, static-resource, and acceptance rules. See
 platform-independent planner and D3D12 legacy-barrier executor.
 See [the terrain contract](TERRAIN.md) for the T-002 canonical query,
 deterministic tile, and diagnostic rendering modes, and
-[the skybox contract](SKYBOX.md) for the S-002A procedural daylight background
-and shared terrain light. T-002 adds no device capability or lifetime policy;
-REN-001 and T-003 likewise change no device capability or lifetime policy.
-T-003 was completed on July 18, 2026. The next increment is `S-003`, HDR
-environment lighting.
+[the skybox contract](SKYBOX.md) for the S-003 HDR environment, analytic sun,
+and procedural fallback. T-002 adds no device capability or lifetime policy;
+REN-001, T-003, and S-003 likewise change no device capability or selection
+policy. S-003 was completed on July 18, 2026. The next increment is `T-004`,
+terrain chunk culling, followed by `T-005`, bounded visual LOD.

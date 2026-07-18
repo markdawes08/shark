@@ -19,7 +19,10 @@ TEST_CASE(
     STATIC_REQUIRE(std::is_standard_layout_v<RenderFrameData>);
     STATIC_REQUIRE(std::is_standard_layout_v<RendererStats>);
     STATIC_REQUIRE(std::is_standard_layout_v<Texture2DArrayUploadView>);
+    STATIC_REQUIRE(std::is_standard_layout_v<Texture2DUploadView>);
     STATIC_REQUIRE(std::is_standard_layout_v<TerrainMaterialUploadView>);
+    STATIC_REQUIRE(
+        std::is_standard_layout_v<EnvironmentLightingUploadView>);
 
     const RendererConfig config;
     REQUIRE((config.extent == RenderExtent{1280, 720}));
@@ -28,6 +31,10 @@ TEST_CASE(
     REQUIRE(config.terrain_materials.albedo.subresources == nullptr);
     REQUIRE(config.terrain_materials.normal.subresources == nullptr);
     REQUIRE(config.terrain_materials.roughness.subresources == nullptr);
+    REQUIRE(
+        config.environment_lighting.radiance.subresources == nullptr);
+    REQUIRE(
+        config.environment_lighting.brdf_lut.subresources == nullptr);
 
     const RenderFrameData frame;
     REQUIRE(
@@ -37,6 +44,9 @@ TEST_CASE(
         TerrainMaterialView::shaded);
     REQUIRE(
         frame.camera_world_position == shark::math::Float3{});
+    REQUIRE(
+        frame.environment_lighting_mode ==
+        EnvironmentLightingMode::image_based);
 
     STATIC_REQUIRE(
         static_cast<std::uint32_t>(TerrainMaterialView::shaded) == 1);
@@ -46,6 +56,15 @@ TEST_CASE(
     STATIC_REQUIRE(
         static_cast<std::uint32_t>(
             TerrainMaterialView::shading_normal) == 3);
+    STATIC_REQUIRE(
+        static_cast<std::uint32_t>(
+            EnvironmentLightingMode::procedural_daylight) == 1);
+    STATIC_REQUIRE(
+        static_cast<std::uint32_t>(
+            EnvironmentLightingMode::image_based) == 2);
+    STATIC_REQUIRE(
+        static_cast<std::uint8_t>(
+            TextureDataFormat::rgba32_float) == 3);
 }
 
 TEST_CASE(
@@ -66,5 +85,11 @@ TEST_CASE(
     REQUIRE(changed != baseline);
     changed = baseline;
     changed.terrain_material_texture_array_creations = 3;
+    REQUIRE(changed != baseline);
+    changed = baseline;
+    changed.hdr_scene_color_creations = 1;
+    REQUIRE(changed != baseline);
+    changed = baseline;
+    changed.material_sphere_draw_calls = 1;
     REQUIRE(changed != baseline);
 }

@@ -1,114 +1,141 @@
-# Procedural Daylight Sky Contract
+# Sky and HDR Environment-Lighting Contract
 
-- **Completed through:** `T-003`
+- **Completed through:** `S-003`
 - **Last verified:** July 18, 2026
-- **Next planned increment:** `S-003` - HDR environment lighting
+- **Next planned increment:** `T-004` - terrain chunk culling
 
-S-002A is a bounded visual diversion before terrain work continues. It replaces
-the temporary flat-blue treatment of Shark's diagnostic cubemap with a basic
-daylight sky and a matching directional light for terrain. It adds no clouds,
-shadow maps, physical atmosphere, time-of-day system, or image-based lighting.
+Shark still uses a skybox as the background rasterization technique: a cube is
+drawn around the camera with a translation-free view matrix and forced to the
+reversed-Z far plane. S-002A established the basic continuous procedural
+daylight fallback. S-003 adds a bounded linear-HDR environment, derives the
+image-based-lighting data used by the scene, and sends all scene color through
+a final tone-map pass.
 
-## Technique and content decision
+This is intentionally a small, modern lighting foundation inside Shark's San
+Andreas-class feature ceiling. It is not a physical atmosphere, weather model,
+dynamic time-of-day system, cloud renderer, or RAGE-scale lighting stack.
 
-Skybox was the correct name for the rendering technique: Shark draws a cube
-around the camera using a translation-free view matrix and pins it to the
-reversed-Z far plane. The painted-room appearance came from the content, not
-the geometry. A nearly constant blue mixed with a six-face orientation texture
-made the cube faces perceptible.
+## Deterministic HDR source and derived maps
 
-The `Skybox` pass now evaluates a continuous procedural daylight model from the
-normalized world-space view direction. Cube-face identity and UVs have no
-influence on its color, so the reused cube is only a rasterization container.
-Camera rotation changes the visible direction; camera translation still cannot
-move the sky.
-
-The visual model is deliberately small:
-
-- a pale horizon blending continuously to a deeper blue zenith;
-- a darker, desaturated nadir below the horizon;
-- a warm soft-edged sun disk;
-- a restrained angular halo around the sun; and
-- one fixed world-space direction toward the sun, shared with terrain.
-
-The sky is evaluated as bounded LDR linear RGB, clamped once, and explicitly
-converted to sRGB values for the current `R8G8B8A8_UNORM` back buffer. This is
-an output transfer for the temporary presentation path, not HDR rendering,
-exposure control, or tone mapping.
-
-## Per-frame daylight constants
-
-The existing root CBV at `b0` is visible to the vertex and pixel stages. One
-256-byte frame allocation contains the two matrices, six packed daylight rows,
-and the retained diagnostic frame probe:
+`shark::assets::EnvironmentLighting` owns project-generated CPU data and uses
+no file, random state, platform API, or third-party image. Generation begins
+with one fixed `64x32` latitude-longitude daylight image in linear
+RGBA32-float:
 
 ```text
-bytes     HLSL data
-0..63     row_major float4x4 view_projection
-64..127   row_major float4x4 sky_view_projection
-128..143  direction_to_sun.xyz, sun_disk_outer_cosine
-144..159  sun_color.xyz, sun_disk_inner_cosine
-160..175  zenith_color.xyz, sky_gradient_exponent
-176..191  horizon_color.xyz, ambient_strength
-192..207  nadir_color.xyz, sun_halo_outer_cosine
-208..223  sky_ambient_color.xyz, sun_intensity
-224..255  FrameProbe
+source extent                 64 x 32
+source texels                 2,048
+source meaningful bytes      32,768
+source color space            linear HDR
 ```
 
-`direction_to_sun` is a finite normalized world-space vector pointing from the
-scene toward the sun. The two disk cosine thresholds are ordered for
-`smoothstep(outer, inner, dot(view_direction, direction_to_sun))`, avoiding a
-per-pixel inverse trigonometric operation. The halo outer cosine bounds a wider,
-low-intensity falloff. Colors and scalar controls are finite and nonnegative;
-the gradient exponent is positive.
-
-The allocation remains 256-byte aligned, so frame upload allocation count,
-bytes written, descriptor count, and fence ownership do not change. The frame
-probe moves to byte 224 but remains inside the same allocation and diagnostic
-copy.
-
-## Sky and terrain shading
-
-The sky shader normalizes the interpolated cube direction before using its
-vertical component. Directions above the horizon blend from `horizon_color` to
-`zenith_color`; directions below it blend from the same horizon to
-`nadir_color`. This shared horizon endpoint prevents a discontinuity at world
-`Y = 0`.
-
-The soft disk is driven by the ordered cosine thresholds. A broader halo fades
-to zero at `sun_halo_outer_cosine` and is excluded from the opaque center of the
-disk. The result depends only on normalized direction and the daylight
-constants, so there can be no cubemap face seam or camera-position parallax.
-
-Terrain's main surface uses the same `direction_to_sun`, `sun_color`,
-`sun_intensity`, and `sky_ambient_color`. Its temporary material is a basic
-albedo multiplied by:
+The generator converts and filters that source into:
 
 ```text
-sky ambient + sun color * sun intensity *
-    max(dot(surface normal, direction_to_sun), 0)
+radiance cubemap              32 x 32, 6 faces, 6 mips
+diffuse irradiance cubemap     8 x  8, 6 faces, 1 mip
+GGX-prefiltered specular      32 x 32, 6 faces, 6 mips
+split-sum BRDF LUT            32 x 32, 1 mip
+derived subresources          79
+derived texels                17,788
+derived meaningful bytes      284,608
+derived format                RGBA32 float
 ```
 
-This is Lambert diffuse lighting with a nonzero ambient floor. It makes hills
-respond coherently to the visible sun while preventing back-facing slopes from
-becoming black. It does not cast shadows or claim a production material model.
-The terrain AABB remains a constant diagnostic color and is not treated as a
-lit surface. The checker cube remains the established texture-binding proof.
+The low-resolution source deliberately excludes the directional sun. The sky
+shader draws its smooth disk/halo analytically from the shared daylight
+settings, and terrain/sphere evaluate the same sun as a direct light. This
+avoids turning the sun into a bright cubemap texel block and avoids counting
+its energy once in the convolution and again as direct lighting.
 
-## Retained cubemap asset proof
+Cubemap storage is face-major, then mip-minor. The BRDF LUT stores the
+split-sum scale and bias in red/green. Shading reconstructs dielectric
+specular as `prefiltered * (F0 * scale + bias)`; the LUT has already integrated
+the angular Fresnel factor. CPU tests lock the dimensions, mip
+counts, byte determinism, finite values, convolution behavior, GGX roughness
+chain, and BRDF bounds. The small resolutions are deliberate acceptance
+fixtures, not a production content-quality target.
 
-The project-owned `8x8` orientation DDS cubemap remains loaded, validated,
-uploaded, and represented by its persistent TextureCube SRV. That preserves
-the S-001 asset and upload path for later environment-lighting work.
+The renderer validates the borrowed upload views synchronously, creates three
+`DXGI_FORMAT_R32G32B32A32_FLOAT` TextureCube resources plus one matching
+Texture2D LUT, uploads all 79 subresources in the existing one-time
+`StaticSceneUpload`, and retains no caller CPU pointer. These four resources
+account for 284,608 meaningful uploaded bytes. D3D12 row-pitch padding is
+implementation storage and is not included in that meaningful-byte total.
 
-The procedural sky does not sample or bind that cubemap. Consequently,
-`StartupCubemap` is no longer imported into the per-frame render graph and the
-`Skybox` pass declares no cubemap read. Retaining the startup asset is not a
-claim that it contributes visible color.
+## Sky technique and lighting modes
 
-## Depth and frame graph
+The `Skybox` vertex stage reuses the cube positions, evaluates the
+translation-free `sky_view_projection`, and forces clip depth to zero. The
+pixel stage normalizes the world-space view direction. In the default
+image-based mode it samples the sun-free radiance cube and then adds the smooth
+analytic directional sun disk/halo. In fallback mode it evaluates the retained
+analytic horizon/zenith/nadir gradient, sun disk, and halo directly.
 
-The established reversed-Z background policy is unchanged:
+`F3` toggles the complete environment mode:
+
+```text
+HDR image-based lighting
+procedural daylight fallback
+```
+
+The choice affects both the visible sky and material lighting. It does not
+change the camera, terrain data, material view, graph topology, resource
+ownership, or simulation state. `F1` continues to toggle terrain fill and `F2`
+continues to cycle shaded, material-weight, and world-normal views.
+
+The retained project-owned `8x8` sRGB DDS orientation cubemap is still loaded
+and uploaded as the S-001 asset-path proof. It is separate from the generated
+HDR radiance cube and is not imported, bound, or sampled by the normal frame.
+
+## Terrain and material-sphere proof
+
+The shaded terrain samples the same environment through:
+
+- the `8x8` diffuse irradiance cube for diffuse response;
+- the six-mip GGX-prefiltered specular cube for roughness-dependent
+  reflections; and
+- the `32x32` split-sum BRDF LUT for the view/roughness response.
+
+It combines that IBL with the existing direct sun and the T-003 ground/rock
+material blend. The canonical `HeightTileSurface` remains authoritative for
+height, normal, bounds, and ray queries; environment lighting is visual data
+and cannot alter those results.
+
+The irradiance texture stores the cosine-weighted hemisphere integral. The
+shared PBR shader divides it by pi for the Lambert BRDF; the direct analytic
+sun is added separately.
+
+One deterministic 266-vertex/1,584-index glossy neutral dielectric sphere is
+packed into the existing terrain vertex/index resources and drawn inside the
+`Terrain` pass. It uses the same direct sun, irradiance, prefiltered specular,
+and BRDF LUT as the terrain. This is the acceptance proof that both objects
+share one environment-lighting model, not the beginning of a general entity,
+mesh, or material system.
+
+## HDR scene target and final presentation
+
+`Terrain`, `TexturedCube`, and `Skybox` write linear scene color to one
+resize-owned:
+
+```text
+DXGI_FORMAT_R16G16B16A16_FLOAT
+```
+
+`ToneMap` then reads that HDR scene target and draws a fullscreen triangle to
+the `DXGI_FORMAT_R8G8B8A8_UNORM` swap-chain back buffer. Its pixel stage applies
+the fixed ACES-fitted curve and explicit linear-to-sRGB transfer. Scene shaders
+do not perform their own output transfer. An effective resize recreates the
+HDR texture, RTV, and SRV alongside the depth and swap-chain views after the
+normal queue drain.
+
+This establishes a bounded HDR scene/presentation boundary. S-003 adds no
+automatic exposure, eye adaptation, bloom, color grading, HDR10 output,
+display metadata, or configurable tone-map operator.
+
+## Depth, graph, and diagnostics
+
+The reversed-Z background policy remains:
 
 ```text
 sky clip depth    0
@@ -118,14 +145,14 @@ DSV               READ_ONLY_DEPTH
 resource state    DEPTH_READ
 ```
 
-Terrain clears the `D32_FLOAT` depth target to zero and writes nearer depths.
-The sky therefore fills untouched pixels and cannot overwrite terrain or cube
-color.
+Terrain clears `D32_FLOAT` depth to zero, terrain and cube write nearer values,
+and the sky fills untouched pixels. `ToneMap` uses no depth.
 
-The graph imports:
+The frame graph imports:
 
 ```text
 BackBuffer
+SceneColor
 DepthBuffer
 CheckerTexture
 CubeVertexBuffer
@@ -135,43 +162,53 @@ TerrainIndexBuffer
 TerrainAlbedoLayers
 TerrainNormalLayers
 TerrainRoughnessLayers
+EnvironmentRadiance
+EnvironmentIrradiance
+EnvironmentPrefilteredSpecular
+EnvironmentBrdfLut
 ```
 
-It retains the pass order `Terrain -> TexturedCube -> Skybox`. Per submitted
-frame the exact compilation contract is:
+Its exact submitted-frame contract is:
 
 ```text
-imports                10
-passes                  3
-dependencies            2
-emitted transitions     4
-elided transitions      22
+pass order              Terrain -> TexturedCube -> Skybox -> ToneMap
+imports                 15
+passes                   4
+dependencies             3
+emitted transitions      6
+elided transitions      31
+texture-table binds      4
 ```
 
-The four barriers remain the back-buffer present/render transitions and the
-depth write/read transitions around the sky pass. The checker and three
-material arrays stay in their read states. The cube and terrain each bind one
-texture table, so the exact per-frame texture-binding count is two.
+The six barriers move scene color into render-target state, depth into
+read-only state, the back buffer into render-target state for `ToneMap`, scene
+color into shader-read state, then restore the back buffer and depth to their
+declared final states. Persistent environment and material resources remain in
+pixel-shader-read state.
 
-T-002 adds one query-marker draw inside `Terrain`, bringing the submitted-frame
-total to five indexed draws, but adds no pass, PSO, timestamp interval,
-attachment, or queue. The marker is packed into the existing terrain buffers,
-so the static scene remains four geometry buffers. The existing PIX hierarchy
-and eight-query frame layout remain:
+A submitted frame issues six indexed draws: terrain surface, material sphere,
+terrain AABB, terrain query marker, textured cube, and skybox. `ToneMap` adds
+one non-indexed fullscreen-triangle draw. The sphere shares the packed terrain
+buffers, so the static scene still contains four geometry buffers.
+
+The stable PIX hierarchy is:
 
 ```text
 Frame
   Terrain
   TexturedCube
   Skybox
+  ToneMap
 ```
 
-Cubemap creation, upload, face, mip, source-byte, SRV, and persistent-descriptor
-startup counters remain intact even though per-frame cubemap use is zero.
+Each of the four pass intervals has a begin/end timestamp. Together with frame
+begin/end, this requires exactly ten timestamps per frame-context slice and 30
+timestamps across three contexts. Timing results remain fence-delayed and add
+no normal-frame queue drain.
 
 ## Manual acceptance
 
-Run the interactive hardware path from the repository root:
+Run the interactive hardware path:
 
 ```powershell
 & .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe
@@ -179,32 +216,32 @@ Run the interactive hardware path from the repository root:
 
 Verify:
 
-1. The background reads as one open sky, with a recognizable horizon and deeper
-   zenith, rather than four blue walls or visible cube-face changes.
-2. The warm sun disk and soft halo are visible near their fixed world direction.
-3. Hold the right mouse button and look around. The gradient stays continuous,
-   the sun remains anchored in the world, and no seam appears at cube edges.
-4. Move with `W`, `A`, `S`, `D`, `Q`, and `E` without rotating. The terrain and
-   cube perspective changes, but the sky and sun do not translate.
-5. Terrain slopes facing the sun are brighter than slopes facing away, while
-   shadow-facing slopes remain readable from ambient light.
-6. Press `F1` and `F2`, resize, minimize, restore, and close. Terrain fill and
-   material views, sky coverage, reversed-Z occlusion, and Direct3D validation
-   remain clean.
+1. The default background reads as one continuous open HDR daylight
+   environment, without visible cube faces, seams, or painted-wall bands.
+2. The terrain and glossy material sphere respond coherently to the same
+   environment and direct sun.
+3. Right-drag rotation changes the visible world direction; translation with
+   `W`, `A`, `S`, `D`, `Q`, and `E` does not translate the sky.
+4. `F3` switches sky and object lighting together between HDR IBL and the
+   procedural fallback. Both modes remain finite and visually usable.
+5. `F1`/`F2`, resize, minimize/restore, and clean shutdown preserve depth,
+   material diagnostics, tone mapping, and Direct3D validation.
 
 ## Explicit non-goals and continuation
 
-S-002A adds no physical Rayleigh or Mie scattering, volumetric or texture
-clouds, cloud shadows, shadow maps, cascaded sunlight, dynamic time of day,
-weather-driven sky state, HDR framebuffer, exposure, tone mapping, image-based
-lighting, cubemap conversion, reflection probes, or final material system.
+S-003 adds no file-backed HDR importer, arbitrary environment probe system,
+runtime convolution, dynamic reflection capture, local reflection volumes,
+shadow maps, atmosphere scattering, volumetric clouds, weather-driven sky,
+time of day, exposure adaptation, bloom, color grading, HDR display output, or
+image-comparison test.
 
-The procedural daylight sky remains the stable basic background while the
-engine grows. T-002 adds canonical terrain queries and a cyan normal pin
-without changing this sky contract. REN-001 moves `DaylightSettings`, public
-frame input, production pass composition, and the D3D12 daylight/skybox scene
-helpers behind `shark::renderer::Renderer` without changing pixels, pass order,
-or accounting. There is no public D3D12 `Presentation` class. T-003 adds
-terrain materials without changing the procedural sky model or pass. T-003 was
-completed on July 18, 2026; work now proceeds to `S-003`, HDR environment
-lighting.
+Radiance mip downsampling is a bounded face-local fixture, not a claimed
+cross-face seam-hardened production filter. The current sky samples radiance
+mip zero, and material roughness uses the separately GGX-prefiltered specular
+cube, so that limitation is not on the visible S-003 path.
+
+It does not broaden Shark beyond the approved San Andreas-class local-sandbox
+ceiling. The next increment is `T-004`: split the current full-resolution
+terrain into render chunks and add frustum culling with visible bounds/counts.
+`T-005` follows with one bounded coarser visual LOD while collision and
+canonical queries remain full resolution.

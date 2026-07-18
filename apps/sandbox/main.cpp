@@ -1,4 +1,5 @@
 #include <shark/assets/dds_cubemap.hpp>
+#include <shark/assets/environment_lighting.hpp>
 #include <shark/core/error.hpp>
 #include <shark/core/logging.hpp>
 #include <shark/core/result.hpp>
@@ -19,6 +20,10 @@
 #include <skybox.vertex.hpp>
 #include <terrain.pixel.hpp>
 #include <terrain.vertex.hpp>
+#include <material_sphere.pixel.hpp>
+#include <material_sphere.vertex.hpp>
+#include <tone_map.pixel.hpp>
+#include <tone_map.vertex.hpp>
 
 #include <Windows.h>
 
@@ -95,6 +100,43 @@ make_material_subresource_views(
         }
     }
     return views;
+}
+
+template<typename Accessor>
+[[nodiscard]] shark::core::Result<
+    std::vector<shark::renderer::TextureSubresourceDataView>>
+make_environment_subresource_views(
+    const std::size_t count,
+    Accessor accessor,
+    const std::string_view label)
+{
+    using namespace shark;
+    std::vector<renderer::TextureSubresourceDataView> result;
+    result.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto source = accessor(index);
+        if (!source.has_value()) {
+            return core::Result<std::vector<
+                renderer::TextureSubresourceDataView>>::failure(
+                core::Error{
+                    core::ErrorCategory::assets,
+                    core::ErrorCode::invalid_state,
+                    std::string{label} +
+                        " lost a generated subresource",
+                });
+        }
+        result.push_back({
+            .data = source->pixels.data(),
+            .data_size = source->pixels.size(),
+            .width = source->width,
+            .height = source->height,
+            .row_pitch = source->row_pitch,
+            .slice_pitch = source->slice_pitch,
+        });
+    }
+    return core::Result<std::vector<
+        renderer::TextureSubresourceDataView>>::success(
+            std::move(result));
 }
 
 template<typename... Visitors>
@@ -192,6 +234,26 @@ next_terrain_material_view(
         return "mapped world normal";
     }
     return "invalid";
+}
+
+[[nodiscard]] constexpr shark::renderer::EnvironmentLightingMode
+next_environment_lighting_mode(
+    const shark::renderer::EnvironmentLightingMode mode) noexcept
+{
+    using shark::renderer::EnvironmentLightingMode;
+    return mode == EnvironmentLightingMode::image_based
+        ? EnvironmentLightingMode::procedural_daylight
+        : EnvironmentLightingMode::image_based;
+}
+
+[[nodiscard]] constexpr std::string_view
+environment_lighting_mode_name(
+    const shark::renderer::EnvironmentLightingMode mode) noexcept
+{
+    using shark::renderer::EnvironmentLightingMode;
+    return mode == EnvironmentLightingMode::image_based
+        ? "HDR image-based lighting"
+        : "procedural daylight fallback";
 }
 
 [[nodiscard]] shark::core::Result<std::filesystem::path>
@@ -607,7 +669,7 @@ void log_platform_event(const shark::platform::Event& event)
     const auto smoke_deadline_duration =
         focused_gpu_validation
         ? std::chrono::seconds{180}
-        : std::chrono::seconds{45};
+        : std::chrono::seconds{75};
 
     platform::ApplicationConfig application_config;
     application_config.visible = !smoke_mode;
@@ -661,6 +723,65 @@ void log_platform_event(const shark::platform::Event& event)
         cubemap.format() == assets::TextureFormat::rgba8_unorm_srgb
         ? renderer::TextureDataFormat::rgba8_unorm_srgb
         : renderer::TextureDataFormat::rgba8_unorm;
+
+    auto environment_result =
+        assets::generate_deterministic_environment_lighting();
+    if (!environment_result) {
+        return core::Result<void>::failure(
+            std::move(environment_result).error());
+    }
+    auto environment = std::move(environment_result).value();
+    auto radiance_views_result =
+        make_environment_subresource_views(
+            environment.radiance_subresource_count(),
+            [&environment](const std::size_t index) {
+                return environment.radiance_subresource(index);
+            },
+            "Environment radiance");
+    if (!radiance_views_result) {
+        return core::Result<void>::failure(
+            std::move(radiance_views_result).error());
+    }
+    auto radiance_views =
+        std::move(radiance_views_result).value();
+    auto irradiance_views_result =
+        make_environment_subresource_views(
+            environment.irradiance_subresource_count(),
+            [&environment](const std::size_t index) {
+                return environment.irradiance_subresource(index);
+            },
+            "Environment irradiance");
+    if (!irradiance_views_result) {
+        return core::Result<void>::failure(
+            std::move(irradiance_views_result).error());
+    }
+    auto irradiance_views =
+        std::move(irradiance_views_result).value();
+    auto specular_views_result =
+        make_environment_subresource_views(
+            environment.specular_subresource_count(),
+            [&environment](const std::size_t index) {
+                return environment.specular_subresource(index);
+            },
+            "Environment prefiltered specular");
+    if (!specular_views_result) {
+        return core::Result<void>::failure(
+            std::move(specular_views_result).error());
+    }
+    auto specular_views =
+        std::move(specular_views_result).value();
+    const auto brdf_lut = environment.brdf_lut();
+    const std::array<renderer::TextureSubresourceDataView, 1>
+        brdf_lut_views{{
+            {
+                .data = brdf_lut.pixels.data(),
+                .data_size = brdf_lut.pixels.size(),
+                .width = brdf_lut.width,
+                .height = brdf_lut.height,
+                .row_pitch = brdf_lut.row_pitch,
+                .slice_pitch = brdf_lut.slice_pitch,
+            },
+        }};
 
     auto terrain_surface_result = terrain::HeightTileSurface::create(
         terrain::make_deterministic_height_tile());
@@ -875,6 +996,22 @@ void log_platform_event(const shark::platform::Event& event)
         shark_terrain_pixel_shader,
         sizeof(shark_terrain_pixel_shader),
     };
+    renderer_config.material_sphere_vertex_shader = {
+        shark_material_sphere_vertex_shader,
+        sizeof(shark_material_sphere_vertex_shader),
+    };
+    renderer_config.material_sphere_pixel_shader = {
+        shark_material_sphere_pixel_shader,
+        sizeof(shark_material_sphere_pixel_shader),
+    };
+    renderer_config.tone_map_vertex_shader = {
+        shark_tone_map_vertex_shader,
+        sizeof(shark_tone_map_vertex_shader),
+    };
+    renderer_config.tone_map_pixel_shader = {
+        shark_tone_map_pixel_shader,
+        sizeof(shark_tone_map_pixel_shader),
+    };
     renderer_config.startup_cubemap = {
         .width = cubemap.width(),
         .height = cubemap.height(),
@@ -912,6 +1049,41 @@ void log_platform_event(const shark::platform::Event& event)
         .roughness = make_material_upload_view(
             terrain_roughness_subresources,
             renderer::TextureDataFormat::rgba8_unorm),
+    };
+    const auto make_environment_cube_upload = [](
+        const std::uint32_t dimension,
+        const std::uint32_t mip_levels,
+        const auto& views) {
+        return renderer::TextureCubeUploadView{
+            .width = dimension,
+            .height = dimension,
+            .mip_levels = mip_levels,
+            .format = renderer::TextureDataFormat::rgba32_float,
+            .subresources = views.data(),
+            .subresource_count = views.size(),
+        };
+    };
+    renderer_config.environment_lighting = {
+        .radiance = make_environment_cube_upload(
+            assets::environment_radiance_dimension,
+            assets::environment_radiance_mip_levels,
+            radiance_views),
+        .diffuse_irradiance = make_environment_cube_upload(
+            assets::environment_irradiance_dimension,
+            assets::environment_irradiance_mip_levels,
+            irradiance_views),
+        .prefiltered_specular = make_environment_cube_upload(
+            assets::environment_specular_dimension,
+            assets::environment_specular_mip_levels,
+            specular_views),
+        .brdf_lut = {
+            .width = assets::environment_brdf_lut_dimension,
+            .height = assets::environment_brdf_lut_dimension,
+            .mip_levels = 1,
+            .format = renderer::TextureDataFormat::rgba32_float,
+            .subresources = brdf_lut_views.data(),
+            .subresource_count = brdf_lut_views.size(),
+        },
     };
     renderer_config.synchronize_to_vertical_refresh = !smoke_mode;
     auto renderer_result = renderer::Renderer::create(
@@ -994,19 +1166,39 @@ void log_platform_event(const shark::platform::Event& event)
             ", source-bytes=" +
             std::to_string(terrain::material_total_source_bytes));
 
+    const auto& environment_metadata = environment.metadata();
+    core::log_message(
+        core::LogLevel::info,
+        "sky.environment",
+        std::string{
+            "Generated deterministic HDR environment lighting: "
+            "source=64x32, source-peak="} +
+            std::to_string(
+                environment_metadata.source_peak_radiance) +
+            ", derived-subresources=" +
+            std::to_string(
+                environment_metadata.derived_subresource_count) +
+            ", derived-bytes=" +
+            std::to_string(
+                environment_metadata.derived_byte_count) +
+            ", derived-peak=" +
+            std::to_string(
+                environment_metadata.derived_peak_value));
+
     core::log_message(
         core::LogLevel::info,
         "sandbox",
         smoke_mode
             ? "Running fixed " +
                 std::to_string(required_smoke_frames) +
-                "-frame terrain, cube, and sky presentation smoke test" +
+                "-frame HDR environment presentation smoke test" +
                 (focused_gpu_validation
                     ? " with GPU-based validation"
                     : "")
-            : "Direct3D 12 terrain, cube, and procedural daylight sky "
-              "initialized; F1 toggles solid/wireframe and F2 cycles "
-              "terrain material views");
+            : "Direct3D 12 terrain, material sphere, HDR environment, "
+              "and tone mapping initialized; F1 toggles "
+              "solid/wireframe, F2 cycles terrain material views, and "
+              "F3 toggles HDR IBL/procedural daylight");
 
     world::Camera camera;
     camera.transform.position = {0.0F, 4.0F, 10.0F};
@@ -1016,6 +1208,8 @@ void log_platform_event(const shark::platform::Event& event)
     auto terrain_mode = renderer::TerrainRenderMode::solid;
     auto terrain_material_view =
         renderer::TerrainMaterialView::shaded;
+    auto environment_lighting_mode =
+        renderer::EnvironmentLightingMode::image_based;
     auto previous_frame_time = std::chrono::steady_clock::now();
     const auto smoke_deadline =
         std::chrono::steady_clock::now() + smoke_deadline_duration;
@@ -1082,6 +1276,21 @@ void log_platform_event(const shark::platform::Event& event)
                         std::string{"Terrain material view: "} +
                             std::string{terrain_material_view_name(
                                 terrain_material_view)});
+                }
+                if (key != nullptr &&
+                    key->virtual_key == VK_F3 &&
+                    key->action == platform::KeyAction::pressed &&
+                    !key->repeated) {
+                    environment_lighting_mode =
+                        next_environment_lighting_mode(
+                            environment_lighting_mode);
+                    core::log_message(
+                        core::LogLevel::info,
+                        "sky.environment",
+                        std::string{"Environment mode: "} +
+                            std::string{
+                                environment_lighting_mode_name(
+                                    environment_lighting_mode)});
                 }
             }
             camera_controller.handle_event(event);
@@ -1334,6 +1543,12 @@ void log_platform_event(const shark::platform::Event& event)
                 terrain_material_view =
                     renderer::TerrainMaterialView::shading_normal;
             }
+            environment_lighting_mode =
+                presented_frames <
+                    required_smoke_frames * 3U / 4U
+                ? renderer::EnvironmentLightingMode::image_based
+                : renderer::EnvironmentLightingMode::
+                    procedural_daylight;
         }
 
         const auto render_extent = renderer_instance.extent();
@@ -1356,6 +1571,8 @@ void log_platform_event(const shark::platform::Event& event)
             .camera_world_position = camera.transform.position,
             .terrain_mode = terrain_mode,
             .terrain_material_view = terrain_material_view,
+            .environment_lighting_mode =
+                environment_lighting_mode,
         };
         auto render_result = renderer_instance.render_frame(frame_data);
         if (!render_result) {
@@ -1392,7 +1609,7 @@ void log_platform_event(const shark::platform::Event& event)
         constexpr std::uint32_t expected_context_mask =
             (std::uint32_t{1} << expected_context_count) - 1;
         constexpr std::uint64_t frame_probe_bytes = 256;
-        constexpr std::uint64_t timestamp_queries_per_frame = 8;
+        constexpr std::uint64_t timestamp_queries_per_frame = 10;
         const auto attempted_presents =
             stats.presented_frames + stats.occluded_frames;
         if (stats.frame_context_count != expected_context_count ||
@@ -1414,15 +1631,15 @@ void log_platform_event(const shark::platform::Event& event)
             stats.render_graph_executions !=
                 stats.frame_submissions ||
             stats.render_graph_resource_imports !=
-                stats.frame_submissions * 10 ||
+                stats.frame_submissions * 15 ||
             stats.render_graph_pass_executions !=
-                stats.frame_submissions * 3 ||
-            stats.render_graph_dependencies !=
-                stats.frame_submissions * 2 ||
-            stats.render_graph_transition_barriers !=
                 stats.frame_submissions * 4 ||
+            stats.render_graph_dependencies !=
+                stats.frame_submissions * 3 ||
+            stats.render_graph_transition_barriers !=
+                stats.frame_submissions * 6 ||
             stats.render_graph_elided_transitions !=
-                stats.frame_submissions * 22 ||
+                stats.frame_submissions * 31 ||
             stats.pix_static_upload_events !=
                 stats.static_upload_submissions ||
             stats.pix_frame_events != stats.frame_submissions ||
@@ -1433,6 +1650,8 @@ void log_platform_event(const shark::platform::Event& event)
             stats.pix_textured_cube_events !=
                 stats.frame_submissions ||
             stats.pix_skybox_events !=
+                stats.frame_submissions ||
+            stats.pix_tone_map_events !=
                 stats.frame_submissions ||
             stats.gpu_timestamp_frequency_hz == 0 ||
             stats.timestamp_query_capacity !=
@@ -1449,17 +1668,21 @@ void log_platform_event(const shark::platform::Event& event)
             stats.gpu_frame_total_ticks <
                 stats.gpu_terrain_total_ticks +
                     stats.gpu_textured_cube_total_ticks +
-                    stats.gpu_skybox_total_ticks ||
+                    stats.gpu_skybox_total_ticks +
+                    stats.gpu_tone_map_total_ticks ||
             stats.gpu_frame_last_ticks <
                 stats.gpu_terrain_last_ticks +
                     stats.gpu_textured_cube_last_ticks +
-                    stats.gpu_skybox_last_ticks ||
+                    stats.gpu_skybox_last_ticks +
+                    stats.gpu_tone_map_last_ticks ||
             stats.gpu_frame_max_ticks <
                 stats.gpu_terrain_max_ticks ||
             stats.gpu_frame_max_ticks <
                 stats.gpu_textured_cube_max_ticks ||
             stats.gpu_frame_max_ticks <
                 stats.gpu_skybox_max_ticks ||
+            stats.gpu_frame_max_ticks <
+                stats.gpu_tone_map_max_ticks ||
             stats.gpu_frame_min_ticks >
                 stats.gpu_frame_max_ticks ||
             stats.gpu_terrain_min_ticks >
@@ -1468,8 +1691,13 @@ void log_platform_event(const shark::platform::Event& event)
                 stats.gpu_textured_cube_max_ticks ||
             stats.gpu_skybox_min_ticks >
                 stats.gpu_skybox_max_ticks ||
+            stats.gpu_tone_map_min_ticks >
+                stats.gpu_tone_map_max_ticks ||
             stats.cube_draw_calls != stats.frame_submissions ||
             stats.skybox_draw_calls != stats.frame_submissions ||
+            stats.material_sphere_draw_calls !=
+                stats.frame_submissions ||
+            stats.tone_map_draw_calls != stats.frame_submissions ||
             stats.terrain_draw_calls != stats.frame_submissions ||
             stats.terrain_bounds_draw_calls !=
                 stats.frame_submissions ||
@@ -1489,7 +1717,8 @@ void log_platform_event(const shark::platform::Event& event)
                 stats.terrain_draw_calls ||
             stats.terrain_draw_calls +
                     stats.cube_draw_calls +
-                    stats.skybox_draw_calls !=
+                    stats.skybox_draw_calls +
+                    stats.tone_map_draw_calls !=
                 stats.render_graph_pass_executions ||
             stats.cube_indices !=
                 stats.cube_draw_calls * 36 ||
@@ -1502,6 +1731,8 @@ void log_platform_event(const shark::platform::Event& event)
                 stats.terrain_bounds_draw_calls * 24 ||
             stats.terrain_query_marker_indices !=
                 stats.terrain_query_marker_draw_calls * 6 ||
+            stats.material_sphere_indices !=
+                stats.material_sphere_draw_calls * 1'584 ||
             stats.terrain_vertex_count !=
                 terrain::deterministic_tile_vertex_count ||
             stats.terrain_index_count !=
@@ -1510,6 +1741,13 @@ void log_platform_event(const shark::platform::Event& event)
             stats.terrain_bounds_index_count != 24 ||
             stats.terrain_query_marker_vertex_count != 6 ||
             stats.terrain_query_marker_index_count != 6 ||
+            stats.material_sphere_vertex_count != 266 ||
+            stats.material_sphere_index_count != 1'584 ||
+            stats.image_based_lighting_frames == 0 ||
+            stats.procedural_daylight_frames == 0 ||
+            stats.image_based_lighting_frames +
+                    stats.procedural_daylight_frames !=
+                stats.frame_submissions ||
             stats.camera_constant_updates !=
                 stats.frame_submissions ||
             stats.camera_matrix_changes < 3 ||
@@ -1519,15 +1757,22 @@ void log_platform_event(const shark::platform::Event& event)
                 stats.resize_count + 1 ||
             stats.depth_read_view_creations !=
                 stats.resize_count + 1 ||
+            stats.hdr_scene_color_creations !=
+                stats.resize_count + 1 ||
+            stats.hdr_scene_color_rtv_creations !=
+                stats.resize_count + 1 ||
+            stats.hdr_scene_color_srv_creations !=
+                stats.resize_count + 1 ||
             stats.texture_bindings !=
-                stats.frame_submissions * 2 ||
+                stats.frame_submissions * 4 ||
             stats.terrain_material_bindings !=
                 stats.frame_submissions ||
             stats.static_upload_submissions != 1 ||
             stats.geometry_buffer_creations != 4 ||
             stats.checker_texture_creations != 1 ||
             stats.cubemap_texture_creations != 1 ||
-            stats.texture_srv_creations != 5 ||
+            stats.texture_srv_creations !=
+                9 + stats.resize_count + 1 ||
             stats.cubemap_srv_creations != 1 ||
             stats.cubemap_faces_uploaded != 6 ||
             stats.cubemap_mip_levels != 1 ||
@@ -1544,7 +1789,15 @@ void log_platform_event(const shark::platform::Event& event)
             stats.terrain_material_source_bytes_uploaded !=
                 terrain::material_total_source_bytes ||
             stats.terrain_material_srgb_resources != 1 ||
-            stats.persistent_texture_descriptors != 5 ||
+            stats.environment_texture_creations != 4 ||
+            stats.environment_srv_creations != 4 ||
+            stats.environment_cubemap_srv_creations != 3 ||
+            stats.environment_subresources_uploaded !=
+                assets::environment_derived_subresource_count ||
+            stats.environment_source_bytes_uploaded !=
+                assets::environment_derived_bytes ||
+            stats.environment_hdr_resources != 4 ||
+            stats.persistent_texture_descriptors != 10 ||
             stats.cubemap_srgb_resources != 1 ||
             stats.full_queue_drains != stats.resize_count + 1 ||
             stats.last_submission_fence == 0) {
@@ -1632,6 +1885,15 @@ void log_platform_event(const shark::platform::Event& event)
         summary.append(format_gpu_milliseconds(
             stats.gpu_skybox_max_ticks,
             stats.gpu_timestamp_frequency_hz));
+        summary.append(", gpu-ToneMap-ms(avg/max)=");
+        summary.append(format_gpu_milliseconds(
+            stats.gpu_tone_map_total_ticks,
+            stats.gpu_timestamp_frequency_hz,
+            stats.gpu_timing_samples));
+        summary.push_back('/');
+        summary.append(format_gpu_milliseconds(
+            stats.gpu_tone_map_max_ticks,
+            stats.gpu_timestamp_frequency_hz));
         summary.append(", terrain(solid/wire/bounds/query-marker)-draws=");
         summary.append(std::to_string(
             stats.terrain_solid_draw_calls));
@@ -1657,12 +1919,20 @@ void log_platform_event(const shark::platform::Event& event)
         summary.append(std::to_string(stats.cube_draw_calls));
         summary.push_back('/');
         summary.append(std::to_string(stats.skybox_draw_calls));
+        summary.append(", material-sphere/tone-map-draws=");
+        summary.append(std::to_string(
+            stats.material_sphere_draw_calls));
+        summary.push_back('/');
+        summary.append(std::to_string(stats.tone_map_draw_calls));
         summary.append(", camera/sky-matrix-changes=");
         summary.append(std::to_string(stats.camera_matrix_changes));
         summary.push_back('/');
         summary.append(std::to_string(stats.skybox_matrix_changes));
         summary.append(", depth-creations=");
         summary.append(std::to_string(stats.depth_resource_creations));
+        summary.append(", hdr-scene-creations=");
+        summary.append(std::to_string(
+            stats.hdr_scene_color_creations));
         summary.append(", cubemap(faces/mips/subresources/bytes)=");
         summary.append(std::to_string(stats.cubemap_faces_uploaded));
         summary.push_back('/');
@@ -1688,6 +1958,24 @@ void log_platform_event(const shark::platform::Event& event)
         summary.push_back('/');
         summary.append(std::to_string(
             stats.terrain_material_source_bytes_uploaded));
+        summary.append(", environment(resources/cube-srvs/subresources/bytes)=");
+        summary.append(std::to_string(
+            stats.environment_hdr_resources));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.environment_cubemap_srv_creations));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.environment_subresources_uploaded));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.environment_source_bytes_uploaded));
+        summary.append(", lighting-frames(ibl/procedural)=");
+        summary.append(std::to_string(
+            stats.image_based_lighting_frames));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.procedural_daylight_frames));
         summary.append(", texture-table-binds=");
         summary.append(std::to_string(stats.texture_bindings));
         core::log_message(

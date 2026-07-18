@@ -4,9 +4,9 @@
 
 TEST_CASE(
     "skybox scene data reuses the cube at untouched reversed-Z depth",
-    "[gpu][skybox]")
+    "[renderer][d3d12][gpu][skybox]")
 {
-    using namespace shark::rhi::d3d12::detail;
+    using namespace shark::renderer::d3d12::detail;
 
     REQUIRE(skybox_clip_depth == 0.0F);
     REQUIRE(skybox_clip_depth == cube_depth_clear_value);

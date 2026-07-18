@@ -6,7 +6,7 @@
 
 #include <cstdint>
 
-namespace shark::rhi::d3d12::detail {
+namespace shark::renderer::d3d12::detail {
 
 // Reversed-Z clears the depth target to zero. The skybox emits that exact far
 // depth, passes only where no nearer geometry was written, and never changes
@@ -27,4 +27,4 @@ static_assert(skybox_clip_depth == cube_depth_clear_value);
 static_assert(skybox_depth_comparison == cube_depth_comparison);
 static_assert(skybox_index_count == 36);
 
-} // namespace shark::rhi::d3d12::detail
+} // namespace shark::renderer::d3d12::detail

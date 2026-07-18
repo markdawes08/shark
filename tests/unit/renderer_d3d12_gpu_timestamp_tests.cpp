@@ -10,9 +10,9 @@
 
 TEST_CASE(
     "GPU timestamp slices partition query and readback storage exactly",
-    "[gpu][timestamps]")
+    "[renderer][d3d12][gpu][timestamps]")
 {
-    using shark::rhi::d3d12::detail::gpu_timestamp_slice;
+    using shark::renderer::d3d12::detail::gpu_timestamp_slice;
 
     const auto first = gpu_timestamp_slice(0);
     const auto second = gpu_timestamp_slice(1);
@@ -27,9 +27,9 @@ TEST_CASE(
 
 TEST_CASE(
     "GPU timing accumulation accepts ordered and zero length intervals",
-    "[gpu][timestamps]")
+    "[renderer][d3d12][gpu][timestamps]")
 {
-    using shark::rhi::d3d12::detail::GpuTimingAccumulator;
+    using shark::renderer::d3d12::detail::GpuTimingAccumulator;
 
     GpuTimingAccumulator accumulator;
     constexpr std::array<std::uint64_t, 8> first{
@@ -87,9 +87,9 @@ TEST_CASE(
 
 TEST_CASE(
     "GPU timing accumulation rejects incomplete and reversed samples",
-    "[gpu][timestamps]")
+    "[renderer][d3d12][gpu][timestamps]")
 {
-    using shark::rhi::d3d12::detail::GpuTimingAccumulator;
+    using shark::renderer::d3d12::detail::GpuTimingAccumulator;
 
     GpuTimingAccumulator accumulator;
     constexpr std::array<std::uint64_t, 7> incomplete{
@@ -126,9 +126,9 @@ TEST_CASE(
 
 TEST_CASE(
     "GPU timing accumulation preserves state when totals would overflow",
-    "[gpu][timestamps]")
+    "[renderer][d3d12][gpu][timestamps]")
 {
-    using shark::rhi::d3d12::detail::GpuTimingAccumulator;
+    using shark::renderer::d3d12::detail::GpuTimingAccumulator;
 
     GpuTimingAccumulator accumulator;
     constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();

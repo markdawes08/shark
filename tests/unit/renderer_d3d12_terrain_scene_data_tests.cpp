@@ -6,9 +6,9 @@
 
 TEST_CASE(
     "terrain input and diagnostic raster contracts match D3D12",
-    "[gpu][terrain][contract]")
+    "[renderer][d3d12][gpu][terrain][contract]")
 {
-    using namespace shark::rhi::d3d12::detail;
+    using namespace shark::renderer::d3d12::detail;
 
     STATIC_REQUIRE(terrain_vertex_stride == 24);
     STATIC_REQUIRE(terrain_input_elements.size() == 2);

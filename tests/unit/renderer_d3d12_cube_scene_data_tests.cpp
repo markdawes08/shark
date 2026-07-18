@@ -12,7 +12,7 @@
 
 namespace {
 
-using shark::rhi::d3d12::detail::CubeVertex;
+using shark::renderer::d3d12::detail::CubeVertex;
 
 [[nodiscard]] std::array<float, 3> subtract(
     const std::array<float, 3>& left,
@@ -48,7 +48,7 @@ using shark::rhi::d3d12::detail::CubeVertex;
     const std::uint32_t x,
     const std::uint32_t y) noexcept
 {
-    using namespace shark::rhi::d3d12::detail;
+    using namespace shark::renderer::d3d12::detail;
 
     const auto pixel_index =
         static_cast<std::size_t>(y) * checker_width + x;
@@ -66,9 +66,9 @@ using shark::rhi::d3d12::detail::CubeVertex;
 
 TEST_CASE(
     "cube scene geometry has exact bounded position and UV data",
-    "[gpu][cube][contract]")
+    "[renderer][d3d12][gpu][cube][contract]")
 {
-    using namespace shark::rhi::d3d12::detail;
+    using namespace shark::renderer::d3d12::detail;
 
     STATIC_REQUIRE(cube_vertices.size() == 24);
     STATIC_REQUIRE(cube_indices.size() == 36);
@@ -116,9 +116,9 @@ TEST_CASE(
 
 TEST_CASE(
     "cube indices describe twelve finite nondegenerate triangles",
-    "[gpu][cube][contract]")
+    "[renderer][d3d12][gpu][cube][contract]")
 {
-    using namespace shark::rhi::d3d12::detail;
+    using namespace shark::renderer::d3d12::detail;
 
     std::array<bool, cube_vertices.size()> referenced{};
     for (std::size_t triangle = 0;
@@ -158,9 +158,9 @@ TEST_CASE(
 
 TEST_CASE(
     "checker pixels are deterministic RGBA8 alternating texels",
-    "[gpu][cube][texture][contract]")
+    "[renderer][d3d12][gpu][cube][texture][contract]")
 {
-    using namespace shark::rhi::d3d12::detail;
+    using namespace shark::renderer::d3d12::detail;
 
     STATIC_REQUIRE(checker_width == 8);
     STATIC_REQUIRE(checker_height == 8);
@@ -190,9 +190,9 @@ TEST_CASE(
 
 TEST_CASE(
     "cube vertex and reversed-Z depth contracts match D3D12",
-    "[gpu][cube][depth][contract]")
+    "[renderer][d3d12][gpu][cube][depth][contract]")
 {
-    using namespace shark::rhi::d3d12::detail;
+    using namespace shark::renderer::d3d12::detail;
 
     STATIC_REQUIRE(cube_vertex_stride == 20);
     STATIC_REQUIRE(cube_input_elements.size() == 2);

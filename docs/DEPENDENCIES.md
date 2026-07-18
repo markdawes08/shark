@@ -62,7 +62,7 @@ the build; Shark neither links the DXC library nor deploys any DXC binary beside
 the executable. G-005 consumes the header-only DirectXMath target privately for
 the engine-owned camera, view/projection, and cube transform implementation; it
 adds no DirectXMath runtime file and exposes no DirectXMath type through the
-public camera or presentation boundary. The procedural `8x8` checker is
+public camera or renderer boundary. The procedural `8x8` checker is
 generated directly in memory, so DirectXTex remains restored but unconsumed
 until S-001. G-007 privately links `Microsoft::WinPixEventRuntime`, defines the
 retail marker path for both supported configurations, and relies on vcpkg

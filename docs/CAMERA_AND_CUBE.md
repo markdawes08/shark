@@ -1,6 +1,6 @@
 # Camera, Reversed-Z Depth, Cube, and Skybox Contract
 
-- **Completed through:** `T-002`
+- **Completed through:** `REN-001`
 - **Last verified:** July 18, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
@@ -19,7 +19,9 @@ daylight gradient, sun disk, and halo. The same fixed direction-to-sun now
 provides simple ambient-plus-Lambert terrain illumination. T-002 preserves
 every camera, matrix, depth, and input convention while adding a cyan terrain
 normal pin whose anchor and geometric direction come from the canonical
-surface query.
+surface query. REN-001 preserves those results while moving public frame input
+to `shark::renderer::RenderFrameData` and the D3D12 scene helpers behind the
+private renderer backend.
 
 This remains a deliberately narrow proof. It establishes conventions and
 lifetime rules that later sky, terrain, rain, and water passes can reuse; it is
@@ -115,7 +117,8 @@ deterministically in memory. Adjacent texels alternate between
 identifier, color-space metadata, compression, mip generation, or streaming
 behavior.
 
-Presentation records the cube and packed surface/bounds/query-marker terrain
+The private D3D12 renderer backend records the cube and packed
+surface/bounds/query-marker terrain
 vertex/index buffers, checker, and S-001 cubemap copies into one
 `StaticSceneUpload` direct-queue submission during startup. Six barriers
 transition the buffers to their input-assembler states and both textures to
@@ -158,11 +161,12 @@ buffer; this is not HDR tone mapping.
 
 The shared cube/sky root signature and immutable cube/skybox PSOs are created
 synchronously from pinned build-time DXIL. They survive swap-chain resize and are released only
-after explicit presentation shutdown drains and retires every submission.
+after explicit renderer shutdown drains and retires every submission.
 
 ## Reversed-Z depth resource
 
-Presentation owns one two-descriptor CPU-only DSV heap and one committed
+The private D3D12 renderer backend owns one two-descriptor CPU-only DSV heap
+and one committed
 `DXGI_FORMAT_D32_FLOAT` texture for the current physical extent. Slot 0 is the
 normal writable DSV and slot 1 is a `READ_ONLY_DEPTH` view. The resource:
 
@@ -183,8 +187,9 @@ Both PSOs declare `DXGI_FORMAT_D32_FLOAT` and use viewport depth `[0, 1]`.
 Back-face culling is disabled for this first proof, making the depth target
 solely responsible for hiding the cube's farther triangles.
 
-On an effective nonzero resize, presentation drains the direct queue, retires
-the reusable contexts, releases the old back buffers and depth texture, resizes
+On an effective nonzero resize, `Renderer::resize` makes the private backend
+drain the direct queue, retire the reusable contexts, release the old back
+buffers and depth texture, resize
 the swap chain, reacquires the RTVs, and creates a new matching depth texture
 a writable and read-only DSV. Minimization never creates a zero-size depth resource and never submits
 a draw or clear. A restore carrying the existing extent is a no-op.
@@ -230,7 +235,7 @@ The permanent accounting contract requires:
 - `full_queue_drains == resize_count + 1`; the static-upload fence wait is
   deliberately not counted as a full-queue drain; and
 - final DirectX validation reports no corruption, errors, discarded diagnostic
-  messages, or live presentation children.
+  messages, or live renderer-owned D3D12 children.
 
 The smoke does not read back or compare pixels. Manual acceptance requires a
 clearly textured cube, a continuous procedural daylight background with a warm
@@ -278,5 +283,5 @@ with ordered `Terrain`, `TexturedCube`, and `Skybox` passes. See
 [the DDS cubemap contract](DDS_CUBEMAP.md) for the source texture, and
 [the skybox contract](SKYBOX.md) for the visible procedural daylight rules.
 See [the terrain contract](TERRAIN.md) for its separate geometry and
-canonical query/diagnostic rendering contract. The next increment is
-`REN-001`, followed by `T-003`.
+canonical query/diagnostic rendering contract. `REN-001` was completed on
+July 18, 2026. The next increment is `T-003`, layered PBR terrain materials.

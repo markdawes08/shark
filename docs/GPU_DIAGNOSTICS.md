@@ -1,6 +1,6 @@
 # Direct3D 12 GPU Diagnostics Contract
 
-- **Completed through:** `T-002`
+- **Completed through:** `REN-001`
 - **Last verified:** July 18, 2026
 
 G-007 adds the first bounded GPU diagnostics to the existing G-006
@@ -10,7 +10,9 @@ T-001 adds the `Terrain` pass interval and expands the one-time named upload to
 the complete static scene. S-002A keeps every marker and timestamp boundary
 while changing `Skybox` to a b0-only procedural daylight draw. T-002 appends a
 cyan, query-derived line-list pin to the existing `Terrain` interval without
-adding or moving a PIX marker or timestamp.
+adding or moving a PIX marker or timestamp. REN-001 moves scene/pass policy
+and public statistics to `shark::renderer` while preserving every diagnostic
+boundary and count.
 
 The diagnostics remain fixed-capacity and fence-delayed while the visible
 contract uses three passes, seven resource imports, four attachment
@@ -51,10 +53,12 @@ constants and the retained 32-byte `FrameProbe` beginning at byte 224.
 
 ## Fixed timestamp storage
 
-The presentation object owns one direct-queue timestamp query heap with 24
-slots and one persistently mapped 192-byte readback buffer. The storage is
-partitioned into three non-overlapping slices, one for each swap-chain frame
-context:
+The private D3D12 renderer backend owns one direct-queue timestamp query heap
+with 24 slots and one persistently mapped 192-byte readback buffer. The storage
+is partitioned into three non-overlapping slices, one for each swap-chain frame
+context. REN-001 moves the fixed scene-named timestamp query layout and
+accumulator to `engine/renderer/src/d3d12`; the public results are published
+through `RendererStats`:
 
 | Frame context | Query indices | Query base | Readback byte range | Readback offset |
 |---:|---|---:|---|---:|
@@ -154,7 +158,7 @@ extra timestamp fence, or synchronous readback wait.
 
 During normal execution, `gpu_timing_samples` can temporarily trail
 `frame_submissions` because up to one result per reusable context may still be
-in flight. The presentation smoke calls `shutdown` before checking final
+in flight. The presentation smoke calls `Renderer::shutdown` before checking final
 statistics, so every submitted frame must have been consumed at that gate.
 
 ## Timing boundary definitions
@@ -192,7 +196,7 @@ mode, window state, and concurrent system work.
 
 ## Public statistics and smoke invariants
 
-`PresentationStats` exposes marker counts, bounded query accounting, the direct
+`RendererStats` exposes marker counts, bounded query accounting, the direct
 queue frequency, timing sample count, and frame/pass total, minimum, maximum,
 and last-consumed frame/terrain/cube/sky durations in ticks. "Last" follows
 context retirement order; it is not a chronological newest-submission
@@ -248,11 +252,12 @@ gpu_textured_cube_min_ticks <= gpu_textured_cube_max_ticks
 gpu_skybox_min_ticks <= gpu_skybox_max_ticks
 ```
 
-While the window is minimized, no frame submission, graph execution, frame or
-pass PIX marker, timestamp allocation, resolve batch, consumed sample, terrain
-query-marker draw, other draw, camera update, or depth clear may advance. The
-existing smoke additionally retains exactly seven imports, four graph barriers,
-16 elided transitions, and one checker-texture binding per frame.
+While the window is minimized, the smoke compares the complete `RendererStats`
+snapshot and no counter may advance. This covers frame submission, graph work,
+PIX markers, timestamp allocation/resolution/consumption, every draw, uploads,
+matrix updates, texture bindings, clears, and resource accounting. Submitted
+frames still retain exactly seven imports, four graph barriers, 16 elided
+transitions, and one checker-texture binding each.
 
 The successful smoke summary contains these reproducible fields:
 
@@ -281,6 +286,13 @@ The unit tests cover:
 - overflow rejection without partial accumulator mutation; and
 - fixed-capacity frame timestamp allocation, fence retirement, and retained
   high-water accounting.
+
+The renderer-owned production `frame_pipeline` test additionally proves the
+seven imports, `Terrain -> TexturedCube -> Skybox` callback order, exact
+resource access sets, two dependencies, four transitions, and 16 elisions.
+The scene-named timestamp tests move with the private renderer D3D12 helper.
+Generic frame-resource state and the legacy transition recorder/tests remain
+under the D3D12 RHI because those helpers contain no scene policy.
 
 The presentation smoke exercises the full runtime lifecycle on hardware and
 packaged WARP:
@@ -339,6 +351,9 @@ scheduling, transient-resource allocation, or queue selection. S-002A changes
 the sky callback's resource declarations without changing its diagnostic
 interval. T-002 adds one draw inside that existing interval; it adds no PIX
 scope, timestamp, query heap slot, graph pass, resource, dependency, or barrier.
+REN-001 moves the cube/daylight/skybox/terrain helpers into the private
+renderer D3D12 backend and removes the public D3D12 `Presentation` class; it
+does not change presentation operations, diagnostics, pixels, or accounting.
 See
 [the render-graph contract](RENDER_GRAPH.md) for pass/barrier ownership and
 [the presentation contract](GRAPHICS_PRESENTATION.md) for frame-context,
@@ -347,5 +362,5 @@ visual and orientation acceptance procedure and
 [the DDS cubemap contract](DDS_CUBEMAP.md) for the retained startup texture
 contract.
 See [the terrain contract](TERRAIN.md) for the canonical surface query,
-deterministic tile, and diagnostic rendering modes. The next increment is
-`REN-001`, followed by `T-003`.
+deterministic tile, and diagnostic rendering modes. `REN-001` was completed on
+July 18, 2026. The next increment is `T-003`, layered PBR terrain materials.

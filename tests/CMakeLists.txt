@@ -10,18 +10,20 @@ add_executable(SharkTests
     unit/camera_tests.cpp
     unit/assertion_tests.cpp
     unit/dds_cubemap_tests.cpp
-    unit/d3d12_cube_scene_data_tests.cpp
-    unit/d3d12_daylight_scene_data_tests.cpp
-    unit/d3d12_skybox_scene_data_tests.cpp
     unit/d3d12_device_contract_tests.cpp
     unit/d3d12_frame_resource_tests.cpp
-    unit/d3d12_gpu_timestamp_tests.cpp
     unit/d3d12_render_graph_executor_tests.cpp
-    unit/d3d12_terrain_scene_data_tests.cpp
     unit/engine_info_tests.cpp
     unit/logging_tests.cpp
     unit/math_tests.cpp
     unit/render_graph_tests.cpp
+    unit/renderer_contract_tests.cpp
+    unit/renderer_d3d12_cube_scene_data_tests.cpp
+    unit/renderer_d3d12_daylight_scene_data_tests.cpp
+    unit/renderer_d3d12_gpu_timestamp_tests.cpp
+    unit/renderer_d3d12_skybox_scene_data_tests.cpp
+    unit/renderer_d3d12_terrain_scene_data_tests.cpp
+    unit/renderer_frame_pipeline_tests.cpp
     unit/result_tests.cpp
     unit/sandbox_options_tests.cpp
     unit/terrain_height_tile_tests.cpp
@@ -32,6 +34,8 @@ add_executable(SharkTests
 target_include_directories(SharkTests
     PRIVATE
         "${PROJECT_SOURCE_DIR}/apps/sandbox"
+        "${PROJECT_SOURCE_DIR}/engine/renderer/src"
+        "${PROJECT_SOURCE_DIR}/engine/renderer/src/d3d12"
         "${PROJECT_SOURCE_DIR}/engine/rhi/d3d12/src"
 )
 

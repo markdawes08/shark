@@ -1,7 +1,7 @@
 # Minimal Render-Graph Contract
 
-- **Completed through:** `T-002`
-- **Presentation integration verified through:** `T-002`
+- **Completed through:** `REN-001`
+- **Renderer integration verified through:** `REN-001`
 - **Last updated:** July 18, 2026
 
 G-006 moves the existing textured-cube frame behind Shark's first render graph
@@ -12,8 +12,10 @@ input-assembler buffers. S-002A replaces cubemap sampling with a procedural
 daylight sky and removes that now-unused texture from the per-frame graph while
 retaining its startup asset proof. T-002 appends a canonical-query diagnostic
 draw to the existing `Terrain` callback and packed terrain buffers without
-changing the graph. The graph remains a small,
-platform-independent planner plus a Direct3D 12 legacy-barrier executor. It
+changing the graph. REN-001 moves the production scene composition to
+renderer-owned `engine/renderer/src/frame_pipeline.*` without changing a
+declaration or count. The graph remains a small, platform-independent planner
+plus a Direct3D 12 legacy-barrier executor. It
 proves declared resource access, deterministic dependency compilation, and
 centralized frame barriers before later work adds more passes or graph-owned
 resources.
@@ -42,6 +44,14 @@ moved-from builder so the two can never accept each other's handles. Compilation
 consumes a builder exactly once; later declarations or compilation attempts
 fail. A compiled graph is move-only and owns the callbacks moved from its
 builder.
+
+The generic graph does not know Shark's current scene. The private
+`shark::renderer::detail::compose_frame_pipeline` production composer owns the
+seven semantic external IDs, exact import names/states, typed resource bundles
+for each callback, and the `Terrain -> TexturedCube -> Skybox` declarations.
+Its focused unit test executes that production composer rather than maintaining
+a second hand-written copy of the frame graph. The private D3D12 renderer
+backend supplies the pass callbacks and native bindings.
 
 ## Declaration contract
 
@@ -152,14 +162,15 @@ Each transition resolves its external ID against the bindings supplied for the
 current execution and emits one
 `D3D12_RESOURCE_BARRIER_TYPE_TRANSITION` over
 `D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES`. A missing, duplicate, or null native
-binding fails. Presentation validates the complete binding set before graph
-execution, including resources whose transitions were elided. A no-op or
-native-equivalent transition reaching the executor also fails because the
-compiler must have elided it.
+binding fails. The private D3D12 renderer backend validates the complete
+binding set before graph execution, including resources whose transitions were
+elided. A no-op or native-equivalent transition reaching the executor also
+fails because the compiler must have elided it.
 
 The recorder requires one valid graphics command list and reports its recorded
-barrier count. Presentation cross-checks that count against both graph
-execution and compiled transition statistics before submission.
+barrier count. The private D3D12 renderer backend validates the complete
+binding set and cross-checks that count against both graph execution and
+compiled transition statistics before submission.
 
 ## Current frame graph
 
@@ -231,16 +242,18 @@ copies or the diagnostic buffer copy. The retained cubemap is not imported
 because the procedural sky neither binds nor samples it.
 
 T-001 extends the state vocabulary but retains planner/executor ownership.
-Presentation writes the
-outer frame timestamps and `Frame` PIX event outside graph execution. The
+REN-001 leaves only generic legacy-transition recording in the D3D12 RHI;
+the renderer owns pass policy and its private D3D12 backend owns the fixed
+scene-named timestamp layout/accumulator. That backend writes the outer frame
+timestamps and `Frame` PIX event outside graph execution. The
 `Terrain`, `TexturedCube`, and `Skybox` callbacks write their own timestamp
 pairs and nested PIX events inside their passes. Query allocation, resolution,
-readback, and statistics remain presentation-owned rather than automatic graph
-behavior.
+readback, and `RendererStats` updates remain renderer/backend behavior rather
+than automatic graph behavior.
 
 ## Accounting and verification
 
-`PresentationStats` adds:
+`RendererStats` exposes:
 
 - `render_graph_compilations`;
 - `render_graph_executions`;
@@ -296,15 +309,18 @@ merging, parallel command recording, secondary command lists, queue preference,
 copy/compute queue activation, async compute, cross-queue fences, or enhanced
 barriers.
 
-It also adds no renderer scene extraction, public scene API, material system,
+REN-001 adds only the focused public renderer configuration/frame boundary. It
+adds no renderer scene extraction, generalized scene/ECS API, material system,
 typed RHI resource handles, PSO cache, shader reflection, timing HUD, or
 automatic graph-owned PIX/timestamp instrumentation. Graph compilation is
 intentionally frame-local and serial. T-001's three named GPU intervals use the
-existing presentation and callback boundaries without broadening this graph
+existing renderer and callback boundaries without broadening this graph
 contract. S-002A changes only the sky's declared inputs and the exact import
 and elision counts; it adds no pass, transition, or scheduler behavior. T-002
 changes only commands inside `Terrain`; it adds no import, pass, dependency,
-transition, scheduler behavior, PIX event, or timestamp.
+transition, scheduler behavior, PIX event, or timestamp. REN-001 moves
+production composition and scene helpers to the renderer but deliberately adds
+no feature or accounting change.
 
 See [the presentation and frame-resource contract](GRAPHICS_PRESENTATION.md)
 for submission and resize ownership, [the HLSL pipeline contract](GRAPHICS_PIPELINE.md)
@@ -313,6 +329,6 @@ for the commands recorded by the graphics passes, and
 [the skybox contract](SKYBOX.md) for the procedural daylight background and
 [the terrain contract](TERRAIN.md) for the first pass and input-assembler
 declarations, and
-[the GPU diagnostics contract](GPU_DIAGNOSTICS.md) for the presentation-owned
-PIX-marker/timestamp-query lifecycle. The next increment is `REN-001`, followed
-by `T-003`.
+[the GPU diagnostics contract](GPU_DIAGNOSTICS.md) for the renderer/backend
+PIX-marker/timestamp-query lifecycle. `REN-001` was completed on July 18, 2026.
+The next increment is `T-003`, layered PBR terrain materials.

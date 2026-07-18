@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <type_traits>
 
-namespace shark::rhi::d3d12::detail {
+namespace shark::renderer::d3d12::detail {
 
 struct CubeVertex final {
     std::array<float, 3> position{};
@@ -149,4 +149,4 @@ inline constexpr D3D12_RESOURCE_FLAGS cube_depth_resource_flags =
 inline constexpr D3D12_RESOURCE_STATES cube_depth_resource_state =
     D3D12_RESOURCE_STATE_DEPTH_WRITE;
 
-} // namespace shark::rhi::d3d12::detail
+} // namespace shark::renderer::d3d12::detail

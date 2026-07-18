@@ -8,16 +8,18 @@
 #include <memory>
 
 namespace shark::rhi::d3d12 {
-
 class Device;
+}
 
-struct PresentationExtent final {
+namespace shark::renderer {
+
+struct RenderExtent final {
     std::uint32_t width{};
     std::uint32_t height{};
 
     [[nodiscard]] friend bool operator==(
-        const PresentationExtent&,
-        const PresentationExtent&) noexcept = default;
+        const RenderExtent&,
+        const RenderExtent&) noexcept = default;
 };
 
 struct ClearColor final {
@@ -48,7 +50,7 @@ struct TextureSubresourceDataView final {
 
 // Subresources are ordered face-major, then mip-minor:
 // +X mips, -X mips, +Y mips, -Y mips, +Z mips, -Z mips.
-// Presentation consumes these borrowed views synchronously during create().
+// Renderer consumes these borrowed views synchronously during create().
 struct TextureCubeUploadView final {
     std::uint32_t width{};
     std::uint32_t height{};
@@ -79,9 +81,9 @@ struct TerrainMeshUploadView final {
     std::size_t query_marker_index_count{};
 };
 
-// Temporary LDR daylight controls for the bootstrap presentation boundary.
+// Temporary LDR daylight controls for the environment renderer boundary.
 // Six float4-compatible rows are copied directly after the two camera matrices
-// in b0. REN-001 will move this scene policy out of the D3D12 presentation API.
+// in b0.
 struct alignas(16) DaylightSettings final {
     // Unit vector from a shaded surface or sky sample toward the sun.
     math::Float3 direction_to_sun{
@@ -115,12 +117,12 @@ enum class TerrainRenderMode : std::uint8_t {
     wireframe,
 };
 
-struct PresentationConfig final {
+struct RendererConfig final {
     void* native_window{};
-    PresentationExtent extent{1280, 720};
+    RenderExtent extent{1280, 720};
     ClearColor clear_color{};
-    ShaderBytecodeView vertex_shader{};
-    ShaderBytecodeView pixel_shader{};
+    ShaderBytecodeView textured_cube_vertex_shader{};
+    ShaderBytecodeView textured_cube_pixel_shader{};
     ShaderBytecodeView skybox_vertex_shader{};
     ShaderBytecodeView skybox_pixel_shader{};
     ShaderBytecodeView terrain_vertex_shader{};
@@ -130,19 +132,19 @@ struct PresentationConfig final {
     bool synchronize_to_vertical_refresh{true};
 };
 
-struct PresentationFrameData final {
+struct RenderFrameData final {
     math::Matrix4x4 view_projection{};
     math::Matrix4x4 sky_view_projection{};
     DaylightSettings daylight{};
     TerrainRenderMode terrain_mode{TerrainRenderMode::solid};
 };
 
-enum class PresentStatus : std::uint8_t {
+enum class RenderStatus : std::uint8_t {
     presented = 1,
     occluded,
 };
 
-struct PresentationStats final {
+struct RendererStats final {
     std::uint64_t presented_frames{};
     std::uint64_t occluded_frames{};
     std::uint64_t resize_count{};
@@ -232,38 +234,45 @@ struct PresentationStats final {
     std::uint64_t persistent_texture_descriptors{};
     std::uint64_t cubemap_srgb_resources{};
     std::uint64_t last_submission_fence{};
+
+    [[nodiscard]] friend bool operator==(
+        const RendererStats&,
+        const RendererStats&) noexcept = default;
 };
 
-// Device and the native window must both outlive Presentation. All methods
-// must be called from the thread that owns the native window.
-class Presentation final {
+// Renderer owns environment-pass policy and statistics. Its current private
+// backend is Direct3D 12, selected explicitly at the composition root without
+// exposing native D3D12, DXGI, WRL, or Win32 types through this header.
+// Device and the native window must both outlive Renderer. All methods must be
+// called from the thread that owns the native window.
+class Renderer final {
 public:
-    Presentation(const Presentation&) = delete;
-    Presentation& operator=(const Presentation&) = delete;
-    Presentation(Presentation&&) noexcept;
-    Presentation& operator=(Presentation&&) noexcept;
-    ~Presentation();
+    Renderer(const Renderer&) = delete;
+    Renderer& operator=(const Renderer&) = delete;
+    Renderer(Renderer&&) noexcept;
+    Renderer& operator=(Renderer&&) noexcept;
+    ~Renderer();
 
-    [[nodiscard]] static core::Result<Presentation> create(
-        Device& device,
-        const PresentationConfig& config);
+    [[nodiscard]] static core::Result<Renderer> create(
+        rhi::d3d12::Device& device,
+        const RendererConfig& config);
 
-    [[nodiscard]] core::Result<PresentStatus> present_frame(
-        const PresentationFrameData& frame_data);
-    [[nodiscard]] core::Result<void> resize(PresentationExtent extent);
+    [[nodiscard]] core::Result<RenderStatus> render_frame(
+        const RenderFrameData& frame_data);
+    [[nodiscard]] core::Result<void> resize(RenderExtent extent);
     [[nodiscard]] core::Result<void> shutdown();
 
-    [[nodiscard]] PresentationExtent extent() const noexcept;
-    [[nodiscard]] const PresentationStats& stats() const noexcept;
+    [[nodiscard]] RenderExtent extent() const noexcept;
+    [[nodiscard]] const RendererStats& stats() const noexcept;
     [[nodiscard]] bool is_shutdown() const noexcept;
 
 private:
     class Implementation;
 
-    explicit Presentation(
+    explicit Renderer(
         std::unique_ptr<Implementation> implementation) noexcept;
 
     std::unique_ptr<Implementation> implementation_;
 };
 
-} // namespace shark::rhi::d3d12
+} // namespace shark::renderer

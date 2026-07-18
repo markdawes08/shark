@@ -1,7 +1,7 @@
 #include "daylight_scene_data.hpp"
 
 #include <shark/core/math.hpp>
-#include <shark/rhi/d3d12/presentation.hpp>
+#include <shark/renderer/renderer.hpp>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -37,10 +37,10 @@ void require_approximately_equal(
     REQUIRE(actual.z == Catch::Approx(expected.z).margin(0.00001F));
 }
 
-[[nodiscard]] shark::rhi::d3d12::DaylightSettings
+[[nodiscard]] shark::renderer::DaylightSettings
 reference_daylight() noexcept
 {
-    return shark::rhi::d3d12::DaylightSettings{
+    return shark::renderer::DaylightSettings{
         .direction_to_sun = {0.6F, 0.8F, 0.0F},
         .sun_disk_outer_cosine = 0.995F,
         .sun_color = {1.0F, 0.8F, 0.6F},
@@ -60,9 +60,9 @@ reference_daylight() noexcept
 
 TEST_CASE(
     "daylight settings retain the exact six-row shader layout",
-    "[gpu][daylight][layout]")
+    "[renderer][d3d12][gpu][daylight][layout]")
 {
-    using shark::rhi::d3d12::DaylightSettings;
+    using shark::renderer::DaylightSettings;
 
     STATIC_REQUIRE(std::is_standard_layout_v<DaylightSettings>);
     STATIC_REQUIRE(std::is_trivially_copyable_v<DaylightSettings>);
@@ -97,10 +97,11 @@ TEST_CASE(
 
 TEST_CASE(
     "default daylight settings define a finite above-horizon sun",
-    "[gpu][daylight][contract]")
+    "[renderer][d3d12][gpu][daylight][contract]")
 {
     using namespace shark;
-    using namespace rhi::d3d12;
+    using renderer::DaylightSettings;
+    using namespace renderer::d3d12;
 
     const DaylightSettings settings;
     REQUIRE(detail::valid_daylight_settings(settings));
@@ -126,10 +127,11 @@ TEST_CASE(
 
 TEST_CASE(
     "daylight validation rejects malformed directions and parameters",
-    "[gpu][daylight][validation]")
+    "[renderer][d3d12][gpu][daylight][validation]")
 {
     using namespace shark;
-    using namespace rhi::d3d12;
+    using renderer::DaylightSettings;
+    using namespace renderer::d3d12;
 
     auto settings = reference_daylight();
     REQUIRE(detail::valid_daylight_settings(settings));
@@ -192,10 +194,10 @@ TEST_CASE(
 
 TEST_CASE(
     "procedural daylight sky has deterministic continuous anchors",
-    "[gpu][daylight][sky]")
+    "[renderer][d3d12][gpu][daylight][sky]")
 {
     using namespace shark;
-    using namespace rhi::d3d12;
+    using namespace renderer::d3d12;
 
     const auto settings = reference_daylight();
     require_approximately_equal(
@@ -242,10 +244,10 @@ TEST_CASE(
 
 TEST_CASE(
     "daylight illumination shares the sky sun direction",
-    "[gpu][daylight][lighting]")
+    "[renderer][d3d12][gpu][daylight][lighting]")
 {
     using namespace shark;
-    using namespace rhi::d3d12;
+    using namespace renderer::d3d12;
 
     const auto settings = reference_daylight();
     const auto facing_sun =

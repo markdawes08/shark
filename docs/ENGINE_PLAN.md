@@ -3,17 +3,17 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 18, 2026
-- **Latest completed:** `T-002` - canonical terrain spatial queries
-- **Next increment:** `REN-001` - separate renderer orchestration from D3D12
+- **Latest completed:** `REN-001` - renderer orchestration separated from D3D12 RHI
+- **Next increment:** `T-003` - layered PBR terrain materials
 
 ## 1. Project direction
 
 Shark will be a Windows-first 3D graphics and physics simulation engine built
-directly on modern Direct3D 12. It is not initially a general-purpose game
-engine. The near-term product is an **Environment Lab**: a small executable in
-which we can fly a camera through a sky, inspect textured terrain, turn rain on
-and off, collide objects with the terrain, and evolve visually convincing water
-into a physically meaningful surface-water simulation.
+directly on modern Direct3D 12. It will not become a general-purpose or
+RAGE-scale engine. The near-term product is an **Environment Lab**: a small
+executable in which we can fly a camera through a sky, inspect textured terrain,
+turn rain on and off, collide objects with the terrain, and evolve visually
+convincing water into a physically meaningful surface-water simulation.
 
 The first vertical slice, **Environment Lab 0.1**, will contain:
 
@@ -36,8 +36,54 @@ The next slice, **Simulation Lab 0.2**, will add:
 
 The later **Coupled World 0.3** slice will add measured rainfall feeding water,
 runoff between terrain tiles, buoyancy, and eventually two-way water/body
-coupling. Controllable characters, animation, an editor, scripting, and broader
-game systems come after this environment foundation is stable.
+coupling. San Andreas-class character, vehicle, world-streaming, population,
+mission, audio, and interface systems may come only after this environment
+foundation is stable.
+
+### Long-term capability ceiling
+
+Shark's outward feature breadth is deliberately capped at a **San
+Andreas-class local open-world sandbox**: the category and approximate scale of
+runtime capabilities demonstrated by the original *Grand Theft Auto: San
+Andreas* shipped experience, implemented independently with modern technology.
+This is a scope boundary, not a promise to reproduce that game feature for
+feature.
+
+Within that ceiling, later proposals may cover:
+
+- a region-scale world with streamed outdoor, urban, rural, and limited
+  interior cells, plus LOD and culling;
+- day/night, weather, terrain, water, particles, props, skinned characters,
+  and ordinary environmental effects;
+- one authoritative local simulation with controllable third-person
+  characters, bounded pedestrians and traffic, and simple interaction/combat;
+- arcade-style road, bicycle, rail, water, and air vehicles with enter/exit
+  behavior;
+- animation, collision, character, rigid-body, and vehicle physics sufficient
+  for those systems; and
+- bounded mission/event scripting, save/load, map/HUD, input, audio/radio, and
+  focused content-authoring tools.
+
+This ceiling limits **feature breadth**, not implementation quality. Shark may
+use C++20, Direct3D 12, PBR materials, HDR lighting, higher precision,
+deterministic tests, modern accessibility and input practices, current asset
+formats, and stronger diagnostics. It does not intentionally reproduce
+PlayStation 2 limitations.
+
+The reference is the shipped functional envelope, not a claim that stock
+RenderWare supplied every system. Commercial games commonly layered
+game-specific technology and content pipelines over middleware. Shark will not
+seek RenderWare, Rockstar, or *Grand Theft Auto* source, asset, binary, plug-in,
+save, map, or mod compatibility.
+
+The current goalpost is unchanged. Every milestone through M7, including the
+bounded shallow-water and coupling work, remains approved. Those systems may be
+more physically honest internally than their historical visual counterparts,
+and the M6-M7 fluid depth is an explicitly retained Shark specialization even
+where it exceeds the shipped game's simulation depth. It stays bounded to the
+already-approved categories of terrain, weather, surface water, and body
+interaction; it does not authorize volumetric oceans, planet-scale simulation,
+or a broader general-purpose engine.
 
 ## 2. Working agreement
 
@@ -95,12 +141,13 @@ Architecture Decision Record (ADR) explaining why.
 | Language | C++20 with MSVC `14.50` LTS (`v145`) strict conformance | Modern facilities on a three-year LTS compiler family |
 | Windowing | Native Win32 | Minimal dependency surface and direct DXGI integration |
 | Build | CMake 4.2+, `Visual Studio 18 2026` generator, and vcpkg registry commit `f87344cac03158cbf1467264565f1fd36b382a24` | Reproducible command-line and Visual Studio builds |
-| Graphics API | Direct3D 12 through a narrow typed RHI | Keeps D3D objects below the renderer without inventing an unneeded Vulkan abstraction |
+| Graphics API | Direct3D 12 behind a narrow Renderer/RHI boundary; typed resource handles remain future work | Keeps native D3D objects private without inventing an unneeded Vulkan abstraction |
+| Product scope | San Andreas-class local sandbox feature ceiling, with the current environment/simulation milestones retained | Prevents drift toward a RAGE-scale or general-purpose engine while allowing modern implementation |
 | Runtime | Retail DirectX 12 Agility SDK `1.619.4`, pinned in `F-002` | Current stable D3D12 runtime; preview SDKs stay off `main` |
 | Shaders | HLSL compiled to DXIL by retail DXC `1.9.2602.24`, pinned in `F-002` | Reproducible Shader Model 6 builds and PIX source debugging |
 | Required GPU baseline | Feature Level 12_0+ and Shader Model 6.0+ | Runs the first environment on a broad D3D12 hardware base with conventional descriptor tables |
 | Modern GPU profile | Shader Model 6.6+ and Resource Binding Tier 3, capability-gated | Enables direct descriptor-heap indexing when material scale justifies a bindless path |
-| Ultimate features | Feature-query and enable individually | Feature Level 12_2, DXR, mesh shaders, VRS, and sampler feedback are enhancements, not startup dependencies |
+| Optional GPU techniques | Feature-query and enable individually only for an approved requirement | Feature Level 12_2, DXR, mesh shaders, VRS, and sampler feedback are internal options, never reasons to expand product scope |
 | Barriers | Enhanced barriers when supported, legacy encoder fallback | Enhanced barriers are optional at the driver level |
 | Rendering | Forward raster first, evolving to clustered Forward+ when needed | Sky, terrain, rain, and water do not justify a deferred renderer initially |
 | Simulation | Fixed 60 Hz tick with render interpolation | Stable physics behavior independent of rendering frame rate |
@@ -194,7 +241,7 @@ flowchart TD
     Fluids[Fluids: water depth and momentum]
     Renderer[Renderer: passes and scene extraction]
     Graph[Render/Compute Graph]
-    RHI[RHI/D3D12: device, queues, resources, descriptors]
+    RHI[RHI/D3D12: device, caps, generic backend helpers]
     Diagnostics[Diagnostics: tests, captures, timings]
 
     App --> Core
@@ -214,6 +261,7 @@ flowchart TD
     Terrain --> Renderer
     Fluids --> Graph
     Renderer --> Graph
+    Renderer --> RHI
     Graph --> RHI
     Assets --> Renderer
     Simulation -. telemetry .-> Diagnostics
@@ -226,9 +274,9 @@ flowchart TD
 |---|---|---|
 | `Core` | logging, assertions, results, time, IDs, math conventions, seeded RNG | window, D3D12, scene policy |
 | `Platform/Windows` | Win32 window, messages, input, timing, file watching | renderer or simulation state |
-| `RHI/D3D12` | DXGI, device, queues, fences, swap chain, heaps, descriptors, command lists, PSOs | terrain, weather, physics concepts |
+| `RHI/D3D12` | device/capability/debug boundary plus generic frame-resource, device-access, and legacy-transition helpers | terrain, weather, physics, or scene-pass/timing policy |
 | `RenderGraph` | pass/resource declarations, order, barriers, lifetimes, queue synchronization | scene mutation or gameplay decisions |
-| `Renderer` | frame pipeline, camera data, sky/terrain/water/rain passes, debug views | authoritative physics or fluid state |
+| `Renderer` | public renderer config/frame/status/stats, production frame pipeline, camera data, sky/terrain/water/rain passes, debug views, and private D3D12 presentation backend | authoritative physics or fluid state |
 | `Assets` | CPU asset records, loading, derived-data keys, shader artifacts | frame scheduling |
 | `World` | transforms, cameras, lights, scenario state, immutable frame snapshots | raw GPU resources |
 | `Simulation` | fixed clock, subsystem order, input/output exchange, snapshot publication | rendering passes or subsystem internals |
@@ -238,15 +286,24 @@ flowchart TD
 | `Fluids` | water depth/momentum, solver, conservation accounting, coupling | presentation or material decisions |
 | `Diagnostics` | tests, scenario capture, debug HUD, timings, validation output | production simulation policy |
 
-Through T-002, the bootstrap `RHI/D3D12::Presentation` class still combines
-renderer pass orchestration with low-level D3D12 ownership inherited from the
-first-pixel increments. The platform-independent `HeightTileSurface` owns a
-validated canonical tile and cached bounds; height, exact triangle-normal,
-bounds, and ray queries never read the smooth render mesh or a D3D12 resource.
-Only derived presentation data and the query-derived diagnostic pin cross into
-the bootstrap renderer. This placement is not the durable architecture:
-`REN-001` must move pass-specific configuration, statistics, and orchestration
-behind the `Renderer` boundary before terrain materials expand it.
+REN-001 completes the first durable renderer boundary. The public move-only
+`shark::renderer::Renderer` owns `RendererConfig`, `RenderFrameData`,
+`RenderStatus`, and `RendererStats`; the sandbox passes the existing
+`shark::rhi::d3d12::Device` only at the composition root. There is no public
+D3D12 `Presentation` class. Presentation and swap-chain operations continue in
+the private `engine/renderer/src/d3d12` backend.
+
+The renderer-owned production `frame_pipeline` composes the exact seven
+imports and `Terrain -> TexturedCube -> Skybox` passes. Cube, daylight, skybox,
+and terrain scene helpers also live under the private renderer D3D12 backend.
+The renderer D3D12 backend owns the fixed scene-named timestamp query layout
+and accumulator. The D3D12 RHI retains device access, generic frame-resource
+state, and legacy transition recording without owning scene policy.
+
+The platform-independent `HeightTileSurface` still owns a validated canonical
+tile and cached bounds; height, exact triangle-normal, bounds, and ray queries
+never read the smooth render mesh or a D3D12 resource. Only derived render data
+and the query-derived diagnostic pin cross into `Renderer`.
 
 ### Non-negotiable ownership rules
 
@@ -333,7 +390,8 @@ unstable circular solve; iterative two-way coupling is a later milestone.
 ### Resources and descriptors
 
 - Expose typed generational handles such as `BufferHandle`, `TextureHandle`,
-  `SamplerHandle`, and `PipelineHandle`; raw COM pointers stay in `RHI/D3D12`.
+  `SamplerHandle`, and `PipelineHandle`; raw COM pointers stay below the public
+  renderer boundary in the D3D12 RHI or private renderer D3D12 backend.
 - Start with committed resources and simple correctness. Add placed-resource
   pools and aliasing only after telemetry shows value.
 - Keep persistent resources separate from graph-transient resources.
@@ -361,7 +419,7 @@ unstable circular solve; iterative two-way coupling is a later milestone.
 - Begin with a small shared root-signature convention using descriptor tables and
   frame/pass constants. Direct heap indexing becomes a separate capability-gated
   increment only after Shader Model 6.6, Binding Tier 3, and a real scale need are
-  confirmed. S-002A's bootstrap frame CBV contains the row-major scene and
+  confirmed. S-002A's frame CBV contains the row-major scene and
   translation-free sky matrices plus six packed daylight rows and is visible
   to vertex and pixel stages. The checker cube separately retains one
   single-SRV descriptor table and static sampler. This is not yet a versioned
@@ -370,7 +428,7 @@ unstable circular solve; iterative two-way coupling is a later milestone.
   flags, compiler version, and root-signature version.
 - Cache immutable PSOs by structural hash; never compile a surprise PSO in the
   middle of a render pass. G-005 creates one immutable cube/depth PSO
-  synchronously during presentation startup; generalized artifact keys and PSO
+  synchronously during renderer startup; generalized artifact keys and PSO
   caching remain later. S-002 creates a second immutable skybox PSO from pinned
   build-time DXIL and never compiles pipeline state inside the frame loop.
 - Add development hot reload only after the offline build pipeline is reliable.
@@ -422,8 +480,9 @@ across resources or frames.
 1. Load a small DDS cubemap and render it without camera translation (**V**).
 2. Add HDR cubemap conversion, diffuse irradiance, and specular prefiltering for
    image-based lighting (**V**).
-3. Add sun/atmosphere and volumetric clouds only after terrain, rain, and water
-   are stable (**V/S**, later research).
+3. Improve the bounded analytic sky and fog only when an approved scene needs
+   it (**V**). Volumetric cloud and atmosphere simulation stay outside the
+   default scope.
 
 ### Terrain and textures
 
@@ -479,8 +538,9 @@ readback exists for focused tests, never as a normal per-frame dependency.
 
 This model supports puddles, terrain runoff, rivers, and flooding. It does not
 support overturning waves, jets, breaking ocean waves, or fine volumetric
-splashes. FLIP, SPH, or a full 3D Navier-Stokes solver is a separate future
-research program.
+splashes. FLIP, SPH, and full 3D Navier-Stokes solvers are outside Shark's
+default scope and would require an explicit owner-approved plan amendment, not
+an assumed future milestone.
 
 Coupling proceeds in this order:
 
@@ -509,7 +569,7 @@ architecture folders are not committed merely to make the tree look complete.
 |   |-- platform/windows/
 |   |-- rhi/d3d12/
 |   |-- render_graph/
-|   |-- renderer/
+|   |-- renderer/              # Public Renderer and private D3D12 scene backend
 |   |-- assets/
 |   |-- world/
 |   |-- simulation/
@@ -596,7 +656,7 @@ the debug layer and readable in a PIX capture.
 | `T-001` | V | Render one deterministic height tile in solid and wireframe modes with inspectable normals/bounds | `feat(terrain): render a heightmapped tile` |
 | `S-002A` | V | Replace the diagnostic cubemap's visible RGB with a continuous procedural LDR daylight gradient, soft sun disk/halo, and the same unshadowed ambient-plus-Lambert sun direction on terrain; retain the far-depth sky technique and return immediately to terrain queries | `feat(sky): add procedural daylight and sun` |
 | `T-002` | - | Add exact height, normal, bounds, and ray queries; a marker rests on the visible LOD0 triangle surface | `feat(terrain): add canonical terrain queries` |
-| `REN-001` | - | Move scene-pass configuration, statistics, and orchestration out of the bootstrap D3D12 presentation class and behind the `Renderer` boundary without changing pixels or smoke accounting | `refactor(render): separate renderer orchestration from D3D12 RHI` |
+| `REN-001` | - | Complete: move scene-pass configuration, statistics, helpers, and production orchestration behind the public `Renderer` boundary without changing pixels or smoke accounting | `refactor(render): separate renderer orchestration from D3D12 RHI` |
 | `T-003` | V | Blend PBR albedo/normal/roughness texture arrays by slope/height or weights with normal/material debug views | `feat(terrain): add layered PBR materials` |
 | `S-003` | V | Add HDR environment conversion plus diffuse/specular IBL and verify it on terrain and one material sphere | `feat(sky): add image-based environment lighting` |
 | `T-004` | V | Split the full-resolution terrain into several chunks and add frustum culling with visible bounds/counts | `feat(terrain): add chunk culling` |
@@ -680,39 +740,89 @@ Image tests and GPU numeric comparisons use documented tolerances because driver
 and floating-point execution differ across GPU vendors. Simulation scenarios use
 fixed seeds and record their configuration so failures can be replayed.
 
-## 12. Features deliberately deferred
+## 12. Capability ceiling and deferred systems
 
-The following are valuable, but none belongs on the critical path to the coupled
-environment:
+The San Andreas-class ceiling is a maximum envelope, not a backlog. Nothing in
+this section competes with the coupled-environment critical path through M7.
 
-- editor, scripting, plugins, networking, audio, and character animation;
-- custom allocators, a job system, parallel command recording, and async compute;
-- arbitrary convex collision, GJK/EPA, continuous collision, destruction, and
-  soft bodies;
-- procedural atmosphere, volumetric clouds, ocean simulation, erosion, FLIP,
-  SPH, and full 3D Navier-Stokes fluids;
-- virtual texturing, DirectStorage, mesh-shader terrain, sampler feedback, VRS,
-  DXR, and work graphs.
+### Admission rule for future proposals
 
-Advanced DirectX features enter through a measured experiment with a baseline
-comparison, capability check, fallback policy, PIX capture, and an ADR. "Latest"
-means using current stable tools and the best API for a demonstrated problem,
-not accumulating feature checkboxes.
+A new capability enters the roadmap only when:
+
+1. it directly advances an existing M1-M7 gate or maps to one of the
+   San Andreas-class categories below;
+2. it remains bounded to Shark's local, region-scale product model;
+3. any modern GPU or simulation technique serves that approved behavior rather
+   than becoming a new product goal; and
+4. it can be divided into small increments with observable acceptance gates.
+
+If a proposal fails or ambiguously satisfies that test, it stays out until the
+owner explicitly amends this plan.
+
+### Eligible only after the coupled environment
+
+Later proposals are eligible for planning when they directly support one of
+these bounded outcomes:
+
+- streamed region cells, exterior/interior transitions, culling, and visual
+  LOD;
+- stable entity handles, scenario/save serialization, and one authoritative
+  local world;
+- a third-person controller, skeletal animation, basic interactions, inventory,
+  and combat;
+- arcade-style vehicle handling, enter/exit behavior, and the road, bicycle,
+  rail, boat, and aircraft categories;
+- bounded pedestrian, traffic, navigation, and simple behavior systems;
+- mission/event scripting, HUD/map, audio, radio playback, and save/load; or
+- focused import, scenario, world-cell, and mission-authoring tools.
+
+Each still requires its own small roadmap increments and acceptance tests. The
+list defines what may eventually be proposed; it commits Shark to none of them
+yet.
+
+### Explicitly outside the planned product
+
+- networked multiplayer, replication, matchmaking, user accounts, live-service
+  infrastructure, or an online economy;
+- a general-purpose commercial editor, plug-in marketplace, arbitrary game
+  genres, or a public compatibility layer for another engine;
+- infinite procedural or planet-scale worlds, massively simulated societies,
+  or unbounded crowds and traffic;
+- fully destructible environments, production soft bodies, cinematic
+  destruction, or general volumetric physics;
+- procedural atmosphere as a product pillar, volumetric cloud simulation,
+  erosion, ocean simulation, FLIP, SPH, or full 3D Navier-Stokes fluids;
+- VR/AR, photorealistic RAGE-class feature chasing, or hardware feature
+  checklists that do not solve an approved San Andreas-class requirement; and
+- proprietary Rockstar/RenderWare formats, assets, code, behavior cloning, or
+  binary/mod/save compatibility.
+
+Custom allocators, a job system, parallel command recording, async compute,
+arbitrary convex collision, GJK/EPA, CCD, virtual texturing, DirectStorage,
+mesh shaders, sampler feedback, VRS, DXR, and work graphs are implementation
+options rather than product goals. Any one may enter only through a measured
+need from an approved system, with a baseline comparison, capability check,
+fallback policy, tests, PIX evidence where relevant, and an ADR. "Modern" means
+using current stable tools and the smallest sound technique for the approved
+problem, not accumulating feature checkboxes.
 
 ### Eventual controllable-entity path
 
 The current `World` boundary deliberately leaves room for controllable entities
-without requiring an ECS now. After M7, the likely progression is stable entity
-handles and scenario serialization, then a capsule-based character controller
-using existing terrain/physics/fluid queries, then glTF skeletal meshes and
-animation, and finally behavior or scripting. An ECS is adopted only if measured
-entity scale or query patterns make it useful.
+without requiring an ECS now. After M7, the likely dependency order is stable
+entity handles and scenario/save serialization; streamed world cells; a
+capsule-based third-person controller using the existing terrain, physics, and
+fluid queries; glTF skeletal meshes and animation; arcade vehicles and
+enter/exit behavior; bounded pedestrian and traffic populations; and finally
+mission/event scripting, HUD, and audio. An ECS is adopted only if measured
+entity scale or query patterns make it useful. A general-purpose editor or
+online architecture is not implied.
 
 ## 13. Principal risks and controls
 
 | Risk | Control |
 |---|---|
-| Scope explosion | One behavior and one acceptance gate per increment; defer volumetric fluid, clouds, erosion, editor, and characters |
+| Scope explosion | Enforce the San Andreas-class feature-breadth ceiling, require one behavior and one acceptance gate per increment, and amend this plan before adding a new system category |
 | D3D12 lifetime/synchronization bugs | One queue first, centralized graph/barriers, fence retirement, debug layer, GPU validation, DRED |
 | Preview API churn | Pin retail Agility/DXC on `main`; experiments stay isolated |
 | Hardware differences | Startup capability report, explicit adapter choice, WARP smoke, multi-vendor tolerance tests |
@@ -726,26 +836,28 @@ entity scale or query patterns make it useful.
 
 ## 14. Immediate next increment
 
-After `T-002` is reviewed and committed by the owner, implement only
-`REN-001`:
+The San Andreas-class scope amendment does not change the current goalpost.
+After `REN-001` is reviewed and committed by the owner, implement only `T-003`:
 
-- move scene-pass configuration, statistics, and orchestration out of the
-  bootstrap D3D12 presentation class and behind the `Renderer` boundary;
-- preserve the `Terrain -> TexturedCube -> Skybox` order, pixels, public
-  behavior, smoke accounting, resource lifetimes, PIX names, and timestamp
-  boundaries exactly;
-- keep `HeightTileSurface` and all authoritative terrain queries independent of
-  rendering and D3D12; and
-- stop before PBR materials, new passes, new renderer features, or performance
-  restructuring.
+- add bounded terrain albedo, normal, and roughness material layers through the
+  public `Renderer` boundary and private D3D12 backend;
+- blend those layers with deterministic slope/height rules or explicit weights
+  and provide material/normal diagnostic views;
+- preserve `HeightTileSurface` as the authoritative query/collision surface;
+- update descriptor, texture, graph, draw, PIX, timestamp, and smoke contracts
+  for only the resources that T-003 intentionally adds; and
+- stop before HDR image-based lighting (`S-003`), terrain chunking/culling,
+  visual LOD, streaming, weather interaction, or physics.
 
-`T-002` completes the canonical terrain-query foundation and its visible cyan
-normal-pin proof. `REN-001` is intentionally a no-pixel/no-accounting
-architecture increment. After it is committed, `T-003` adds the first layered
-PBR terrain materials.
+`REN-001` completed the no-pixel/no-accounting architecture cleanup on
+July 18, 2026. `T-003` now adds the first visible layered PBR terrain
+materials through that boundary.
 
 ## 15. Primary technical references
 
+- [Official Grand Theft Auto: San Andreas manual](https://media.rockstargames.com/rockstargames-newsite/img/manuals/en_us/GTA_SA_PS3_MANUAL_ENG.pdf)
+- [Official Rockstar San Andreas game tips](https://support.rockstargames.com/articles/45AsV3RgyoHZqpsHgDppXu/game-tips-for-gta-san-andreas-special-ed)
+- [EA/Criterion retrospective on technology layered over RenderWare 3.x](https://www.ea.com/news/frostbite-software-engineer-alex-fry)
 - [DirectX 12 Agility SDK releases](https://devblogs.microsoft.com/directx/directx12agility/)
 - [Getting started with the Agility SDK](https://devblogs.microsoft.com/directx/gettingstarted-dx12agility/)
 - [Microsoft Direct3D WARP package](https://www.nuget.org/packages/Microsoft.Direct3D.WARP)

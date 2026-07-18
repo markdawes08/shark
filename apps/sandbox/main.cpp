@@ -5,7 +5,7 @@
 #include <shark/platform/application.hpp>
 #include <shark/platform/events.hpp>
 #include <shark/rhi/d3d12/device.hpp>
-#include <shark/rhi/d3d12/presentation.hpp>
+#include <shark/renderer/renderer.hpp>
 #include <shark/terrain/height_tile.hpp>
 #include <shark/world/camera.hpp>
 
@@ -98,17 +98,17 @@ public:
     return output.str();
 }
 
-[[nodiscard]] constexpr shark::rhi::d3d12::PresentationExtent
-to_presentation_extent(
+[[nodiscard]] constexpr shark::renderer::RenderExtent
+to_render_extent(
     const shark::platform::WindowExtent extent) noexcept
 {
-    return shark::rhi::d3d12::PresentationExtent{
+    return shark::renderer::RenderExtent{
         extent.width,
         extent.height,
     };
 }
 
-[[nodiscard]] shark::core::Error presentation_smoke_error(
+[[nodiscard]] shark::core::Error renderer_smoke_error(
     std::string message)
 {
     return shark::core::Error{
@@ -485,15 +485,15 @@ void log_platform_event(const shark::platform::Event& event)
     return core::Result<void>::success();
 }
 
-[[nodiscard]] shark::core::Result<void> shutdown_and_validate_presentation(
-    shark::rhi::d3d12::Presentation& presentation,
+[[nodiscard]] shark::core::Result<void> shutdown_and_validate_renderer(
+    shark::renderer::Renderer& renderer_instance,
     shark::rhi::d3d12::Device& device,
     bool& debug_state_validated)
 {
     using namespace shark;
 
-    if (!presentation.is_shutdown()) {
-        auto shutdown_result = presentation.shutdown();
+    if (!renderer_instance.is_shutdown()) {
+        auto shutdown_result = renderer_instance.shutdown();
         if (!shutdown_result) {
             return core::Result<void>::failure(
                 std::move(shutdown_result).error());
@@ -512,7 +512,7 @@ void log_platform_event(const shark::platform::Event& event)
     return core::Result<void>::success();
 }
 
-[[nodiscard]] shark::core::Result<void> run_presentation_shell(
+[[nodiscard]] shark::core::Result<void> run_renderer_shell(
     shark::rhi::d3d12::Device& device,
     const bool smoke_mode)
 {
@@ -557,7 +557,7 @@ void log_platform_event(const shark::platform::Event& event)
             std::move(cubemap_result).error());
     }
     auto cubemap = std::move(cubemap_result).value();
-    std::vector<rhi::d3d12::TextureSubresourceDataView>
+    std::vector<renderer::TextureSubresourceDataView>
         cubemap_subresources;
     cubemap_subresources.reserve(cubemap.subresource_count());
     for (std::size_t index = 0;
@@ -583,8 +583,8 @@ void log_platform_event(const shark::platform::Event& event)
     }
     const auto cubemap_format =
         cubemap.format() == assets::TextureFormat::rgba8_unorm_srgb
-        ? rhi::d3d12::TextureDataFormat::rgba8_unorm_srgb
-        : rhi::d3d12::TextureDataFormat::rgba8_unorm;
+        ? renderer::TextureDataFormat::rgba8_unorm_srgb
+        : renderer::TextureDataFormat::rgba8_unorm;
 
     auto terrain_surface_result = terrain::HeightTileSurface::create(
         terrain::make_deterministic_height_tile());
@@ -745,36 +745,36 @@ void log_platform_event(const shark::platform::Event& event)
     constexpr std::array<std::uint16_t, 6>
         terrain_query_marker_indices{{0, 1, 2, 3, 4, 5}};
 
-    rhi::d3d12::PresentationConfig presentation_config;
-    presentation_config.native_window =
+    renderer::RendererConfig renderer_config;
+    renderer_config.native_window =
         application.native_window_handle().value;
-    presentation_config.extent = to_presentation_extent(
+    renderer_config.extent = to_render_extent(
         application.client_extent());
-    presentation_config.vertex_shader = {
+    renderer_config.textured_cube_vertex_shader = {
         shark_cube_vertex_shader,
         sizeof(shark_cube_vertex_shader),
     };
-    presentation_config.pixel_shader = {
+    renderer_config.textured_cube_pixel_shader = {
         shark_cube_pixel_shader,
         sizeof(shark_cube_pixel_shader),
     };
-    presentation_config.skybox_vertex_shader = {
+    renderer_config.skybox_vertex_shader = {
         shark_skybox_vertex_shader,
         sizeof(shark_skybox_vertex_shader),
     };
-    presentation_config.skybox_pixel_shader = {
+    renderer_config.skybox_pixel_shader = {
         shark_skybox_pixel_shader,
         sizeof(shark_skybox_pixel_shader),
     };
-    presentation_config.terrain_vertex_shader = {
+    renderer_config.terrain_vertex_shader = {
         shark_terrain_vertex_shader,
         sizeof(shark_terrain_vertex_shader),
     };
-    presentation_config.terrain_pixel_shader = {
+    renderer_config.terrain_pixel_shader = {
         shark_terrain_pixel_shader,
         sizeof(shark_terrain_pixel_shader),
     };
-    presentation_config.startup_cubemap = {
+    renderer_config.startup_cubemap = {
         .width = cubemap.width(),
         .height = cubemap.height(),
         .mip_levels = cubemap.mip_levels(),
@@ -782,7 +782,7 @@ void log_platform_event(const shark::platform::Event& event)
         .subresources = cubemap_subresources.data(),
         .subresource_count = cubemap_subresources.size(),
     };
-    presentation_config.terrain_mesh = {
+    renderer_config.terrain_mesh = {
         .vertices = terrain_vertices.data(),
         .vertex_count = terrain_vertices.size(),
         .vertex_stride = sizeof(TerrainGpuVertex),
@@ -801,11 +801,11 @@ void log_platform_event(const shark::platform::Event& event)
         .query_marker_index_count =
             terrain_query_marker_indices.size(),
     };
-    presentation_config.synchronize_to_vertical_refresh = !smoke_mode;
-    auto presentation_result = rhi::d3d12::Presentation::create(
+    renderer_config.synchronize_to_vertical_refresh = !smoke_mode;
+    auto renderer_result = renderer::Renderer::create(
         device,
-        presentation_config);
-    if (!presentation_result) {
+        renderer_config);
+    if (!renderer_result) {
         const auto validation_result = device.validate_debug_state();
         if (!validation_result) {
             core::log_message(
@@ -814,9 +814,9 @@ void log_platform_event(const shark::platform::Event& event)
                 validation_result.error().message());
         }
         return core::Result<void>::failure(
-            std::move(presentation_result).error());
+            std::move(renderer_result).error());
     }
-    auto presentation = std::move(presentation_result).value();
+    auto renderer_instance = std::move(renderer_result).value();
 
     core::log_message(
         core::LogLevel::info,
@@ -881,9 +881,9 @@ void log_platform_event(const shark::platform::Event& event)
     world::Camera camera;
     camera.transform.position = {0.0F, 4.0F, 10.0F};
     camera.transform.pitch_radians = -0.35F;
-    const rhi::d3d12::DaylightSettings daylight{};
+    const renderer::DaylightSettings daylight{};
     sandbox::CameraController camera_controller;
-    auto terrain_mode = rhi::d3d12::TerrainRenderMode::solid;
+    auto terrain_mode = renderer::TerrainRenderMode::solid;
     auto previous_frame_time = std::chrono::steady_clock::now();
     const auto smoke_deadline =
         std::chrono::steady_clock::now() + smoke_deadline_duration;
@@ -900,24 +900,7 @@ void log_platform_event(const shark::platform::Event& event)
     bool observed_closed = false;
     bool smoke_camera_pose_changed = false;
     bool debug_state_validated = false;
-    std::uint64_t frames_when_minimized = 0;
-    std::uint64_t submissions_when_minimized = 0;
-    std::uint64_t graph_executions_when_minimized = 0;
-    std::uint64_t graph_passes_when_minimized = 0;
-    std::uint64_t graph_barriers_when_minimized = 0;
-    std::uint64_t pix_frame_events_when_minimized = 0;
-    std::uint64_t pix_pass_events_when_minimized = 0;
-    std::uint64_t timestamp_queries_when_minimized = 0;
-    std::uint64_t timestamp_resolves_when_minimized = 0;
-    std::uint64_t timing_samples_when_minimized = 0;
-    std::uint64_t terrain_draws_when_minimized = 0;
-    std::uint64_t terrain_bounds_draws_when_minimized = 0;
-    std::uint64_t terrain_query_marker_draws_when_minimized = 0;
-    std::uint64_t cube_draws_when_minimized = 0;
-    std::uint64_t skybox_draws_when_minimized = 0;
-    std::uint64_t texture_bindings_when_minimized = 0;
-    std::uint64_t camera_updates_when_minimized = 0;
-    std::uint64_t depth_clears_when_minimized = 0;
+    renderer::RendererStats stats_when_minimized{};
 
     for (;;) {
         auto pump_result = application.poll_events();
@@ -943,14 +926,14 @@ void log_platform_event(const shark::platform::Event& event)
                     !key->repeated) {
                     terrain_mode =
                         terrain_mode ==
-                            rhi::d3d12::TerrainRenderMode::solid
-                        ? rhi::d3d12::TerrainRenderMode::wireframe
-                        : rhi::d3d12::TerrainRenderMode::solid;
+                            renderer::TerrainRenderMode::solid
+                        ? renderer::TerrainRenderMode::wireframe
+                        : renderer::TerrainRenderMode::solid;
                     core::log_message(
                         core::LogLevel::info,
                         "terrain",
                         terrain_mode ==
-                                rhi::d3d12::TerrainRenderMode::solid
+                                renderer::TerrainRenderMode::solid
                             ? "Terrain mode: solid normal visualization"
                             : "Terrain mode: wireframe");
                 }
@@ -994,7 +977,7 @@ void log_platform_event(const shark::platform::Event& event)
         }
         application.clear_events();
         if (smoke_mode && dropped_events != 0) {
-            return core::Result<void>::failure(presentation_smoke_error(
+            return core::Result<void>::failure(renderer_smoke_error(
                 "The presentation loop dropped " +
                 std::to_string(dropped_events) +
                 " platform event(s)"));
@@ -1010,14 +993,14 @@ void log_platform_event(const shark::platform::Event& event)
         if (accept_close) {
             if (smoke_mode && !smoke_close_posted) {
                 return core::Result<void>::failure(
-                    presentation_smoke_error(
+                    renderer_smoke_error(
                             "The presentation smoke window closed before " +
                             std::to_string(required_smoke_frames) +
                             " frames completed"));
             }
 
-            auto shutdown_result = shutdown_and_validate_presentation(
-                presentation,
+            auto shutdown_result = shutdown_and_validate_renderer(
+                renderer_instance,
                 device,
                 debug_state_validated);
             if (!shutdown_result) {
@@ -1040,7 +1023,7 @@ void log_platform_event(const shark::platform::Event& event)
         if (smoke_close_posted) {
             if (std::chrono::steady_clock::now() >= smoke_deadline) {
                 return core::Result<void>::failure(
-                    presentation_smoke_error(
+                    renderer_smoke_error(
                         "The presentation smoke window did not close "
                         "before its deadline"));
             }
@@ -1049,16 +1032,16 @@ void log_platform_event(const shark::platform::Event& event)
         }
 
         if (pending_resize.has_value() && !application.minimized()) {
-            const auto expected_extent = to_presentation_extent(
+            const auto expected_extent = to_render_extent(
                 *pending_resize);
-            auto resize_result = presentation.resize(expected_extent);
+            auto resize_result = renderer_instance.resize(expected_extent);
             if (!resize_result) {
                 return core::Result<void>::failure(
                     std::move(resize_result).error());
             }
-            if (presentation.extent() != expected_extent) {
+            if (renderer_instance.extent() != expected_extent) {
                 return core::Result<void>::failure(
-                    presentation_smoke_error(
+                    renderer_smoke_error(
                         "The swap-chain extent diverged from the physical "
                         "window client extent"));
             }
@@ -1067,15 +1050,15 @@ void log_platform_event(const shark::platform::Event& event)
         if (smoke_mode) {
             if (std::chrono::steady_clock::now() >= smoke_deadline) {
                 return core::Result<void>::failure(
-                    presentation_smoke_error(
+                    renderer_smoke_error(
                         "The presentation smoke deadline expired after " +
                         std::to_string(
-                            presentation.stats().presented_frames) +
+                            renderer_instance.stats().presented_frames) +
                         " successful frame(s)"));
             }
 
             const auto presented_frames =
-                presentation.stats().presented_frames;
+                renderer_instance.stats().presented_frames;
             if (!resize_requested &&
                 presented_frames >= resize_after_frames) {
                 auto resize_result = application.resize_client(
@@ -1092,38 +1075,7 @@ void log_platform_event(const shark::platform::Event& event)
                 exercise_minimize_restore &&
                 !minimize_requested &&
                 presented_frames >= minimize_after_frames) {
-                const auto& stats = presentation.stats();
-                frames_when_minimized = stats.presented_frames;
-                submissions_when_minimized = stats.frame_submissions;
-                graph_executions_when_minimized =
-                    stats.render_graph_executions;
-                graph_passes_when_minimized =
-                    stats.render_graph_pass_executions;
-                graph_barriers_when_minimized =
-                    stats.render_graph_transition_barriers;
-                pix_frame_events_when_minimized =
-                    stats.pix_frame_events;
-                pix_pass_events_when_minimized =
-                    stats.pix_pass_events;
-                timestamp_queries_when_minimized =
-                    stats.timestamp_queries_written;
-                timestamp_resolves_when_minimized =
-                    stats.timestamp_resolve_batches;
-                timing_samples_when_minimized =
-                    stats.gpu_timing_samples;
-                terrain_draws_when_minimized =
-                    stats.terrain_draw_calls;
-                terrain_bounds_draws_when_minimized =
-                    stats.terrain_bounds_draw_calls;
-                terrain_query_marker_draws_when_minimized =
-                    stats.terrain_query_marker_draw_calls;
-                cube_draws_when_minimized = stats.cube_draw_calls;
-                skybox_draws_when_minimized = stats.skybox_draw_calls;
-                texture_bindings_when_minimized = stats.texture_bindings;
-                camera_updates_when_minimized =
-                    stats.camera_constant_updates;
-                depth_clears_when_minimized =
-                    stats.depth_clear_count;
+                stats_when_minimized = renderer_instance.stats();
                 auto minimize_result = application.minimize_window();
                 if (!minimize_result) {
                     return core::Result<void>::failure(
@@ -1136,44 +1088,9 @@ void log_platform_event(const shark::platform::Event& event)
             if (application.minimized()) {
                 if (minimize_requested && !restore_requested) {
                     observed_minimized_iteration = true;
-                    const auto& stats = presentation.stats();
-                    if (stats.presented_frames != frames_when_minimized ||
-                        stats.frame_submissions !=
-                            submissions_when_minimized ||
-                        stats.render_graph_executions !=
-                            graph_executions_when_minimized ||
-                        stats.render_graph_pass_executions !=
-                            graph_passes_when_minimized ||
-                        stats.render_graph_transition_barriers !=
-                            graph_barriers_when_minimized ||
-                        stats.pix_frame_events !=
-                            pix_frame_events_when_minimized ||
-                        stats.pix_pass_events !=
-                            pix_pass_events_when_minimized ||
-                        stats.timestamp_queries_written !=
-                            timestamp_queries_when_minimized ||
-                        stats.timestamp_resolve_batches !=
-                            timestamp_resolves_when_minimized ||
-                        stats.gpu_timing_samples !=
-                            timing_samples_when_minimized ||
-                        stats.terrain_draw_calls !=
-                            terrain_draws_when_minimized ||
-                        stats.terrain_bounds_draw_calls !=
-                            terrain_bounds_draws_when_minimized ||
-                        stats.terrain_query_marker_draw_calls !=
-                            terrain_query_marker_draws_when_minimized ||
-                        stats.cube_draw_calls !=
-                            cube_draws_when_minimized ||
-                        stats.skybox_draw_calls !=
-                            skybox_draws_when_minimized ||
-                        stats.texture_bindings !=
-                            texture_bindings_when_minimized ||
-                        stats.camera_constant_updates !=
-                            camera_updates_when_minimized ||
-                        stats.depth_clear_count !=
-                            depth_clears_when_minimized) {
+                    if (renderer_instance.stats() != stats_when_minimized) {
                         return core::Result<void>::failure(
-                            presentation_smoke_error(
+                            renderer_smoke_error(
                                 "Render work advanced during the intended "
                                 "minimize checkpoint"));
                     }
@@ -1200,12 +1117,12 @@ void log_platform_event(const shark::platform::Event& event)
                          !observed_restore_resize)) ||
                     !smoke_camera_pose_changed) {
                     return core::Result<void>::failure(
-                        presentation_smoke_error(
+                        renderer_smoke_error(
                             "The presentation smoke lifecycle was incomplete"));
                 }
 
-                auto shutdown_result = shutdown_and_validate_presentation(
-                    presentation,
+                auto shutdown_result = shutdown_and_validate_renderer(
+                    renderer_instance,
                     device,
                     debug_state_validated);
                 if (!shutdown_result) {
@@ -1240,7 +1157,7 @@ void log_platform_event(const shark::platform::Event& event)
             camera_controller.update(camera, elapsed_seconds);
         }
         else if (!smoke_camera_pose_changed &&
-                 presentation.stats().presented_frames >=
+                 renderer_instance.stats().presented_frames >=
                      change_camera_after_frames) {
             world::advance_camera(
                 camera,
@@ -1251,16 +1168,16 @@ void log_platform_event(const shark::platform::Event& event)
         }
         if (smoke_mode) {
             terrain_mode =
-                presentation.stats().presented_frames >=
+                renderer_instance.stats().presented_frames >=
                     required_smoke_frames / 2U
-                ? rhi::d3d12::TerrainRenderMode::wireframe
-                : rhi::d3d12::TerrainRenderMode::solid;
+                ? renderer::TerrainRenderMode::wireframe
+                : renderer::TerrainRenderMode::solid;
         }
 
-        const auto presentation_extent = presentation.extent();
+        const auto render_extent = renderer_instance.extent();
         const auto aspect_ratio =
-            static_cast<float>(presentation_extent.width) /
-            static_cast<float>(presentation_extent.height);
+            static_cast<float>(render_extent.width) /
+            static_cast<float>(render_extent.height);
         auto matrices_result = world::build_camera_matrices(
             camera,
             aspect_ratio);
@@ -1268,7 +1185,7 @@ void log_platform_event(const shark::platform::Event& event)
             return core::Result<void>::failure(
                 std::move(matrices_result).error());
         }
-        const rhi::d3d12::PresentationFrameData frame_data{
+        const renderer::RenderFrameData frame_data{
             .view_projection =
                 matrices_result.value().view_projection,
             .sky_view_projection =
@@ -1276,19 +1193,19 @@ void log_platform_event(const shark::platform::Event& event)
             .daylight = daylight,
             .terrain_mode = terrain_mode,
         };
-        auto present_result = presentation.present_frame(frame_data);
-        if (!present_result) {
+        auto render_result = renderer_instance.render_frame(frame_data);
+        if (!render_result) {
             return core::Result<void>::failure(
-                std::move(present_result).error());
+                std::move(render_result).error());
         }
-        if (present_result.value() ==
-            rhi::d3d12::PresentStatus::occluded) {
+        if (render_result.value() ==
+            renderer::RenderStatus::occluded) {
             std::this_thread::sleep_for(std::chrono::milliseconds{16});
         }
     }
 
-    auto shutdown_result = shutdown_and_validate_presentation(
-        presentation,
+    auto shutdown_result = shutdown_and_validate_renderer(
+        renderer_instance,
         device,
         debug_state_validated);
     if (!shutdown_result) {
@@ -1297,12 +1214,12 @@ void log_platform_event(const shark::platform::Event& event)
     }
 
     if (smoke_mode) {
-        const auto& stats = presentation.stats();
+        const auto& stats = renderer_instance.stats();
         if (stats.presented_frames != required_smoke_frames ||
             !observed_close_request ||
             !observed_closed) {
             return core::Result<void>::failure(
-                presentation_smoke_error(
+                renderer_smoke_error(
                     "The presentation smoke did not finish its close "
                     "lifecycle"));
         }
@@ -1447,7 +1364,7 @@ void log_platform_event(const shark::platform::Event& event)
             stats.full_queue_drains != stats.resize_count + 1 ||
             stats.last_submission_fence == 0) {
             return core::Result<void>::failure(
-                presentation_smoke_error(
+                renderer_smoke_error(
                     "The presentation frame-resource lifecycle invariants "
                     "were not satisfied"));
         }
@@ -1649,7 +1566,7 @@ int main(const int argument_count, char** const arguments)
 
         const auto smoke_mode =
             options.run_mode == sandbox::RunMode::present_smoke;
-        auto run_result = run_presentation_shell(device, smoke_mode);
+        auto run_result = run_renderer_shell(device, smoke_mode);
         if (!run_result) {
             core::log_message(
                 core::LogLevel::error,

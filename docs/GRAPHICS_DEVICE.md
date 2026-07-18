@@ -1,6 +1,6 @@
 # Direct3D 12 Device Contract
 
-- **Completed through:** `T-002`
+- **Completed through:** `REN-001`
 - **Last verified:** July 18, 2026
 
 G-001 establishes adapter discovery, diagnostics, capability reporting, and
@@ -25,10 +25,12 @@ This is a narrow D3D12 RHI boundary, not a cross-API abstraction. Raw COM
 pointers remain private until later renderer code receives typed resource and
 queue operations.
 
-G-002 adds a private `detail::DeviceAccess` bridge used only inside the D3D12
-implementation. It lets `Presentation` borrow the authoritative device and
-factory without exposing COM through public headers. `Device` must outlive
-every presentation object.
+G-002 adds a private `detail::DeviceAccess` bridge used only below the public
+graphics boundary. REN-001's `shark::renderer::Renderer` receives `Device` by
+reference at the sandbox composition root; its private D3D12 backend uses that
+bridge to borrow the authoritative device and factory without exposing COM
+through public renderer headers. `Device` must outlive every `Renderer`. There
+is no public D3D12 `Presentation` class.
 
 The process permits one authoritative `Device` startup. D3D12 debug-layer,
 GPU-validation, and DRED settings are process-global and must be fixed before
@@ -67,7 +69,12 @@ reversed-Z depth resource. G-006 keeps the same device and removal-diagnostic
 boundary while routing the two per-frame attachment transitions through the
 minimal render-graph executor. T-001, S-002A, and T-002 preserve that device
 boundary while adding terrain, procedural daylight, canonical CPU terrain
-queries, and the query-derived diagnostic draw.
+queries, and the query-derived diagnostic draw. REN-001 preserves the same
+device contract while moving scene helpers, pass composition, and public
+statistics into the renderer. Its private D3D12 backend also owns the
+scene-named timestamp layout and accumulator. Generic frame-resource,
+device-access, and legacy-transition helpers remain private D3D12 RHI
+implementation details.
 
 If a debugger is attached, corruption and error messages also request a debug
 break. Unattended processes count and report those severities instead of
@@ -187,7 +194,7 @@ during explicit shutdown before frame resources are released. T-002 retains
 four geometry buffers and eight timestamps per frame while requiring five
 indexed draws: surface, bounds, query marker, cube, and sky.
 
-Presentation shutdown explicitly drains and releases its command list,
+Renderer shutdown explicitly drains and releases its command list,
 terrain/cube/skybox PSOs, both root signatures, descriptor heap,
 checker/cubemap textures, cube/terrain vertex/index buffers, depth texture/DSVs,
 swap-chain resources, and frame contexts before
@@ -205,4 +212,6 @@ See [the terrain contract](TERRAIN.md) for the T-002 canonical query,
 deterministic tile, and diagnostic rendering modes, and
 [the skybox contract](SKYBOX.md) for the S-002A procedural daylight background
 and shared terrain light. T-002 adds no device capability or lifetime policy;
-the next increment is `REN-001`, followed by `T-003`.
+REN-001 likewise changes no device capability or lifetime policy. It was
+completed on July 18, 2026. The next increment is `T-003`, layered PBR terrain
+materials.

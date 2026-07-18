@@ -1,8 +1,9 @@
 # Shark Win32 Platform Shell
 
 - **Increment:** `F-004` host contract; DPI policy completed by `G-002`;
-  focus event and first camera consumer added by `G-005`
-- **Last verified:** July 16, 2026
+  focus event and first camera consumer added by `G-005`; renderer consumer
+  boundary verified by `REN-001`
+- **Last verified:** July 18, 2026
 
 F-004 establishes the Windows host boundary used by later graphics and
 simulation increments. `SharkSandbox` remains a console-subsystem executable so
@@ -10,8 +11,10 @@ structured stderr diagnostics stay visible while it owns one native Unicode
 Win32 window.
 
 The public platform headers contain no `windows.h` types. Win32 implementation
-details remain under `engine/platform/windows`, and the D3D12 presentation
-layer obtains the HWND through an explicitly opaque `NativeWindowHandle`.
+details remain under `engine/platform/windows`.
+`shark::renderer::RendererConfig` receives the HWND through an explicitly
+opaque `NativeWindowHandle` value at the sandbox composition root; the private
+D3D12 renderer backend performs the presentation operations.
 
 ## Ownership and lifecycle
 

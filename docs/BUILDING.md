@@ -1,5 +1,8 @@
 # Building Shark
 
+- **Completed through:** `REN-001`
+- **Last verified:** July 18, 2026
+
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
 14.50 LTS toolset, CMake 4.2 or newer, and Windows SDK 10.0.26100 exactly.
 Run the prerequisite checker before configuring:
@@ -102,7 +105,10 @@ continuously draws its deterministic terrain, query-derived cyan normal pin,
 procedural-checker cube, and procedural daylight sky as named `Terrain`,
 `TexturedCube`, and `Skybox` graph passes. T-002 keeps the triple
 frame-resource lifecycle and resize-safe reversed-Z target and reports separate
-PIX/timestamp intervals for all three passes. Press `F1` to toggle the terrain
+PIX/timestamp intervals for all three passes. REN-001 routes this through the
+public `shark::renderer::Renderer`; the sandbox creates the D3D12 `Device` and
+passes it to `Renderer::create` only at the composition root. Press `F1` to
+toggle the terrain
 between solid daylight shading and wireframe. Use `W`/`S` along the
 camera forward axis, `A`/`D` to strafe, `Q`/`E` to move down/up, hold `Shift`
 to move faster, and hold the right mouse button while dragging to look around.
@@ -216,7 +222,7 @@ Each command shows a real PMv2-aware window, presents exactly 1,000 successful
 three-pass frames, changes the physical client area from `1280x720` to
 `960x600`, proves the projection and `D32_FLOAT` depth extent follow the
 aspect-changing resize, proves no frame is submitted while minimized, restores,
-shuts down the presentation objects before the window, and checks new
+shuts down `Renderer` before the window, and checks new
 D3D12/DXGI messages plus live D3D12 device children. Submission or presentation
 removal failures also emit bounded DRED diagnostics.
 
@@ -270,10 +276,11 @@ resolve per frame, one completed timing sample per retired submission, and an
 eight-query per-context high-water. Duration magnitude is deliberately not a
 performance gate because adapter speed and timestamp resolution vary.
 
-Run the focused planner, D3D12 executor, and GPU timestamp-state unit coverage
-directly with:
+Run the focused renderer composer, planner, D3D12 executor, scene helpers, and
+GPU timestamp-state unit coverage directly with:
 
 ```powershell
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[renderer]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[render-graph]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[timestamps]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[skybox]"
@@ -286,7 +293,7 @@ directly with:
 CTest registers hardware and WARP device and presentation paths as separate
 serial processes, plus a focused packaged-WARP GPU-validation presentation
 path. That focused case uses the 120-frame/180-second contract and a 240-second
-CTest timeout. The retained presentation case names now cover S-002:
+CTest timeout. The compatibility presentation case names remain:
 `integration.gpu.hardware_cube_present`,
 `integration.gpu.warp_cube_present`, and
 `integration.gpu.warp_cube_present_validation`. To run all graphics integration
@@ -326,9 +333,9 @@ capture acceptance. See [the DDS cubemap contract](DDS_CUBEMAP.md) for the
 tracked fixture, strict loader, app-local deployment, retained startup upload,
 and deliberately absent per-frame sky read. See
 [the terrain contract](TERRAIN.md) for canonical ownership, exact query
-semantics, render-mesh separation, and diagnostic rules. T-002 is complete;
-the upcoming `REN-001` increment moves renderer orchestration without changing
-pixels or accounting, and `T-003` terrain materials follows it.
+semantics, render-mesh separation, and diagnostic rules. `REN-001` completed
+the renderer boundary on July 18, 2026 without changing pixels or accounting.
+The upcoming increment is `T-003`, layered PBR terrain materials.
 
 ## Visual Studio
 

@@ -1,11 +1,12 @@
-#include "device_access.hpp"
 #include "cube_scene_data.hpp"
 #include "daylight_scene_data.hpp"
+#include "skybox_scene_data.hpp"
+#include "terrain_scene_data.hpp"
+#include "../frame_pipeline.hpp"
+#include "device_access.hpp"
 #include "frame_resource_state.hpp"
 #include "gpu_timestamp_state.hpp"
 #include "render_graph_executor.hpp"
-#include "skybox_scene_data.hpp"
-#include "terrain_scene_data.hpp"
 
 #include <directx/d3d12.h>
 #include <dxgi1_6.h>
@@ -15,8 +16,8 @@
 #include <shark/core/error.hpp>
 #include <shark/core/logging.hpp>
 #include <shark/render_graph/render_graph.hpp>
+#include <shark/renderer/renderer.hpp>
 #include <shark/rhi/d3d12/device.hpp>
-#include <shark/rhi/d3d12/presentation.hpp>
 
 #include <Windows.h>
 #include <pix3.h>
@@ -35,7 +36,11 @@
 #include <utility>
 #include <vector>
 
-namespace shark::rhi::d3d12 {
+namespace shark::renderer {
+
+namespace backend_detail = d3d12::detail;
+namespace rhi_detail = rhi::d3d12::detail;
+
 namespace {
 
 using Microsoft::WRL::ComPtr;
@@ -48,29 +53,22 @@ constexpr std::uint32_t maximum_fence_wait_slices = 120;
 constexpr std::size_t upload_bytes_per_frame = 64U * 1024U;
 constexpr UINT transient_descriptors_per_frame = 64;
 constexpr UINT timestamp_queries_per_frame =
-    static_cast<UINT>(detail::gpu_timestamp_queries_per_frame);
+    static_cast<UINT>(backend_detail::gpu_timestamp_queries_per_frame);
 constexpr UINT timestamp_query_count =
     back_buffer_count * timestamp_queries_per_frame;
 constexpr UINT64 timestamp_readback_bytes =
-    back_buffer_count * detail::gpu_timestamp_result_bytes_per_frame;
+    back_buffer_count * backend_detail::gpu_timestamp_result_bytes_per_frame;
 constexpr std::size_t frame_probe_bytes =
     D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT;
 constexpr std::size_t camera_matrix_bytes = sizeof(math::Matrix4x4);
 constexpr std::size_t camera_constants_bytes = camera_matrix_bytes * 2U;
 constexpr std::size_t frame_constants_bytes =
-    camera_constants_bytes + detail::daylight_constant_bytes;
+    camera_constants_bytes + backend_detail::daylight_constant_bytes;
 constexpr std::size_t frame_probe_offset = frame_constants_bytes;
 constexpr UINT root_camera_constants = 0;
 constexpr UINT root_checker_texture = 1;
 constexpr std::uint32_t cubemap_face_count = 6;
 constexpr std::size_t rgba8_bytes_per_pixel = 4;
-constexpr render_graph::ExternalResourceId graph_back_buffer_id{1};
-constexpr render_graph::ExternalResourceId graph_depth_buffer_id{2};
-constexpr render_graph::ExternalResourceId graph_checker_texture_id{3};
-constexpr render_graph::ExternalResourceId graph_cube_vertex_buffer_id{4};
-constexpr render_graph::ExternalResourceId graph_cube_index_buffer_id{5};
-constexpr render_graph::ExternalResourceId graph_terrain_vertex_buffer_id{6};
-constexpr render_graph::ExternalResourceId graph_terrain_index_buffer_id{7};
 
 static_assert(back_buffer_count <= 32);
 static_assert(camera_matrix_bytes == 64);
@@ -119,7 +117,7 @@ private:
 
 [[nodiscard]] constexpr UINT timestamp_query_index(
     const UINT base,
-    const detail::GpuTimestampQuery query) noexcept
+    const backend_detail::GpuTimestampQuery query) noexcept
 {
     return base + static_cast<UINT>(query);
 }
@@ -148,7 +146,7 @@ static_assert(
 }
 
 [[nodiscard]] bool valid_extent(
-    const PresentationExtent extent) noexcept
+    const RenderExtent extent) noexcept
 {
     constexpr std::uint32_t maximum_dimension =
         D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION;
@@ -287,10 +285,10 @@ static_assert(
         bounds_index_count * sizeof(std::uint16_t);
     constexpr auto query_marker_vertex_count =
         static_cast<std::size_t>(
-            detail::terrain_query_marker_vertex_count);
+            backend_detail::terrain_query_marker_vertex_count);
     constexpr auto query_marker_index_count =
         static_cast<std::size_t>(
-            detail::terrain_query_marker_index_count);
+            backend_detail::terrain_query_marker_index_count);
     constexpr std::size_t query_marker_index_bytes =
         query_marker_index_count * sizeof(std::uint16_t);
     const auto valid_vertex_stream = [=](
@@ -300,7 +298,7 @@ static_assert(
         return data != nullptr &&
             count != 0 &&
             count <= maximum_uint16_vertices &&
-            stride == detail::terrain_vertex_stride &&
+            stride == backend_detail::terrain_vertex_stride &&
             count <= maximum_view_bytes / stride;
     };
     if (!valid_vertex_stream(
@@ -382,11 +380,11 @@ static_assert(
 }
 
 [[nodiscard]] bool valid_frame_data(
-    const PresentationFrameData& frame_data) noexcept
+    const RenderFrameData& frame_data) noexcept
 {
     return math::is_finite(frame_data.view_projection) &&
         math::is_finite(frame_data.sky_view_projection) &&
-        detail::valid_daylight_settings(frame_data.daylight) &&
+        backend_detail::valid_daylight_settings(frame_data.daylight) &&
         valid_terrain_mode(frame_data.terrain_mode);
 }
 
@@ -450,8 +448,8 @@ static_assert(
 
     D3D12_DEPTH_STENCIL_DESC description{};
     description.DepthEnable = TRUE;
-    description.DepthWriteMask = detail::cube_depth_write_mask;
-    description.DepthFunc = detail::cube_depth_comparison;
+    description.DepthWriteMask = backend_detail::cube_depth_write_mask;
+    description.DepthFunc = backend_detail::cube_depth_comparison;
     description.StencilEnable = FALSE;
     description.StencilReadMask = D3D12_DEFAULT_STENCIL_READ_MASK;
     description.StencilWriteMask = D3D12_DEFAULT_STENCIL_WRITE_MASK;
@@ -464,8 +462,8 @@ static_assert(
     noexcept
 {
     auto description = reversed_depth_description();
-    description.DepthWriteMask = detail::skybox_depth_write_mask;
-    description.DepthFunc = detail::skybox_depth_comparison;
+    description.DepthWriteMask = backend_detail::skybox_depth_write_mask;
+    description.DepthFunc = backend_detail::skybox_depth_comparison;
     return description;
 }
 
@@ -474,7 +472,7 @@ terrain_bounds_depth_description() noexcept
 {
     auto description = reversed_depth_description();
     description.DepthWriteMask =
-        detail::terrain_bounds_depth_write_mask;
+        backend_detail::terrain_bounds_depth_write_mask;
     return description;
 }
 
@@ -517,20 +515,20 @@ terrain_bounds_depth_description() noexcept
 
 } // namespace
 
-class Presentation::Implementation final {
+class Renderer::Implementation final {
 public:
     struct FrameContext final {
-        detail::FrameResourceState state{
+        rhi_detail::FrameResourceState state{
             upload_bytes_per_frame,
             transient_descriptors_per_frame,
-            detail::gpu_timestamp_queries_per_frame};
+            backend_detail::gpu_timestamp_queries_per_frame};
         ComPtr<ID3D12CommandAllocator> command_allocator;
         ComPtr<ID3D12Resource> upload_buffer;
         std::byte* mapped_upload{};
         ComPtr<ID3D12Resource> probe_destination;
         ComPtr<ID3D12DescriptorHeap> descriptor_heap;
         std::size_t staged_probe_offset{};
-        detail::GpuTimestampSlice timestamp_slice{};
+        backend_detail::GpuTimestampSlice timestamp_slice{};
         UINT timestamp_query_base{};
         bool timestamp_results_pending{};
     };
@@ -559,7 +557,7 @@ public:
             return core::Result<void>::failure(graphics_error(
                 core::ErrorCode::invalid_state,
                 std::string{operation} +
-                    " cannot run after presentation shutdown"));
+                    " cannot run after renderer shutdown"));
         }
         if (GetCurrentThreadId() != owner_thread) {
             return core::Result<void>::failure(graphics_error(
@@ -576,7 +574,7 @@ public:
         auto completed_value = fence->GetCompletedValue();
         if (completed_value == UINT64_MAX) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Fence::GetCompletedValue",
                     DXGI_ERROR_DEVICE_REMOVED));
@@ -590,7 +588,7 @@ public:
             fence_event);
         if (FAILED(event_result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Fence::SetEventOnCompletion",
                     event_result));
@@ -606,7 +604,7 @@ public:
                 completed_value = fence->GetCompletedValue();
                 if (completed_value == UINT64_MAX) {
                     return core::Result<void>::failure(
-                        detail::DeviceAccess::graphics_failure(
+                        rhi_detail::DeviceAccess::graphics_failure(
                             *owner_device,
                             "ID3D12Fence::GetCompletedValue",
                             DXGI_ERROR_DEVICE_REMOVED));
@@ -631,17 +629,17 @@ public:
             const auto removal_reason = native_device->GetDeviceRemovedReason();
             if (FAILED(removal_reason)) {
                 return core::Result<void>::failure(
-                    detail::DeviceAccess::graphics_failure(
+                    rhi_detail::DeviceAccess::graphics_failure(
                         *owner_device,
-                        "Presentation fence wait",
+                        "Renderer fence wait",
                         removal_reason));
             }
         }
 
         return core::Result<void>::failure(
-            detail::DeviceAccess::graphics_failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 *owner_device,
-                "Presentation fence wait (30 second timeout)",
+                "Renderer fence wait (30 second timeout)",
                 HRESULT_FROM_WIN32(WAIT_TIMEOUT)));
     }
 
@@ -650,7 +648,7 @@ public:
         const auto completed_value = fence->GetCompletedValue();
         if (completed_value == UINT64_MAX) {
             return core::Result<UINT64>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Fence::GetCompletedValue",
                     DXGI_ERROR_DEVICE_REMOVED));
@@ -672,7 +670,7 @@ public:
             value);
         if (FAILED(signal_result)) {
             return core::Result<UINT64>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     operation,
                     signal_result));
@@ -691,18 +689,18 @@ public:
         }
 
         auto allocation_result = context.state.allocate_timestamps(
-            detail::gpu_timestamp_queries_per_frame);
+            backend_detail::gpu_timestamp_queries_per_frame);
         if (!allocation_result) {
             return core::Result<UINT>::failure(
                 std::move(allocation_result).error());
         }
         const auto allocation = allocation_result.value();
         if (allocation.offset >
-                detail::gpu_timestamp_queries_per_frame ||
+                backend_detail::gpu_timestamp_queries_per_frame ||
             allocation.size !=
-                detail::gpu_timestamp_queries_per_frame ||
+                backend_detail::gpu_timestamp_queries_per_frame ||
             allocation.size >
-                detail::gpu_timestamp_queries_per_frame -
+                backend_detail::gpu_timestamp_queries_per_frame -
                     allocation.offset) {
             return core::Result<UINT>::failure(graphics_error(
                 core::ErrorCode::invalid_state,
@@ -750,7 +748,7 @@ public:
         auto sample_result = gpu_timing.consume(
             std::span<const std::uint64_t>{
                 raw_timestamps,
-                detail::gpu_timestamp_queries_per_frame,
+                backend_detail::gpu_timestamp_queries_per_frame,
             });
         if (!sample_result) {
             return core::Result<void>::failure(
@@ -893,7 +891,7 @@ public:
     [[nodiscard]] core::Result<void> stage_frame_data(
         FrameContext& context,
         const UINT back_buffer_index,
-        const PresentationFrameData& frame_data)
+        const RenderFrameData& frame_data)
     {
         auto upload_result = context.state.allocate_upload(
             frame_probe_bytes,
@@ -923,7 +921,7 @@ public:
         std::memcpy(
             destination + camera_constants_bytes,
             &frame_data.daylight,
-            detail::daylight_constant_bytes);
+            backend_detail::daylight_constant_bytes);
         const FrameProbe probe{
             statistics.frame_context_acquisitions,
             context.state.generation(),
@@ -1024,12 +1022,12 @@ public:
             return core::Result<void>::failure(
                 std::move(terrain_index_access).error());
         }
-        if (back_buffer_access.value() != graph_back_buffer_id ||
-            depth_buffer_access.value() != graph_depth_buffer_id ||
+        if (back_buffer_access.value() != detail::frame_back_buffer_external_id ||
+            depth_buffer_access.value() != detail::frame_depth_buffer_external_id ||
             terrain_vertex_access.value() !=
-                graph_terrain_vertex_buffer_id ||
+                detail::frame_terrain_vertex_buffer_external_id ||
             terrain_index_access.value() !=
-                graph_terrain_index_buffer_id) {
+                detail::frame_terrain_index_buffer_external_id) {
             return core::Result<void>::failure(graphics_error(
                 core::ErrorCode::invalid_state,
                 "The terrain pass resolved unexpected graph resource "
@@ -1045,7 +1043,7 @@ public:
             D3D12_QUERY_TYPE_TIMESTAMP,
             timestamp_query_index(
                 timestamp_query_base,
-                detail::GpuTimestampQuery::terrain_begin));
+                backend_detail::GpuTimestampQuery::terrain_begin));
 
         auto render_target =
             rtv_heap->GetCPUDescriptorHandleForHeapStart();
@@ -1072,7 +1070,7 @@ public:
         command_list->ClearDepthStencilView(
             depth_stencil,
             D3D12_CLEAR_FLAG_DEPTH,
-            detail::cube_depth_clear_value,
+            backend_detail::cube_depth_clear_value,
             0,
             0,
             nullptr);
@@ -1109,7 +1107,7 @@ public:
             1,
             &terrain_vertex_buffer_view);
         command_list->IASetIndexBuffer(&terrain_index_buffer_view);
-        command_list->IASetPrimitiveTopology(detail::terrain_topology);
+        command_list->IASetPrimitiveTopology(backend_detail::terrain_topology);
         command_list->DrawIndexedInstanced(
             terrain_triangle_index_count,
             1,
@@ -1119,7 +1117,7 @@ public:
 
         command_list->SetPipelineState(terrain_bounds_pipeline.Get());
         command_list->IASetPrimitiveTopology(
-            detail::terrain_bounds_topology);
+            backend_detail::terrain_bounds_topology);
         command_list->DrawIndexedInstanced(
             terrain_bounds_index_count,
             1,
@@ -1127,7 +1125,7 @@ public:
             static_cast<INT>(terrain_vertex_count),
             0);
         command_list->IASetPrimitiveTopology(
-            detail::terrain_query_marker_topology);
+            backend_detail::terrain_query_marker_topology);
         command_list->DrawIndexedInstanced(
             terrain_query_marker_index_count,
             1,
@@ -1141,7 +1139,7 @@ public:
             D3D12_QUERY_TYPE_TIMESTAMP,
             timestamp_query_index(
                 timestamp_query_base,
-                detail::GpuTimestampQuery::terrain_end));
+                backend_detail::GpuTimestampQuery::terrain_end));
         pass_event.end();
         return core::Result<void>::success();
     }
@@ -1187,14 +1185,14 @@ public:
             return core::Result<void>::failure(
                 std::move(cube_index_access).error());
         }
-        if (back_buffer_access.value() != graph_back_buffer_id ||
-            depth_buffer_access.value() != graph_depth_buffer_id ||
+        if (back_buffer_access.value() != detail::frame_back_buffer_external_id ||
+            depth_buffer_access.value() != detail::frame_depth_buffer_external_id ||
             checker_texture_access.value() !=
-                graph_checker_texture_id ||
+                detail::frame_checker_texture_external_id ||
             cube_vertex_access.value() !=
-                graph_cube_vertex_buffer_id ||
+                detail::frame_cube_vertex_buffer_external_id ||
             cube_index_access.value() !=
-                graph_cube_index_buffer_id) {
+                detail::frame_cube_index_buffer_external_id) {
             return core::Result<void>::failure(graphics_error(
                 core::ErrorCode::invalid_state,
                 "The textured-cube pass resolved unexpected graph "
@@ -1210,7 +1208,7 @@ public:
             D3D12_QUERY_TYPE_TIMESTAMP,
             timestamp_query_index(
                 timestamp_query_base,
-                detail::GpuTimestampQuery::textured_cube_begin));
+                backend_detail::GpuTimestampQuery::textured_cube_begin));
 
         auto render_target =
             rtv_heap->GetCPUDescriptorHandleForHeapStart();
@@ -1267,7 +1265,7 @@ public:
             &vertex_buffer_view);
         command_list->IASetIndexBuffer(&index_buffer_view);
         command_list->DrawIndexedInstanced(
-            static_cast<UINT>(detail::cube_indices.size()),
+            static_cast<UINT>(backend_detail::cube_indices.size()),
             1,
             0,
             0,
@@ -1277,7 +1275,7 @@ public:
             D3D12_QUERY_TYPE_TIMESTAMP,
             timestamp_query_index(
                 timestamp_query_base,
-                detail::GpuTimestampQuery::textured_cube_end));
+                backend_detail::GpuTimestampQuery::textured_cube_end));
         pass_event.end();
 
         return core::Result<void>::success();
@@ -1317,12 +1315,12 @@ public:
             return core::Result<void>::failure(
                 std::move(cube_index_access).error());
         }
-        if (back_buffer_access.value() != graph_back_buffer_id ||
-            depth_buffer_access.value() != graph_depth_buffer_id ||
+        if (back_buffer_access.value() != detail::frame_back_buffer_external_id ||
+            depth_buffer_access.value() != detail::frame_depth_buffer_external_id ||
             cube_vertex_access.value() !=
-                graph_cube_vertex_buffer_id ||
+                detail::frame_cube_vertex_buffer_external_id ||
             cube_index_access.value() !=
-                graph_cube_index_buffer_id) {
+                detail::frame_cube_index_buffer_external_id) {
             return core::Result<void>::failure(graphics_error(
                 core::ErrorCode::invalid_state,
                 "The skybox pass resolved unexpected graph resource "
@@ -1338,7 +1336,7 @@ public:
             D3D12_QUERY_TYPE_TIMESTAMP,
             timestamp_query_index(
                 timestamp_query_base,
-                detail::GpuTimestampQuery::skybox_begin));
+                backend_detail::GpuTimestampQuery::skybox_begin));
 
         auto render_target =
             rtv_heap->GetCPUDescriptorHandleForHeapStart();
@@ -1382,7 +1380,7 @@ public:
         command_list->IASetVertexBuffers(0, 1, &vertex_buffer_view);
         command_list->IASetIndexBuffer(&index_buffer_view);
         command_list->DrawIndexedInstanced(
-            static_cast<UINT>(detail::skybox_index_count),
+            static_cast<UINT>(backend_detail::skybox_index_count),
             1,
             0,
             0,
@@ -1392,7 +1390,7 @@ public:
             D3D12_QUERY_TYPE_TIMESTAMP,
             timestamp_query_index(
                 timestamp_query_base,
-                detail::GpuTimestampQuery::skybox_end));
+                backend_detail::GpuTimestampQuery::skybox_end));
         pass_event.end();
 
         return core::Result<void>::success();
@@ -1438,7 +1436,7 @@ public:
                 IID_PPV_ARGS(&buffer));
             if (FAILED(buffer_result)) {
                 return core::Result<void>::failure(
-                    detail::DeviceAccess::graphics_failure(
+                    rhi_detail::DeviceAccess::graphics_failure(
                         *owner_device,
                         "IDXGISwapChain::GetBuffer",
                         buffer_result));
@@ -1449,7 +1447,7 @@ public:
             const auto name_result = buffer->SetName(name.c_str());
             if (FAILED(name_result)) {
                 return core::Result<void>::failure(
-                    detail::DeviceAccess::graphics_failure(
+                    rhi_detail::DeviceAccess::graphics_failure(
                         *owner_device,
                         "ID3D12Object::SetName(back buffer)",
                         name_result));
@@ -1468,7 +1466,7 @@ public:
     }
 
     [[nodiscard]] core::Result<void> create_depth_buffer(
-        const PresentationExtent extent)
+        const RenderExtent extent)
     {
         D3D12_HEAP_PROPERTIES heap_properties{};
         heap_properties.Type = D3D12_HEAP_TYPE_DEFAULT;
@@ -1486,26 +1484,26 @@ public:
         description.Height = extent.height;
         description.DepthOrArraySize = 1;
         description.MipLevels = 1;
-        description.Format = detail::cube_depth_format;
+        description.Format = backend_detail::cube_depth_format;
         description.SampleDesc = DXGI_SAMPLE_DESC{1, 0};
         description.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-        description.Flags = detail::cube_depth_resource_flags;
+        description.Flags = backend_detail::cube_depth_resource_flags;
 
         D3D12_CLEAR_VALUE clear_value{};
-        clear_value.Format = detail::cube_depth_format;
-        clear_value.DepthStencil.Depth = detail::cube_depth_clear_value;
+        clear_value.Format = backend_detail::cube_depth_format;
+        clear_value.DepthStencil.Depth = backend_detail::cube_depth_clear_value;
         clear_value.DepthStencil.Stencil = 0;
 
         const auto result = native_device->CreateCommittedResource(
             &heap_properties,
             D3D12_HEAP_FLAG_NONE,
             &description,
-            detail::cube_depth_resource_state,
+            backend_detail::cube_depth_resource_state,
             &clear_value,
             IID_PPV_ARGS(&depth_buffer));
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Device::CreateCommittedResource(depth buffer)",
                     result));
@@ -1514,14 +1512,14 @@ public:
             L"Shark Reversed-Z Depth Buffer");
         if (FAILED(name_result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Object::SetName(depth buffer)",
                     name_result));
         }
 
         D3D12_DEPTH_STENCIL_VIEW_DESC view{};
-        view.Format = detail::cube_depth_format;
+        view.Format = backend_detail::cube_depth_format;
         view.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
         view.Flags = D3D12_DSV_FLAG_NONE;
         view.Texture2D.MipSlice = 0;
@@ -1547,8 +1545,8 @@ public:
         const TextureCubeUploadView& cubemap,
         const TerrainMeshUploadView& terrain)
     {
-        constexpr UINT64 vertex_bytes = sizeof(detail::cube_vertices);
-        constexpr UINT64 index_bytes = sizeof(detail::cube_indices);
+        constexpr UINT64 vertex_bytes = sizeof(backend_detail::cube_vertices);
+        constexpr UINT64 index_bytes = sizeof(backend_detail::cube_indices);
         constexpr UINT64 index_upload_offset =
             (vertex_bytes + 3U) & ~UINT64{3U};
         const auto terrain_vertex_bytes =
@@ -1628,7 +1626,7 @@ public:
             IID_PPV_ARGS(&vertex_buffer));
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Device::CreateCommittedResource(cube vertices)",
                     result));
@@ -1636,7 +1634,7 @@ public:
         result = vertex_buffer->SetName(L"Shark Cube Vertex Buffer");
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Object::SetName(cube vertices)",
                     result));
@@ -1653,7 +1651,7 @@ public:
             IID_PPV_ARGS(&index_buffer));
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Device::CreateCommittedResource(cube indices)",
                     result));
@@ -1661,7 +1659,7 @@ public:
         result = index_buffer->SetName(L"Shark Cube Index Buffer");
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Object::SetName(cube indices)",
                     result));
@@ -1681,7 +1679,7 @@ public:
             IID_PPV_ARGS(&terrain_vertex_buffer));
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Device::CreateCommittedResource(terrain "
                     "vertices)",
@@ -1691,7 +1689,7 @@ public:
             L"Shark Terrain Vertex Buffer");
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Object::SetName(terrain vertices)",
                     result));
@@ -1711,7 +1709,7 @@ public:
             IID_PPV_ARGS(&terrain_index_buffer));
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Device::CreateCommittedResource(terrain "
                     "indices)",
@@ -1721,7 +1719,7 @@ public:
             L"Shark Terrain Index Buffer");
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Object::SetName(terrain indices)",
                     result));
@@ -1731,11 +1729,11 @@ public:
         D3D12_RESOURCE_DESC texture_description{};
         texture_description.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
         texture_description.Alignment = 0;
-        texture_description.Width = detail::checker_width;
-        texture_description.Height = detail::checker_height;
+        texture_description.Width = backend_detail::checker_width;
+        texture_description.Height = backend_detail::checker_height;
         texture_description.DepthOrArraySize = 1;
-        texture_description.MipLevels = detail::checker_mip_levels;
-        texture_description.Format = detail::checker_format;
+        texture_description.MipLevels = backend_detail::checker_mip_levels;
+        texture_description.Format = backend_detail::checker_format;
         texture_description.SampleDesc = DXGI_SAMPLE_DESC{1, 0};
         texture_description.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
         texture_description.Flags = D3D12_RESOURCE_FLAG_NONE;
@@ -1748,7 +1746,7 @@ public:
             IID_PPV_ARGS(&checker_texture));
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Device::CreateCommittedResource(checker texture)",
                     result));
@@ -1756,7 +1754,7 @@ public:
         result = checker_texture->SetName(L"Shark Procedural Checker Texture");
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Object::SetName(checker texture)",
                     result));
@@ -1772,7 +1770,7 @@ public:
             sizeof(format_support));
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Device::CheckFeatureSupport(cubemap format)",
                     result));
@@ -1812,7 +1810,7 @@ public:
             IID_PPV_ARGS(&startup_cubemap));
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Device::CreateCommittedResource(startup "
                     "cubemap)",
@@ -1822,7 +1820,7 @@ public:
             L"Shark Startup Environment Cubemap");
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Object::SetName(startup cubemap)",
                     result));
@@ -1887,7 +1885,7 @@ public:
             IID_PPV_ARGS(&upload_buffer));
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Device::CreateCommittedResource(static upload)",
                     result));
@@ -1896,7 +1894,7 @@ public:
             L"Shark Static Scene Upload Buffer");
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Object::SetName(static upload)",
                     result));
@@ -1914,7 +1912,7 @@ public:
             IID_PPV_ARGS(&cubemap_upload_buffer));
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Device::CreateCommittedResource(cubemap "
                     "upload)",
@@ -1924,7 +1922,7 @@ public:
             L"Shark Startup Cubemap Upload Buffer");
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Object::SetName(cubemap upload)",
                     result));
@@ -1935,7 +1933,7 @@ public:
         result = upload_buffer->Map(0, &no_cpu_reads, &mapped_data);
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Resource::Map(static upload)",
                     result));
@@ -1943,11 +1941,11 @@ public:
         auto* const upload_data = static_cast<std::byte*>(mapped_data);
         std::memcpy(
             upload_data,
-            detail::cube_vertices.data(),
+            backend_detail::cube_vertices.data(),
             vertex_bytes);
         std::memcpy(
             upload_data + index_upload_offset,
-            detail::cube_indices.data(),
+            backend_detail::cube_indices.data(),
             index_bytes);
         std::memcpy(
             upload_data + terrain_vertex_upload_offset,
@@ -1978,16 +1976,16 @@ public:
             static_cast<std::size_t>(
                 terrain_query_marker_index_bytes));
         constexpr UINT64 checker_source_row_bytes =
-            detail::checker_width * 4U;
+            backend_detail::checker_width * 4U;
         static_assert(
-            sizeof(detail::checker_pixels) ==
-            checker_source_row_bytes * detail::checker_height);
+            sizeof(backend_detail::checker_pixels) ==
+            checker_source_row_bytes * backend_detail::checker_height);
         for (UINT row = 0; row < texture_rows; ++row) {
             std::memcpy(
                 upload_data + texture_footprint.Offset +
                     static_cast<UINT64>(row) *
                         texture_footprint.Footprint.RowPitch,
-                detail::checker_pixels.data() +
+                backend_detail::checker_pixels.data() +
                     static_cast<std::size_t>(row) *
                         checker_source_row_bytes,
                 static_cast<std::size_t>(texture_row_bytes));
@@ -2001,7 +1999,7 @@ public:
             &mapped_cubemap_data);
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Resource::Map(cubemap upload)",
                     result));
@@ -2046,7 +2044,7 @@ public:
             IID_PPV_ARGS(&checker_descriptor_heap));
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Device::CreateDescriptorHeap(checker SRV)",
                     result));
@@ -2055,7 +2053,7 @@ public:
             L"Shark Persistent Texture Descriptor Heap");
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12Object::SetName(checker descriptor heap)",
                     result));
@@ -2065,14 +2063,14 @@ public:
                 D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
         D3D12_SHADER_RESOURCE_VIEW_DESC shader_resource_view{};
-        shader_resource_view.Format = detail::checker_format;
+        shader_resource_view.Format = backend_detail::checker_format;
         shader_resource_view.ViewDimension =
             D3D12_SRV_DIMENSION_TEXTURE2D;
         shader_resource_view.Shader4ComponentMapping =
             D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         shader_resource_view.Texture2D.MostDetailedMip = 0;
         shader_resource_view.Texture2D.MipLevels =
-            detail::checker_mip_levels;
+            backend_detail::checker_mip_levels;
         shader_resource_view.Texture2D.PlaneSlice = 0;
         shader_resource_view.Texture2D.ResourceMinLODClamp = 0.0F;
         native_device->CreateShaderResourceView(
@@ -2104,7 +2102,7 @@ public:
         result = upload_allocator->Reset();
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12CommandAllocator::Reset(static upload)",
                     result));
@@ -2112,7 +2110,7 @@ public:
         result = command_list->Reset(upload_allocator.Get(), nullptr);
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12GraphicsCommandList::Reset(static upload)",
                     result));
@@ -2239,7 +2237,7 @@ public:
         result = command_list->Close();
         if (FAILED(result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "ID3D12GraphicsCommandList::Close(static upload)",
                     result));
@@ -2263,7 +2261,7 @@ public:
             vertex_buffer->GetGPUVirtualAddress();
         vertex_buffer_view.SizeInBytes =
             static_cast<UINT>(vertex_bytes);
-        vertex_buffer_view.StrideInBytes = detail::cube_vertex_stride;
+        vertex_buffer_view.StrideInBytes = backend_detail::cube_vertex_stride;
         index_buffer_view.BufferLocation =
             index_buffer->GetGPUVirtualAddress();
         index_buffer_view.SizeInBytes = static_cast<UINT>(index_bytes);
@@ -2275,14 +2273,14 @@ public:
             terrain_bounds_vertex_bytes +
             terrain_query_marker_vertex_bytes);
         terrain_vertex_buffer_view.StrideInBytes =
-            detail::terrain_vertex_stride;
+            backend_detail::terrain_vertex_stride;
         terrain_index_buffer_view.BufferLocation =
             terrain_index_buffer->GetGPUVirtualAddress();
         terrain_index_buffer_view.SizeInBytes = static_cast<UINT>(
             terrain_index_bytes +
             terrain_bounds_index_bytes +
             terrain_query_marker_index_bytes);
-        terrain_index_buffer_view.Format = detail::terrain_index_format;
+        terrain_index_buffer_view.Format = backend_detail::terrain_index_format;
         terrain_vertex_count =
             static_cast<UINT>(terrain.vertex_count);
         terrain_triangle_index_count =
@@ -2307,13 +2305,13 @@ public:
     }
 
     [[nodiscard]] core::Result<void> verify_swap_chain_extent(
-        const PresentationExtent expected_extent)
+        const RenderExtent expected_extent)
     {
         DXGI_SWAP_CHAIN_DESC1 description{};
         const auto description_result = swap_chain->GetDesc1(&description);
         if (FAILED(description_result)) {
             return core::Result<void>::failure(
-                detail::DeviceAccess::graphics_failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     *owner_device,
                     "IDXGISwapChain1::GetDesc1",
                     description_result));
@@ -2400,7 +2398,7 @@ public:
         if (GetCurrentThreadId() != owner_thread) {
             return core::Result<void>::failure(graphics_error(
                 core::ErrorCode::invalid_state,
-                "Presentation shutdown must run on the native window's "
+                "Renderer shutdown must run on the native window's "
                 "owning thread"));
         }
 
@@ -2423,25 +2421,25 @@ public:
         if (has_unretired_submissions) {
             return core::Result<void>::failure(graphics_error(
                 core::ErrorCode::invalid_state,
-                "Presentation shutdown found unretired frame "
+                "Renderer shutdown found unretired frame "
                 "submissions after the queue drain"));
         }
         return core::Result<void>::success();
     }
 
-    Device* owner_device{};
+    rhi::d3d12::Device* owner_device{};
     ID3D12Device* native_device{};
     DWORD owner_thread{};
-    PresentationExtent current_extent{};
+    RenderExtent current_extent{};
     ClearColor clear_color{};
     bool synchronize_to_vertical_refresh{};
     bool shutdown_complete{true};
-    PresentationStats statistics{};
+    RendererStats statistics{};
     ComPtr<ID3D12CommandQueue> command_queue;
     ComPtr<ID3D12QueryHeap> timestamp_query_heap;
     ComPtr<ID3D12Resource> timestamp_readback;
     const std::uint64_t* mapped_timestamp_results{};
-    detail::GpuTimingAccumulator gpu_timing;
+    backend_detail::GpuTimingAccumulator gpu_timing;
     std::array<FrameContext, back_buffer_count> frame_contexts;
     ComPtr<ID3D12GraphicsCommandList> command_list;
     ComPtr<ID3D12PipelineState> cube_pipeline;
@@ -2482,107 +2480,109 @@ public:
     bool has_last_camera_matrix{};
     std::array<float, 16> last_skybox_matrix{};
     bool has_last_skybox_matrix{};
-    detail::FenceTimeline fence_timeline;
+    rhi_detail::FenceTimeline fence_timeline;
 };
 
-Presentation::Presentation(
+Renderer::Renderer(
     std::unique_ptr<Implementation> implementation) noexcept
     : implementation_(std::move(implementation))
 {
 }
 
-Presentation::Presentation(Presentation&&) noexcept = default;
-Presentation& Presentation::operator=(Presentation&&) noexcept = default;
-Presentation::~Presentation() = default;
+Renderer::Renderer(Renderer&&) noexcept = default;
+Renderer& Renderer::operator=(Renderer&&) noexcept = default;
+Renderer::~Renderer() = default;
 
-core::Result<Presentation> Presentation::create(
-    Device& device,
-    const PresentationConfig& config)
+core::Result<Renderer> Renderer::create(
+    rhi::d3d12::Device& device,
+    const RendererConfig& config)
 {
     if (config.native_window == nullptr) {
-        return core::Result<Presentation>::failure(graphics_error(
+        return core::Result<Renderer>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
-            "Presentation requires a native window"));
+            "Renderer requires a native window"));
     }
     if (!valid_extent(config.extent)) {
-        return core::Result<Presentation>::failure(graphics_error(
+        return core::Result<Renderer>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
-            "Presentation extent must be nonzero and within D3D12 limits"));
+            "Renderer extent must be nonzero and within D3D12 limits"));
     }
     if (!valid_clear_color(config.clear_color)) {
-        return core::Result<Presentation>::failure(graphics_error(
+        return core::Result<Renderer>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
-            "Presentation clear color components must be finite"));
+            "Renderer clear color components must be finite"));
     }
-    if (!valid_shader_bytecode(config.vertex_shader)) {
-        return core::Result<Presentation>::failure(graphics_error(
+    if (!valid_shader_bytecode(
+            config.textured_cube_vertex_shader)) {
+        return core::Result<Renderer>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
-            "Presentation vertex shader bytecode is missing a DXIL "
-            "container signature"));
+            "Renderer textured-cube vertex shader bytecode is missing a "
+            "DXIL container signature"));
     }
-    if (!valid_shader_bytecode(config.pixel_shader)) {
-        return core::Result<Presentation>::failure(graphics_error(
+    if (!valid_shader_bytecode(
+            config.textured_cube_pixel_shader)) {
+        return core::Result<Renderer>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
-            "Presentation pixel shader bytecode is missing a DXIL "
-            "container signature"));
+            "Renderer textured-cube pixel shader bytecode is missing a "
+            "DXIL container signature"));
     }
     if (!valid_shader_bytecode(config.skybox_vertex_shader)) {
-        return core::Result<Presentation>::failure(graphics_error(
+        return core::Result<Renderer>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
-            "Presentation skybox vertex shader bytecode is missing a "
+            "Renderer skybox vertex shader bytecode is missing a "
             "DXIL container signature"));
     }
     if (!valid_shader_bytecode(config.skybox_pixel_shader)) {
-        return core::Result<Presentation>::failure(graphics_error(
+        return core::Result<Renderer>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
-            "Presentation skybox pixel shader bytecode is missing a "
+            "Renderer skybox pixel shader bytecode is missing a "
             "DXIL container signature"));
     }
     if (!valid_shader_bytecode(config.terrain_vertex_shader)) {
-        return core::Result<Presentation>::failure(graphics_error(
+        return core::Result<Renderer>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
-            "Presentation terrain vertex shader bytecode is missing a "
+            "Renderer terrain vertex shader bytecode is missing a "
             "DXIL container signature"));
     }
     if (!valid_shader_bytecode(config.terrain_pixel_shader)) {
-        return core::Result<Presentation>::failure(graphics_error(
+        return core::Result<Renderer>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
-            "Presentation terrain pixel shader bytecode is missing a "
+            "Renderer terrain pixel shader bytecode is missing a "
             "DXIL container signature"));
     }
     auto cubemap_result = validate_cubemap_upload(
         config.startup_cubemap);
     if (!cubemap_result) {
-        return core::Result<Presentation>::failure(
+        return core::Result<Renderer>::failure(
             std::move(cubemap_result).error());
     }
     auto terrain_result = validate_terrain_upload(config.terrain_mesh);
     if (!terrain_result) {
-        return core::Result<Presentation>::failure(
+        return core::Result<Renderer>::failure(
             std::move(terrain_result).error());
     }
 
     const auto native_window = static_cast<HWND>(config.native_window);
     if (IsWindow(native_window) == FALSE) {
-        return core::Result<Presentation>::failure(graphics_error(
+        return core::Result<Renderer>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
-            "Presentation received an invalid native window"));
+            "Renderer received an invalid native window"));
     }
     const auto window_thread = GetWindowThreadProcessId(
         native_window,
         nullptr);
     if (window_thread == 0 || window_thread != GetCurrentThreadId()) {
-        return core::Result<Presentation>::failure(graphics_error(
+        return core::Result<Renderer>::failure(graphics_error(
             core::ErrorCode::invalid_state,
-            "Presentation must be created on the native window's owning "
+            "Renderer must be created on the native window's owning "
             "thread"));
     }
 
-    const auto native = detail::DeviceAccess::native_context(device);
+    const auto native = rhi_detail::DeviceAccess::native_context(device);
     if (native.device == nullptr || native.factory == nullptr) {
-        return core::Result<Presentation>::failure(graphics_error(
+        return core::Result<Renderer>::failure(graphics_error(
             core::ErrorCode::invalid_state,
-            "Presentation requires an initialized D3D12 Device"));
+            "Renderer requires an initialized D3D12 Device"));
     }
 
     auto implementation = std::make_unique<Implementation>();
@@ -2604,17 +2604,17 @@ core::Result<Presentation> Presentation::create(
         &queue_description,
         IID_PPV_ARGS(&implementation->command_queue));
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Device::CreateCommandQueue",
                 result));
     }
     result = implementation->command_queue->SetName(
-        L"Shark Direct Presentation Queue");
+        L"Shark Direct Renderer Queue");
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Object::SetName(command queue)",
                 result));
@@ -2624,14 +2624,14 @@ core::Result<Presentation> Presentation::create(
     result = implementation->command_queue->GetTimestampFrequency(
         &timestamp_frequency);
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12CommandQueue::GetTimestampFrequency",
                 result));
     }
     if (timestamp_frequency == 0) {
-        return core::Result<Presentation>::failure(graphics_error(
+        return core::Result<Renderer>::failure(graphics_error(
             core::ErrorCode::unsupported,
             "The direct queue reported a zero GPU timestamp frequency"));
     }
@@ -2649,8 +2649,8 @@ core::Result<Presentation> Presentation::create(
         &timestamp_heap_description,
         IID_PPV_ARGS(&implementation->timestamp_query_heap));
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Device::CreateQueryHeap(frame timestamps)",
                 result));
@@ -2658,8 +2658,8 @@ core::Result<Presentation> Presentation::create(
     result = implementation->timestamp_query_heap->SetName(
         L"Shark Frame Timestamp Query Heap");
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Object::SetName(timestamp query heap)",
                 result));
@@ -2696,8 +2696,8 @@ core::Result<Presentation> Presentation::create(
         nullptr,
         IID_PPV_ARGS(&implementation->timestamp_readback));
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Device::CreateCommittedResource(timestamp "
                 "readback)",
@@ -2706,8 +2706,8 @@ core::Result<Presentation> Presentation::create(
     result = implementation->timestamp_readback->SetName(
         L"Shark Frame Timestamp Readback Buffer");
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Object::SetName(timestamp readback)",
                 result));
@@ -2723,8 +2723,8 @@ core::Result<Presentation> Presentation::create(
         &timestamp_cpu_read_range,
         &mapped_timestamp_results);
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Resource::Map(timestamp readback)",
                 result));
@@ -2754,16 +2754,16 @@ core::Result<Presentation> Presentation::create(
         nullptr,
         &swap_chain_one);
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "IDXGIFactory::CreateSwapChainForHwnd",
                 result));
     }
     result = swap_chain_one.As(&implementation->swap_chain);
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "QueryInterface(IDXGISwapChain4)",
                 result));
@@ -2771,15 +2771,15 @@ core::Result<Presentation> Presentation::create(
     auto extent_result = implementation->verify_swap_chain_extent(
         config.extent);
     if (!extent_result) {
-        return core::Result<Presentation>::failure(
+        return core::Result<Renderer>::failure(
             std::move(extent_result).error());
     }
     result = native.factory->MakeWindowAssociation(
         native_window,
         DXGI_MWA_NO_ALT_ENTER);
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "IDXGIFactory::MakeWindowAssociation",
                 result));
@@ -2794,17 +2794,17 @@ core::Result<Presentation> Presentation::create(
         &heap_description,
         IID_PPV_ARGS(&implementation->rtv_heap));
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Device::CreateDescriptorHeap(RTV)",
                 result));
     }
     result = implementation->rtv_heap->SetName(
-        L"Shark Presentation RTV Heap");
+        L"Shark Renderer RTV Heap");
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Object::SetName(RTV heap)",
                 result));
@@ -2819,8 +2819,8 @@ core::Result<Presentation> Presentation::create(
         &heap_description,
         IID_PPV_ARGS(&implementation->dsv_heap));
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Device::CreateDescriptorHeap(DSV)",
                 result));
@@ -2829,10 +2829,10 @@ core::Result<Presentation> Presentation::create(
         native.device->GetDescriptorHandleIncrementSize(
             D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
     result = implementation->dsv_heap->SetName(
-        L"Shark Presentation DSV Heap");
+        L"Shark Renderer DSV Heap");
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Object::SetName(DSV heap)",
                 result));
@@ -2840,13 +2840,13 @@ core::Result<Presentation> Presentation::create(
 
     for (UINT index = 0; index < back_buffer_count; ++index) {
         auto& context = implementation->frame_contexts[index];
-        context.timestamp_slice = detail::gpu_timestamp_slice(index);
+        context.timestamp_slice = backend_detail::gpu_timestamp_slice(index);
         result = native.device->CreateCommandAllocator(
             D3D12_COMMAND_LIST_TYPE_DIRECT,
             IID_PPV_ARGS(&context.command_allocator));
         if (FAILED(result)) {
-            return core::Result<Presentation>::failure(
-                detail::DeviceAccess::graphics_failure(
+            return core::Result<Renderer>::failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     device,
                     "ID3D12Device::CreateCommandAllocator(frame)",
                     result));
@@ -2855,8 +2855,8 @@ core::Result<Presentation> Presentation::create(
             std::to_wstring(index);
         result = context.command_allocator->SetName(name.c_str());
         if (FAILED(result)) {
-            return core::Result<Presentation>::failure(
-                detail::DeviceAccess::graphics_failure(
+            return core::Result<Renderer>::failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     device,
                     "ID3D12Object::SetName(frame allocator)",
                     result));
@@ -2925,8 +2925,8 @@ core::Result<Presentation> Presentation::create(
     if (FAILED(result)) {
         const auto operation = root_signature_operation(
             root_signature_diagnostics.Get());
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 operation,
                 result));
@@ -2938,8 +2938,8 @@ core::Result<Presentation> Presentation::create(
         serialized_root_signature->GetBufferSize(),
         IID_PPV_ARGS(&implementation->cube_root_signature));
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Device::CreateRootSignature(cube)",
                 result));
@@ -2947,8 +2947,8 @@ core::Result<Presentation> Presentation::create(
     result = implementation->cube_root_signature->SetName(
         L"Shark Textured Cube Root Signature");
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Object::SetName(cube root signature)",
                 result));
@@ -2967,8 +2967,8 @@ core::Result<Presentation> Presentation::create(
     if (FAILED(result)) {
         const auto operation = root_signature_operation(
             root_signature_diagnostics.Get());
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 operation,
                 result));
@@ -2979,8 +2979,8 @@ core::Result<Presentation> Presentation::create(
         serialized_root_signature->GetBufferSize(),
         IID_PPV_ARGS(&implementation->terrain_root_signature));
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Device::CreateRootSignature(terrain)",
                 result));
@@ -2988,8 +2988,8 @@ core::Result<Presentation> Presentation::create(
     result = implementation->terrain_root_signature->SetName(
         L"Shark Terrain Root Signature");
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Object::SetName(terrain root signature)",
                 result));
@@ -2999,12 +2999,12 @@ core::Result<Presentation> Presentation::create(
     pipeline_description.pRootSignature =
         implementation->cube_root_signature.Get();
     pipeline_description.VS = D3D12_SHADER_BYTECODE{
-        config.vertex_shader.data,
-        config.vertex_shader.size,
+        config.textured_cube_vertex_shader.data,
+        config.textured_cube_vertex_shader.size,
     };
     pipeline_description.PS = D3D12_SHADER_BYTECODE{
-        config.pixel_shader.data,
-        config.pixel_shader.size,
+        config.textured_cube_pixel_shader.data,
+        config.textured_cube_pixel_shader.size,
     };
     pipeline_description.DS = D3D12_SHADER_BYTECODE{};
     pipeline_description.HS = D3D12_SHADER_BYTECODE{};
@@ -3016,14 +3016,14 @@ core::Result<Presentation> Presentation::create(
         cube_rasterizer_description();
     pipeline_description.DepthStencilState =
         reversed_depth_description();
-    pipeline_description.InputLayout = detail::cube_input_layout;
+    pipeline_description.InputLayout = backend_detail::cube_input_layout;
     pipeline_description.IBStripCutValue =
         D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
     pipeline_description.PrimitiveTopologyType =
         D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     pipeline_description.NumRenderTargets = 1;
     pipeline_description.RTVFormats[0] = back_buffer_format;
-    pipeline_description.DSVFormat = detail::cube_depth_format;
+    pipeline_description.DSVFormat = backend_detail::cube_depth_format;
     pipeline_description.SampleDesc = DXGI_SAMPLE_DESC{1, 0};
     pipeline_description.NodeMask = 0;
     pipeline_description.CachedPSO = D3D12_CACHED_PIPELINE_STATE{};
@@ -3032,8 +3032,8 @@ core::Result<Presentation> Presentation::create(
         &pipeline_description,
         IID_PPV_ARGS(&implementation->cube_pipeline));
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Device::CreateGraphicsPipelineState(cube)",
                 result));
@@ -3041,8 +3041,8 @@ core::Result<Presentation> Presentation::create(
     result = implementation->cube_pipeline->SetName(
         L"Shark Textured Cube Pipeline");
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Object::SetName(cube pipeline)",
                 result));
@@ -3064,8 +3064,8 @@ core::Result<Presentation> Presentation::create(
         &pipeline_description,
         IID_PPV_ARGS(&implementation->skybox_pipeline));
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Device::CreateGraphicsPipelineState(skybox)",
                 result));
@@ -3073,8 +3073,8 @@ core::Result<Presentation> Presentation::create(
     result = implementation->skybox_pipeline->SetName(
         L"Shark Procedural Daylight Sky Pipeline");
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Object::SetName(skybox pipeline)",
                 result));
@@ -3092,18 +3092,18 @@ core::Result<Presentation> Presentation::create(
     };
     pipeline_description.RasterizerState =
         terrain_rasterizer_description(
-            detail::terrain_solid_fill_mode);
+            backend_detail::terrain_solid_fill_mode);
     pipeline_description.DepthStencilState =
         reversed_depth_description();
-    pipeline_description.InputLayout = detail::terrain_input_layout;
+    pipeline_description.InputLayout = backend_detail::terrain_input_layout;
     pipeline_description.PrimitiveTopologyType =
         D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     result = native.device->CreateGraphicsPipelineState(
         &pipeline_description,
         IID_PPV_ARGS(&implementation->terrain_solid_pipeline));
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Device::CreateGraphicsPipelineState(terrain "
                 "solid)",
@@ -3112,8 +3112,8 @@ core::Result<Presentation> Presentation::create(
     result = implementation->terrain_solid_pipeline->SetName(
         L"Shark Terrain Solid Pipeline");
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Object::SetName(terrain solid pipeline)",
                 result));
@@ -3121,13 +3121,13 @@ core::Result<Presentation> Presentation::create(
 
     pipeline_description.RasterizerState =
         terrain_rasterizer_description(
-            detail::terrain_wireframe_fill_mode);
+            backend_detail::terrain_wireframe_fill_mode);
     result = native.device->CreateGraphicsPipelineState(
         &pipeline_description,
         IID_PPV_ARGS(&implementation->terrain_wireframe_pipeline));
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Device::CreateGraphicsPipelineState(terrain "
                 "wireframe)",
@@ -3136,8 +3136,8 @@ core::Result<Presentation> Presentation::create(
     result = implementation->terrain_wireframe_pipeline->SetName(
         L"Shark Terrain Wireframe Pipeline");
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Object::SetName(terrain wireframe pipeline)",
                 result));
@@ -3145,7 +3145,7 @@ core::Result<Presentation> Presentation::create(
 
     pipeline_description.RasterizerState =
         terrain_rasterizer_description(
-            detail::terrain_solid_fill_mode);
+            backend_detail::terrain_solid_fill_mode);
     pipeline_description.DepthStencilState =
         terrain_bounds_depth_description();
     pipeline_description.PrimitiveTopologyType =
@@ -3154,8 +3154,8 @@ core::Result<Presentation> Presentation::create(
         &pipeline_description,
         IID_PPV_ARGS(&implementation->terrain_bounds_pipeline));
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Device::CreateGraphicsPipelineState(terrain "
                 "bounds)",
@@ -3164,8 +3164,8 @@ core::Result<Presentation> Presentation::create(
     result = implementation->terrain_bounds_pipeline->SetName(
         L"Shark Terrain Bounds Pipeline");
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Object::SetName(terrain bounds pipeline)",
                 result));
@@ -3178,25 +3178,25 @@ core::Result<Presentation> Presentation::create(
         implementation->terrain_solid_pipeline.Get(),
         IID_PPV_ARGS(&implementation->command_list));
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Device::CreateCommandList",
                 result));
     }
     result = implementation->command_list->SetName(
-        L"Shark Presentation Command List");
+        L"Shark Renderer Command List");
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Object::SetName(command list)",
                 result));
     }
     result = implementation->command_list->Close();
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12GraphicsCommandList::Close(initial)",
                 result));
@@ -3207,8 +3207,8 @@ core::Result<Presentation> Presentation::create(
         D3D12_FENCE_FLAG_NONE,
         IID_PPV_ARGS(&implementation->fence));
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Device::CreateFence",
                 result));
@@ -3216,8 +3216,8 @@ core::Result<Presentation> Presentation::create(
     result = implementation->fence->SetName(
         L"Shark Direct Queue Timeline Fence");
     if (FAILED(result)) {
-        return core::Result<Presentation>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 device,
                 "ID3D12Object::SetName(presentation fence)",
                 result));
@@ -3229,7 +3229,7 @@ core::Result<Presentation> Presentation::create(
         0,
         EVENT_MODIFY_STATE | SYNCHRONIZE);
     if (implementation->fence_event == nullptr) {
-        return core::Result<Presentation>::failure(windows_failure(
+        return core::Result<Renderer>::failure(windows_failure(
             "CreateEventExW(presentation fence)",
             GetLastError()));
     }
@@ -3281,8 +3281,8 @@ core::Result<Presentation> Presentation::create(
             nullptr,
             IID_PPV_ARGS(&context.upload_buffer));
         if (FAILED(result)) {
-            return core::Result<Presentation>::failure(
-                detail::DeviceAccess::graphics_failure(
+            return core::Result<Renderer>::failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     device,
                     "ID3D12Device::CreateCommittedResource(frame upload)",
                     result));
@@ -3291,8 +3291,8 @@ core::Result<Presentation> Presentation::create(
             std::to_wstring(index);
         result = context.upload_buffer->SetName(name.c_str());
         if (FAILED(result)) {
-            return core::Result<Presentation>::failure(
-                detail::DeviceAccess::graphics_failure(
+            return core::Result<Renderer>::failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     device,
                     "ID3D12Object::SetName(frame upload)",
                     result));
@@ -3305,8 +3305,8 @@ core::Result<Presentation> Presentation::create(
             &no_cpu_reads,
             &mapped_upload);
         if (FAILED(result)) {
-            return core::Result<Presentation>::failure(
-                detail::DeviceAccess::graphics_failure(
+            return core::Result<Renderer>::failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     device,
                     "ID3D12Resource::Map(frame upload)",
                     result));
@@ -3321,8 +3321,8 @@ core::Result<Presentation> Presentation::create(
             nullptr,
             IID_PPV_ARGS(&context.probe_destination));
         if (FAILED(result)) {
-            return core::Result<Presentation>::failure(
-                detail::DeviceAccess::graphics_failure(
+            return core::Result<Renderer>::failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     device,
                     "ID3D12Device::CreateCommittedResource(frame probe)",
                     result));
@@ -3331,8 +3331,8 @@ core::Result<Presentation> Presentation::create(
             std::to_wstring(index);
         result = context.probe_destination->SetName(name.c_str());
         if (FAILED(result)) {
-            return core::Result<Presentation>::failure(
-                detail::DeviceAccess::graphics_failure(
+            return core::Result<Renderer>::failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     device,
                     "ID3D12Object::SetName(frame probe)",
                     result));
@@ -3349,8 +3349,8 @@ core::Result<Presentation> Presentation::create(
             &descriptor_heap_description,
             IID_PPV_ARGS(&context.descriptor_heap));
         if (FAILED(result)) {
-            return core::Result<Presentation>::failure(
-                detail::DeviceAccess::graphics_failure(
+            return core::Result<Renderer>::failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     device,
                     "ID3D12Device::CreateDescriptorHeap(frame staging)",
                     result));
@@ -3359,8 +3359,8 @@ core::Result<Presentation> Presentation::create(
             std::to_wstring(index);
         result = context.descriptor_heap->SetName(name.c_str());
         if (FAILED(result)) {
-            return core::Result<Presentation>::failure(
-                detail::DeviceAccess::graphics_failure(
+            return core::Result<Renderer>::failure(
+                rhi_detail::DeviceAccess::graphics_failure(
                     device,
                     "ID3D12Object::SetName(frame descriptor heap)",
                     result));
@@ -3372,18 +3372,18 @@ core::Result<Presentation> Presentation::create(
             config.startup_cubemap,
             config.terrain_mesh);
     if (!static_resources_result) {
-        return core::Result<Presentation>::failure(
+        return core::Result<Renderer>::failure(
             std::move(static_resources_result).error());
     }
 
     auto buffer_result = implementation->acquire_back_buffers();
     if (!buffer_result) {
-        return core::Result<Presentation>::failure(
+        return core::Result<Renderer>::failure(
             std::move(buffer_result).error());
     }
     auto depth_result = implementation->create_depth_buffer(config.extent);
     if (!depth_result) {
-        return core::Result<Presentation>::failure(
+        return core::Result<Renderer>::failure(
             std::move(depth_result).error());
     }
 
@@ -3395,28 +3395,28 @@ core::Result<Presentation> Presentation::create(
             std::to_string(config.extent.height) +
             " with three fence-gated frame contexts, reversed-Z depth, "
             "and named Terrain/TexturedCube/Skybox pipelines");
-    return core::Result<Presentation>::success(
-        Presentation{std::move(implementation)});
+    return core::Result<Renderer>::success(
+        Renderer{std::move(implementation)});
 }
 
-core::Result<PresentStatus> Presentation::present_frame(
-    const PresentationFrameData& frame_data)
+core::Result<RenderStatus> Renderer::render_frame(
+    const RenderFrameData& frame_data)
 {
     if (implementation_ == nullptr) {
-        return core::Result<PresentStatus>::failure(graphics_error(
+        return core::Result<RenderStatus>::failure(graphics_error(
             core::ErrorCode::invalid_state,
-            "A moved-from Presentation cannot present"));
+            "A moved-from Renderer cannot present"));
     }
     auto active_result = implementation_->require_active(
-        "Presentation::present_frame");
+        "Renderer::render_frame");
     if (!active_result) {
-        return core::Result<PresentStatus>::failure(
+        return core::Result<RenderStatus>::failure(
             std::move(active_result).error());
     }
     if (!valid_frame_data(frame_data)) {
-        return core::Result<PresentStatus>::failure(graphics_error(
+        return core::Result<RenderStatus>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
-            "Presentation frame view-projection matrices must be finite "
+            "Renderer frame view-projection matrices must be finite "
             "and its daylight settings and terrain render mode must be "
             "valid"));
     }
@@ -3425,14 +3425,14 @@ core::Result<PresentStatus> Presentation::present_frame(
         implementation_->swap_chain->GetCurrentBackBufferIndex();
     if (back_buffer_index >= back_buffer_count ||
         implementation_->back_buffers[back_buffer_index] == nullptr) {
-        return core::Result<PresentStatus>::failure(graphics_error(
+        return core::Result<RenderStatus>::failure(graphics_error(
             core::ErrorCode::invalid_state,
             "The swap chain returned an invalid back-buffer index"));
     }
 
     auto context_result = implementation_->begin_frame(back_buffer_index);
     if (!context_result) {
-        return core::Result<PresentStatus>::failure(
+        return core::Result<RenderStatus>::failure(
             std::move(context_result).error());
     }
     auto* const context = context_result.value();
@@ -3441,297 +3441,76 @@ core::Result<PresentStatus> Presentation::present_frame(
         back_buffer_index,
         frame_data);
     if (!probe_result) {
-        return core::Result<PresentStatus>::failure(
+        return core::Result<RenderStatus>::failure(
             std::move(probe_result).error());
     }
     auto timestamp_result =
         implementation_->allocate_timestamp_queries(*context);
     if (!timestamp_result) {
-        return core::Result<PresentStatus>::failure(
+        return core::Result<RenderStatus>::failure(
             std::move(timestamp_result).error());
     }
     const auto timestamp_query_base = timestamp_result.value();
 
-    render_graph::GraphBuilder graph_builder;
-    auto back_buffer_resource_result = graph_builder.import_resource(
-        "BackBuffer",
-        graph_back_buffer_id,
-        render_graph::ResourceState::present,
-        render_graph::ResourceState::present);
-    if (!back_buffer_resource_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(back_buffer_resource_result).error());
-    }
-    const auto back_buffer_resource =
-        back_buffer_resource_result.value();
-
-    auto depth_buffer_resource_result = graph_builder.import_resource(
-        "DepthBuffer",
-        graph_depth_buffer_id,
-        render_graph::ResourceState::depth_write,
-        render_graph::ResourceState::depth_write);
-    if (!depth_buffer_resource_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(depth_buffer_resource_result).error());
-    }
-    const auto depth_buffer_resource =
-        depth_buffer_resource_result.value();
-
-    auto checker_texture_resource_result = graph_builder.import_resource(
-        "CheckerTexture",
-        graph_checker_texture_id,
-        render_graph::ResourceState::pixel_shader_read,
-        render_graph::ResourceState::pixel_shader_read);
-    if (!checker_texture_resource_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(checker_texture_resource_result).error());
-    }
-    const auto checker_texture_resource =
-        checker_texture_resource_result.value();
-
-    auto cube_vertex_resource_result = graph_builder.import_resource(
-        "CubeVertexBuffer",
-        graph_cube_vertex_buffer_id,
-        render_graph::ResourceState::vertex_buffer,
-        render_graph::ResourceState::vertex_buffer);
-    if (!cube_vertex_resource_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(cube_vertex_resource_result).error());
-    }
-    const auto cube_vertex_resource =
-        cube_vertex_resource_result.value();
-
-    auto cube_index_resource_result = graph_builder.import_resource(
-        "CubeIndexBuffer",
-        graph_cube_index_buffer_id,
-        render_graph::ResourceState::index_buffer,
-        render_graph::ResourceState::index_buffer);
-    if (!cube_index_resource_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(cube_index_resource_result).error());
-    }
-    const auto cube_index_resource =
-        cube_index_resource_result.value();
-
-    auto terrain_vertex_resource_result =
-        graph_builder.import_resource(
-            "TerrainVertexBuffer",
-            graph_terrain_vertex_buffer_id,
-            render_graph::ResourceState::vertex_buffer,
-            render_graph::ResourceState::vertex_buffer);
-    if (!terrain_vertex_resource_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(terrain_vertex_resource_result).error());
-    }
-    const auto terrain_vertex_resource =
-        terrain_vertex_resource_result.value();
-
-    auto terrain_index_resource_result =
-        graph_builder.import_resource(
-            "TerrainIndexBuffer",
-            graph_terrain_index_buffer_id,
-            render_graph::ResourceState::index_buffer,
-            render_graph::ResourceState::index_buffer);
-    if (!terrain_index_resource_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(terrain_index_resource_result).error());
-    }
-    const auto terrain_index_resource =
-        terrain_index_resource_result.value();
-
-    auto terrain_pass_result = graph_builder.add_pass(
-        "Terrain",
-        [implementation = implementation_.get(),
-         context,
-         back_buffer_index,
-         back_buffer_resource,
-         depth_buffer_resource,
-         terrain_vertex_resource,
-         terrain_index_resource,
-         timestamp_query_base,
-         terrain_mode = frame_data.terrain_mode](
-            const render_graph::PassContext& pass_context) {
-            return implementation->record_terrain_pass(
-                pass_context,
-                back_buffer_resource,
-                depth_buffer_resource,
-                terrain_vertex_resource,
-                terrain_index_resource,
-                *context,
-                back_buffer_index,
-                timestamp_query_base,
-                terrain_mode);
+    auto compiled_graph_result = detail::compose_frame_pipeline(
+        detail::FramePipelineCallbacks{
+            .terrain =
+                [implementation = implementation_.get(),
+                 context,
+                 back_buffer_index,
+                 timestamp_query_base,
+                 terrain_mode = frame_data.terrain_mode](
+                    const render_graph::PassContext& pass_context,
+                    const detail::TerrainPassResources& resources) {
+                    return implementation->record_terrain_pass(
+                        pass_context,
+                        resources.back_buffer,
+                        resources.depth_buffer,
+                        resources.vertex_buffer,
+                        resources.index_buffer,
+                        *context,
+                        back_buffer_index,
+                        timestamp_query_base,
+                        terrain_mode);
+                },
+            .textured_cube =
+                [implementation = implementation_.get(),
+                 context,
+                 back_buffer_index,
+                 timestamp_query_base](
+                    const render_graph::PassContext& pass_context,
+                    const detail::TexturedCubePassResources& resources) {
+                    return implementation->record_textured_cube_pass(
+                        pass_context,
+                        resources.back_buffer,
+                        resources.depth_buffer,
+                        resources.checker_texture,
+                        resources.vertex_buffer,
+                        resources.index_buffer,
+                        *context,
+                        back_buffer_index,
+                        timestamp_query_base);
+                },
+            .skybox =
+                [implementation = implementation_.get(),
+                 context,
+                 back_buffer_index,
+                 timestamp_query_base](
+                    const render_graph::PassContext& pass_context,
+                    const detail::SkyboxPassResources& resources) {
+                    return implementation->record_skybox_pass(
+                        pass_context,
+                        resources.back_buffer,
+                        resources.depth_buffer,
+                        resources.vertex_buffer,
+                        resources.index_buffer,
+                        *context,
+                        back_buffer_index,
+                        timestamp_query_base);
+                },
         });
-    if (!terrain_pass_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(terrain_pass_result).error());
-    }
-    const auto terrain_pass = terrain_pass_result.value();
-    auto terrain_color_result = graph_builder.write(
-        terrain_pass,
-        back_buffer_resource,
-        render_graph::ResourceState::render_target);
-    if (!terrain_color_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(terrain_color_result).error());
-    }
-    auto terrain_depth_result = graph_builder.write(
-        terrain_pass,
-        depth_buffer_resource,
-        render_graph::ResourceState::depth_write);
-    if (!terrain_depth_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(terrain_depth_result).error());
-    }
-    auto terrain_vertex_read_result = graph_builder.read(
-        terrain_pass,
-        terrain_vertex_resource,
-        render_graph::ResourceState::vertex_buffer);
-    if (!terrain_vertex_read_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(terrain_vertex_read_result).error());
-    }
-    auto terrain_index_read_result = graph_builder.read(
-        terrain_pass,
-        terrain_index_resource,
-        render_graph::ResourceState::index_buffer);
-    if (!terrain_index_read_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(terrain_index_read_result).error());
-    }
-
-    auto cube_pass_result = graph_builder.add_pass(
-        "TexturedCube",
-        [implementation = implementation_.get(),
-         context,
-         back_buffer_index,
-         back_buffer_resource,
-         depth_buffer_resource,
-         checker_texture_resource,
-         cube_vertex_resource,
-         cube_index_resource,
-         timestamp_query_base](
-            const render_graph::PassContext& pass_context) {
-            return implementation->record_textured_cube_pass(
-                pass_context,
-                back_buffer_resource,
-                depth_buffer_resource,
-                checker_texture_resource,
-                cube_vertex_resource,
-                cube_index_resource,
-                *context,
-                back_buffer_index,
-                timestamp_query_base);
-        });
-    if (!cube_pass_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(cube_pass_result).error());
-    }
-    const auto cube_pass = cube_pass_result.value();
-
-    auto color_write_result = graph_builder.write(
-        cube_pass,
-        back_buffer_resource,
-        render_graph::ResourceState::render_target);
-    if (!color_write_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(color_write_result).error());
-    }
-    auto depth_write_result = graph_builder.write(
-        cube_pass,
-        depth_buffer_resource,
-        render_graph::ResourceState::depth_write);
-    if (!depth_write_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(depth_write_result).error());
-    }
-    auto checker_read_result = graph_builder.read(
-        cube_pass,
-        checker_texture_resource,
-        render_graph::ResourceState::pixel_shader_read);
-    if (!checker_read_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(checker_read_result).error());
-    }
-    auto cube_vertex_read_result = graph_builder.read(
-        cube_pass,
-        cube_vertex_resource,
-        render_graph::ResourceState::vertex_buffer);
-    if (!cube_vertex_read_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(cube_vertex_read_result).error());
-    }
-    auto cube_index_read_result = graph_builder.read(
-        cube_pass,
-        cube_index_resource,
-        render_graph::ResourceState::index_buffer);
-    if (!cube_index_read_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(cube_index_read_result).error());
-    }
-
-    auto skybox_pass_result = graph_builder.add_pass(
-        "Skybox",
-        [implementation = implementation_.get(),
-         context,
-         back_buffer_index,
-         back_buffer_resource,
-         depth_buffer_resource,
-         cube_vertex_resource,
-         cube_index_resource,
-         timestamp_query_base](
-            const render_graph::PassContext& pass_context) {
-            return implementation->record_skybox_pass(
-                pass_context,
-                back_buffer_resource,
-                depth_buffer_resource,
-                cube_vertex_resource,
-                cube_index_resource,
-                *context,
-                back_buffer_index,
-                timestamp_query_base);
-        });
-    if (!skybox_pass_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(skybox_pass_result).error());
-    }
-    const auto skybox_pass = skybox_pass_result.value();
-    auto skybox_color_result = graph_builder.write(
-        skybox_pass,
-        back_buffer_resource,
-        render_graph::ResourceState::render_target);
-    if (!skybox_color_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(skybox_color_result).error());
-    }
-    auto skybox_depth_result = graph_builder.read(
-        skybox_pass,
-        depth_buffer_resource,
-        render_graph::ResourceState::depth_read);
-    if (!skybox_depth_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(skybox_depth_result).error());
-    }
-    auto skybox_vertex_read_result = graph_builder.read(
-        skybox_pass,
-        cube_vertex_resource,
-        render_graph::ResourceState::vertex_buffer);
-    if (!skybox_vertex_read_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(skybox_vertex_read_result).error());
-    }
-    auto skybox_index_read_result = graph_builder.read(
-        skybox_pass,
-        cube_index_resource,
-        render_graph::ResourceState::index_buffer);
-    if (!skybox_index_read_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(skybox_index_read_result).error());
-    }
-
-    auto compiled_graph_result = std::move(graph_builder).compile();
     if (!compiled_graph_result) {
-        return core::Result<PresentStatus>::failure(
+        return core::Result<RenderStatus>::failure(
             std::move(compiled_graph_result).error());
     }
     auto compiled_graph = std::move(compiled_graph_result).value();
@@ -3748,8 +3527,8 @@ core::Result<PresentStatus> Presentation::present_frame(
 
     auto result = context->command_allocator->Reset();
     if (FAILED(result)) {
-        return core::Result<PresentStatus>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<RenderStatus>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 *implementation_->owner_device,
                 "ID3D12CommandAllocator::Reset",
                 result));
@@ -3758,8 +3537,8 @@ core::Result<PresentStatus> Presentation::present_frame(
         context->command_allocator.Get(),
         implementation_->terrain_solid_pipeline.Get());
     if (FAILED(result)) {
-        return core::Result<PresentStatus>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<RenderStatus>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 *implementation_->owner_device,
                 "ID3D12GraphicsCommandList::Reset",
                 result));
@@ -3774,7 +3553,7 @@ core::Result<PresentStatus> Presentation::present_frame(
         D3D12_QUERY_TYPE_TIMESTAMP,
         timestamp_query_index(
             timestamp_query_base,
-            detail::GpuTimestampQuery::frame_begin));
+            backend_detail::GpuTimestampQuery::frame_begin));
 
     // Buffer resources implicitly promote from COMMON for the copy and decay
     // after execution; the context fence prevents either side being reused
@@ -3787,50 +3566,50 @@ core::Result<PresentStatus> Presentation::present_frame(
         frame_probe_bytes);
 
     const std::array graph_resources{
-        detail::RenderGraphResourceBinding{
-            graph_back_buffer_id,
+        rhi_detail::RenderGraphResourceBinding{
+            detail::frame_back_buffer_external_id,
             implementation_->back_buffers[back_buffer_index].Get(),
         },
-        detail::RenderGraphResourceBinding{
-            graph_depth_buffer_id,
+        rhi_detail::RenderGraphResourceBinding{
+            detail::frame_depth_buffer_external_id,
             implementation_->depth_buffer.Get(),
         },
-        detail::RenderGraphResourceBinding{
-            graph_checker_texture_id,
+        rhi_detail::RenderGraphResourceBinding{
+            detail::frame_checker_texture_external_id,
             implementation_->checker_texture.Get(),
         },
-        detail::RenderGraphResourceBinding{
-            graph_cube_vertex_buffer_id,
+        rhi_detail::RenderGraphResourceBinding{
+            detail::frame_cube_vertex_buffer_external_id,
             implementation_->vertex_buffer.Get(),
         },
-        detail::RenderGraphResourceBinding{
-            graph_cube_index_buffer_id,
+        rhi_detail::RenderGraphResourceBinding{
+            detail::frame_cube_index_buffer_external_id,
             implementation_->index_buffer.Get(),
         },
-        detail::RenderGraphResourceBinding{
-            graph_terrain_vertex_buffer_id,
+        rhi_detail::RenderGraphResourceBinding{
+            detail::frame_terrain_vertex_buffer_external_id,
             implementation_->terrain_vertex_buffer.Get(),
         },
-        detail::RenderGraphResourceBinding{
-            graph_terrain_index_buffer_id,
+        rhi_detail::RenderGraphResourceBinding{
+            detail::frame_terrain_index_buffer_external_id,
             implementation_->terrain_index_buffer.Get(),
         },
     };
     auto graph_bindings_result =
-        detail::validate_render_graph_resource_bindings(
+        rhi_detail::validate_render_graph_resource_bindings(
             graph_resources);
     if (!graph_bindings_result) {
-        return core::Result<PresentStatus>::failure(
+        return core::Result<RenderStatus>::failure(
             std::move(graph_bindings_result).error());
     }
-    detail::LegacyRenderGraphTransitionRecorder transition_recorder{
+    rhi_detail::LegacyRenderGraphTransitionRecorder transition_recorder{
         implementation_->command_list.Get(),
         graph_resources,
     };
     auto graph_execution_result =
         compiled_graph.execute(transition_recorder);
     if (!graph_execution_result) {
-        return core::Result<PresentStatus>::failure(
+        return core::Result<RenderStatus>::failure(
             std::move(graph_execution_result).error());
     }
     const auto graph_execution = graph_execution_result.value();
@@ -3838,7 +3617,7 @@ core::Result<PresentStatus> Presentation::present_frame(
             compiled_graph.stats().transition_count ||
         graph_execution.transitions_recorded !=
             transition_recorder.recorded_transition_count()) {
-        return core::Result<PresentStatus>::failure(graphics_error(
+        return core::Result<RenderStatus>::failure(graphics_error(
             core::ErrorCode::invalid_state,
             "Render-graph execution recorded an inconsistent transition "
             "count"));
@@ -3855,7 +3634,7 @@ core::Result<PresentStatus> Presentation::present_frame(
         D3D12_QUERY_TYPE_TIMESTAMP,
         timestamp_query_index(
             timestamp_query_base,
-            detail::GpuTimestampQuery::frame_end));
+            backend_detail::GpuTimestampQuery::frame_end));
     implementation_->command_list->ResolveQueryData(
         implementation_->timestamp_query_heap.Get(),
         D3D12_QUERY_TYPE_TIMESTAMP,
@@ -3867,8 +3646,8 @@ core::Result<PresentStatus> Presentation::present_frame(
 
     result = implementation_->command_list->Close();
     if (FAILED(result)) {
-        return core::Result<PresentStatus>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<RenderStatus>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 *implementation_->owner_device,
                 "ID3D12GraphicsCommandList::Close",
                 result));
@@ -3880,15 +3659,15 @@ core::Result<PresentStatus> Presentation::present_frame(
 
     auto submit_result = implementation_->submit_frame(*context);
     if (!submit_result) {
-        return core::Result<PresentStatus>::failure(
+        return core::Result<RenderStatus>::failure(
             std::move(submit_result).error());
     }
     ++implementation_->statistics.cube_draw_calls;
     implementation_->statistics.cube_indices +=
-        detail::cube_indices.size();
+        backend_detail::cube_indices.size();
     ++implementation_->statistics.skybox_draw_calls;
     implementation_->statistics.skybox_indices +=
-        detail::skybox_index_count;
+        backend_detail::skybox_index_count;
     ++implementation_->statistics.terrain_draw_calls;
     if (frame_data.terrain_mode == TerrainRenderMode::wireframe) {
         ++implementation_->statistics.terrain_wireframe_draw_calls;
@@ -3909,8 +3688,8 @@ core::Result<PresentStatus> Presentation::present_frame(
         implementation_->synchronize_to_vertical_refresh ? 1 : 0,
         0);
     if (FAILED(result)) {
-        return core::Result<PresentStatus>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<RenderStatus>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 *implementation_->owner_device,
                 "IDXGISwapChain::Present",
                 result));
@@ -3918,36 +3697,36 @@ core::Result<PresentStatus> Presentation::present_frame(
 
     if (result == DXGI_STATUS_OCCLUDED) {
         ++implementation_->statistics.occluded_frames;
-        return core::Result<PresentStatus>::success(
-            PresentStatus::occluded);
+        return core::Result<RenderStatus>::success(
+            RenderStatus::occluded);
     }
     if (result != S_OK) {
-        return core::Result<PresentStatus>::failure(
-            detail::DeviceAccess::graphics_failure(
+        return core::Result<RenderStatus>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 *implementation_->owner_device,
                 "IDXGISwapChain::Present returned an unexpected status",
                 result));
     }
 
     ++implementation_->statistics.presented_frames;
-    return core::Result<PresentStatus>::success(PresentStatus::presented);
+    return core::Result<RenderStatus>::success(RenderStatus::presented);
 }
 
-core::Result<void> Presentation::resize(
-    const PresentationExtent extent)
+core::Result<void> Renderer::resize(
+    const RenderExtent extent)
 {
     if (implementation_ == nullptr) {
         return core::Result<void>::failure(graphics_error(
             core::ErrorCode::invalid_state,
-            "A moved-from Presentation cannot resize"));
+            "A moved-from Renderer cannot resize"));
     }
     if (!valid_extent(extent)) {
         return core::Result<void>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
-            "Presentation extent must be nonzero and within D3D12 limits"));
+            "Renderer extent must be nonzero and within D3D12 limits"));
     }
     auto active_result = implementation_->require_active(
-        "Presentation::resize");
+        "Renderer::resize");
     if (!active_result) {
         return active_result;
     }
@@ -3969,7 +3748,7 @@ core::Result<void> Presentation::resize(
         0);
     if (FAILED(resize_result)) {
         return core::Result<void>::failure(
-            detail::DeviceAccess::graphics_failure(
+            rhi_detail::DeviceAccess::graphics_failure(
                 *implementation_->owner_device,
                 "IDXGISwapChain::ResizeBuffers",
                 resize_result));
@@ -3993,7 +3772,7 @@ core::Result<void> Presentation::resize(
     return core::Result<void>::success();
 }
 
-core::Result<void> Presentation::shutdown()
+core::Result<void> Renderer::shutdown()
 {
     if (implementation_ == nullptr) {
         return core::Result<void>::success();
@@ -4001,26 +3780,26 @@ core::Result<void> Presentation::shutdown()
     return implementation_->shutdown();
 }
 
-PresentationExtent Presentation::extent() const noexcept
+RenderExtent Renderer::extent() const noexcept
 {
     SHARK_ENSURE(
         implementation_ != nullptr,
-        "A moved-from Presentation has no extent");
+        "A moved-from Renderer has no extent");
     return implementation_->current_extent;
 }
 
-const PresentationStats& Presentation::stats() const noexcept
+const RendererStats& Renderer::stats() const noexcept
 {
     SHARK_ENSURE(
         implementation_ != nullptr,
-        "A moved-from Presentation has no statistics");
+        "A moved-from Renderer has no statistics");
     return implementation_->statistics;
 }
 
-bool Presentation::is_shutdown() const noexcept
+bool Renderer::is_shutdown() const noexcept
 {
     return implementation_ == nullptr ||
         implementation_->shutdown_complete;
 }
 
-} // namespace shark::rhi::d3d12
+} // namespace shark::renderer

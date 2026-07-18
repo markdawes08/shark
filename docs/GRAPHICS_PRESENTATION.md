@@ -1,6 +1,6 @@
-# Direct3D 12 Presentation and Frame-Resource Contract
+# Renderer and Direct3D 12 Presentation/Frame-Resource Contract
 
-- **Completed through:** `T-002`
+- **Completed through:** `REN-001`
 - **Last verified:** July 18, 2026
 
 G-002 produced Shark's first pixels through a resize-safe Direct3D 12
@@ -21,43 +21,72 @@ terrain root signature, solid/wireframe pipelines, and a depth-tested
 diagnostic bounds draw while preserving the cube and sky paths. S-002A changes
 that sky to a procedural daylight model, shares its finite sun data with
 terrain, and removes the dormant cubemap from the per-frame graph without
-removing its startup asset proof. T-002 keeps every presentation resource and
+removing its startup asset proof. T-002 keeps every rendering resource and
 pass boundary while appending a cyan line-list pin derived from the canonical
 terrain surface query to the existing terrain buffers and `Terrain` callback.
+REN-001 preserves those pixels and all accounting while moving the public
+scene/pass boundary and production frame composer out of the D3D12 RHI.
 
 ## Public boundary and ownership
 
-`shark::rhi::d3d12::Presentation` is a move-only PIMPL. Its public header uses
-an opaque native-window pointer and engine-owned extent, color,
-`PresentationFrameData`, status, and statistics records plus pointer/size
-shader and generic texture-cube upload views; it exposes no Win32, DXGI,
-D3D12, WRL, or COM types. `PresentationFrameData` contains finite engine-owned
-row-major `view_projection` and `sky_view_projection` matrices plus finite
-daylight direction, disk, gradient, ambient, halo, and intensity values, which
-the per-frame call borrows while recording the terrain/cube/sky frame. It also
-selects the finite `TerrainRenderMode` (`solid` or `wireframe`).
+`shark::renderer::Renderer` is the move-only public PIMPL. Its public header
+defines `RenderExtent`, `RendererConfig`, `RenderFrameData`, `RenderStatus`,
+and `RendererStats`, plus COM-free shader and generic texture upload views.
+`RendererConfig` carries the opaque native-window pointer, physical extent,
+clear color, and borrowed shader-bytecode, cubemap, and terrain upload views,
+plus vertical-synchronization policy. `Renderer::create` consumes every
+pointer-based view synchronously.
+
+`RenderFrameData` contains finite engine-owned row-major `view_projection` and
+`sky_view_projection` matrices plus finite daylight direction, disk, gradient,
+ambient, halo, and intensity values, which `Renderer::render_frame` borrows
+while recording the terrain/cube/sky frame. It also selects the finite
+`TerrainRenderMode` (`solid` or `wireframe`).
 `TerrainMeshUploadView` lends interleaved position/normal vertices, triangle
 indices, eight-vertex/24-index bounds lines, and six-vertex/six-index query
-marker lines only during synchronous creation. The presentation layer receives
+marker lines only during synchronous creation. The renderer receives
 the already-derived marker geometry; it neither owns nor performs terrain
 surface queries.
 
-The internal `detail::DeviceAccess` bridge borrows the authoritative D3D12
-device and DXGI factory from `Device`. It does not transfer ownership. The
-required lifetime order is:
+There is no public `Presentation` class. Presentation, resize, and swap-chain
+operations still occur inside the private
+`engine/renderer/src/d3d12/renderer.cpp` backend. At the sandbox composition
+root, `Renderer::create` receives the authoritative
+`shark::rhi::d3d12::Device` by reference. The backend uses the private
+`rhi::d3d12::detail::DeviceAccess` bridge to borrow its native device and DXGI
+factory without transferring ownership. The required lifetime order is:
 
 ```text
-construct: Device -> Application/HWND -> Presentation
-destroy:   Presentation -> Application/HWND -> Device
+construct: Device -> Application/HWND -> Renderer
+destroy:   Renderer -> Application/HWND -> Device
 ```
 
-The sandbox calls the result-returning, idempotent `Presentation::shutdown`
+The sandbox calls the result-returning, idempotent `Renderer::shutdown`
 before destroying the HWND. The destructor is a fallback that logs a cleanup
 failure but cannot replace explicit validation.
 
+REN-001 also makes the source boundary explicit:
+
+- `engine/renderer/src/frame_pipeline.*` owns the production
+  `compose_frame_pipeline` policy: seven semantic imports, three pass
+  declarations, their access states, and `Terrain -> TexturedCube -> Skybox`;
+- `engine/renderer/src/d3d12` privately owns the cube, daylight, skybox, and
+  terrain scene helpers, scene-named timestamp layout/accumulator, and D3D12
+  renderer backend; and
+- `engine/rhi/d3d12/include` retains the public typed `Device`, while
+  `engine/rhi/d3d12/src` privately retains the device-access bridge, generic
+  frame-resource state machine, and legacy render-graph transition recorder.
+  No public scene-pass API remains in the RHI.
+
+The REN-001 acceptance baseline is intentionally exact: seven imports, three
+passes, two dependencies, four transitions, 16 elisions, five indexed draws,
+four geometry buffers, two textures, the existing PIX/timestamp hierarchy and
+eight-query layout, the 256-byte constants/probe record, and every resize,
+retirement, shutdown, and smoke count below are unchanged.
+
 ## Swap chain and physical extent
 
-The presentation object owns:
+The private D3D12 renderer backend owns:
 
 - one direct command queue;
 - one 24-entry timestamp query heap and one persistently mapped 192-byte
@@ -96,7 +125,7 @@ The DXGI factory is associated with the HWND using `DXGI_MWA_NO_ALT_ENTER`.
 Every significant D3D12 object is named. The platform manifests establish
 Per-Monitor DPI Awareness v2 before HWND creation, so the initial and resized
 swap-chain extents are the same physical client-pixel dimensions published by
-`Application`. Presentation rejects zero extents and dimensions above the D3D12
+`Application`. `Renderer` rejects zero extents and dimensions above the D3D12
 2D-resource limit before they can reach swap-chain or viewport state.
 
 DXGI's current back-buffer index selects the context; the CPU frame count is
@@ -106,7 +135,7 @@ has already retired.
 
 ## Frame acquisition, staging, and present
 
-Presentation creation records one direct-queue static upload submission for the
+Renderer creation records one direct-queue static upload submission for the
 cube and terrain vertex/index data, checker, and every cubemap face/mip. Its six
 initialization barriers transition the immutable resources to their final
 shader/input states, then it signals the normal
@@ -128,10 +157,11 @@ One frame performs the following work:
    context's CPU-only staging heap, and point the root CBV at the same GPU
    upload address;
 5. reserve the context's exact eight-query timestamp slice;
-6. build and compile one frame-local graph that imports back buffer, depth,
-   checker, cube vertex/index buffers, and terrain vertex/index buffers;
-   declares their exact shader/input reads; and orders `Terrain`,
-   `TexturedCube`, then the depth-reading procedural `Skybox`;
+6. ask the renderer-owned production `frame_pipeline` composer to build and
+   compile one frame-local graph that imports back buffer, depth, checker, cube
+   vertex/index buffers, and terrain vertex/index buffers; declares their
+   exact shader/input reads; and orders `Terrain`, `TexturedCube`, then the
+   depth-reading procedural `Skybox`;
 7. reset that context's command allocator and the shared command list with the
    immutable solid-terrain PSO;
 8. begin the `Frame` PIX event, write the frame-begin timestamp, and copy the
@@ -190,16 +220,18 @@ perform a bounded fence wait; G-003 removes only the unconditional queue drain
 after every frame.
 
 The generated shader byte arrays and CPU cubemap subresource views are borrowed
-only during synchronous creation. Presentation owns neither source code,
+only during synchronous creation. `Renderer` owns neither source code,
 shader artifacts, nor caller CPU pixels afterward. The root signatures, PSOs,
 cube/terrain buffers, checker, cubemap, and persistent texture heap remain valid
 across swap-chain resize and are released only after shutdown drains and retires
 every submitted frame.
 
-G-006's graph executor owns the per-frame whole-resource legacy transition
-barriers. It resolves the current imported resources immediately before graph
-execution and verifies that graph, executor, and recorder transition counts
-agree. Static-upload barriers remain in the focused startup upload path, and
+The renderer-owned `compose_frame_pipeline` owns semantic imports, passes, and
+access declarations. `shark::render_graph` compiles those declarations and
+owns the derived transition records. The private D3D12 RHI recorder resolves
+backend-supplied native bindings and emits the whole-resource legacy barriers;
+the private renderer backend cross-checks compiled, executed, and recorded
+counts. Static-upload barriers remain in the focused startup upload path, and
 the diagnostic probe continues to use D3D12 buffer promotion/decay. Enhanced
 barriers remain a later capability-gated graph backend.
 
@@ -249,7 +281,7 @@ drain, readback allocation, or resource barrier is added.
 ## Resize, minimize, and shutdown
 
 `WindowResizedEvent` carries the latest usable nonzero client extent. If it
-differs from the swap chain, presentation:
+differs from the swap chain, the renderer's D3D12 backend:
 
 1. drains its direct queue;
 2. consumes every fence-complete pending GPU timing sample, then retires every
@@ -291,10 +323,10 @@ aggregate overflow before mutation. Unit tests also prove an incomplete
 context refuses retirement or reset and that the fence timeline fails before
 wraparound.
 
-After explicit presentation shutdown, `Device::validate_debug_state` reports
+After explicit renderer shutdown, `Device::validate_debug_state` reports
 live D3D12 device children and inspects D3D12 and DXGI info-queue messages added
 since their preceding cursors. Corruption, errors, discarded bounded-queue
-messages, or live presentation children fail the process. Warnings remain
+messages, or live renderer-owned D3D12 children fail the process. Warnings remain
 visible and are not reclassified as errors.
 
 ## Fixed presentation smoke
@@ -314,7 +346,7 @@ deadline, and is registered with a 240-second CTest timeout. A successful run:
 
 - shows a real nonactivating window;
 - reaches its quarter checkpoint (250 normal or 30 focused), changes the
-  physical client area to `960x600`, verifies the presentation and depth
+  physical client area to `960x600`, verifies the renderer and depth
   extents follow it, and proves the projection aspect changed from the initial
   `1280x720`;
 - on the 1,000-frame paths, reaches frame 500, minimizes, proves the count does
@@ -366,11 +398,11 @@ deadline, and is registered with a 240-second CTest timeout. A successful run:
 - proves scene and sky matrix-change counts are each at least three for the
   initial frame, aspect-changing resize, and scripted yaw at the
   three-quarter checkpoint;
-- on paths that exercise minimization, verifies no terrain/cube/sky draw,
-  terrain-bounds draw, terrain-query-marker draw, texture binding, camera
-  upload, depth clear, PIX frame/pass event, timestamp write/resolve, or
-  timing-sample consumption occurs while minimized;
-- explicitly shuts down and validates presentation children;
+- on paths that exercise minimization, compares the complete `RendererStats`
+  snapshot and proves no counter changes while minimized, including draws,
+  graph work, uploads, texture bindings, clears, PIX events, timestamp
+  writes/resolves, or timing-sample consumption;
+- explicitly shuts down and validates renderer-owned D3D12 children;
 - posts and accepts the native close request; and
 - observes final HWND destruction.
 
@@ -392,10 +424,10 @@ unit tests.
 
 ## Explicit non-goals
 
-T-002 does not expose a public/general upload allocator, global upload ring,
+REN-001 does not expose a public/general upload allocator, global upload ring,
 persistent descriptor allocator, generic deferred-destruction system, or
 readback/image validation. Its timestamp query heap and readback buffer are a
-fixed presentation diagnostic, not a general query allocator or asynchronous
+fixed renderer diagnostic, not a general query allocator or asynchronous
 readback service. Its two-slot shader-visible heap, focused root signatures,
 static scene geometry, checker, retained startup cubemap SRV, and fixed PSOs
 remain deliberately specific to this proof, not a general mesh manager,
@@ -431,5 +463,5 @@ details plus manual PIX acceptance. See
 deployment, upload, and persistent-SRV rules, and
 [the skybox contract](SKYBOX.md) for the visible background acceptance. See
 [the terrain contract](TERRAIN.md) for the canonical surface-query contract,
-deterministic tile, and diagnostic rendering modes. The next increment is
-`REN-001`, followed by `T-003`.
+deterministic tile, and diagnostic rendering modes. `REN-001` was completed on
+July 18, 2026. The next increment is `T-003`, layered PBR terrain materials.

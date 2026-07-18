@@ -7,7 +7,7 @@
 #include <string>
 #include <utility>
 
-namespace shark::rhi::d3d12::detail {
+namespace shark::renderer::d3d12::detail {
 namespace {
 
 [[nodiscard]] core::Error timestamp_error(
@@ -217,4 +217,4 @@ std::uint64_t GpuTimingAccumulator::skybox_last_ticks() const noexcept
     return skybox_last_ticks_;
 }
 
-} // namespace shark::rhi::d3d12::detail
+} // namespace shark::renderer::d3d12::detail

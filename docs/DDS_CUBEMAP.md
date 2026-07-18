@@ -1,6 +1,6 @@
 # DDS Cubemap Asset and Upload Contract
 
-- **Completed through:** `T-002`
+- **Completed through:** `REN-001`
 - **Last verified:** July 18, 2026
 
 S-001 establishes Shark's first file-backed texture asset. It loads one
@@ -98,9 +98,9 @@ The build copies the tracked DDS to:
 
 The sandbox resolves that path from its executable module directory, not from
 the process working directory or source tree. It loads the asset before
-`Presentation::create`, converts its metadata to generic
+`shark::renderer::Renderer::create`, converts its metadata to generic
 `TextureCubeUploadView` records, and lends those views only for synchronous
-startup resource creation. Presentation retains no caller-owned CPU pointer.
+startup resource creation. `Renderer` retains no caller-owned CPU pointer.
 
 DirectXTex is a shared pinned dependency. vcpkg places `DirectXTex.dll` beside
 both supported executables; Debug and Release verification checks that the DLL
@@ -110,7 +110,8 @@ development outputs only.
 
 ## D3D12 resource and descriptor contract
 
-Presentation validates the generic upload view again before using D3D12. It
+The private D3D12 renderer backend validates the generic upload view again
+before using D3D12. It
 requires one square six-face RGBA8 cube, a valid partial or complete mip chain,
 exact face-major subresource count, and coherent dimensions and pitches. The
 selected adapter must report both texture-cube and shader-sampling support for
@@ -185,4 +186,7 @@ descriptor allocator. The retained orientation resource is not a reflection
 environment, image-based light, or hidden color input to the procedural sky.
 See [the skybox contract](SKYBOX.md) for the current visible daylight path.
 T-002 adds canonical terrain queries without changing this retained asset
-proof. `REN-001` is the next increment, followed by `T-003`.
+proof. REN-001 moves the public upload view into `RendererConfig` and the
+upload implementation into `engine/renderer/src/d3d12`; the D3D12 RHI no
+longer exposes a public `Presentation` class. REN-001 was completed on
+July 18, 2026. The next increment is `T-003`, layered PBR terrain materials.

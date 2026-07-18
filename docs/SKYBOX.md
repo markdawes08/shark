@@ -1,8 +1,8 @@
 # Procedural Daylight Sky Contract
 
-- **Completed through:** `T-002`
+- **Completed through:** `REN-001`
 - **Last verified:** July 18, 2026
-- **Next planned increment:** `REN-001` - renderer boundary cleanup
+- **Next planned increment:** `T-003` - layered PBR terrain materials
 
 S-002A is a bounded visual diversion before terrain work continues. It replaces
 the temporary flat-blue treatment of Shark's diagnostic cubemap with a basic
@@ -197,6 +197,9 @@ lighting, cubemap conversion, reflection probes, or final material system.
 
 The procedural daylight sky remains the stable basic background while the
 engine grows. T-002 adds canonical terrain queries and a cyan normal pin
-without changing this sky contract. Work now proceeds to `REN-001`, which must
-move renderer orchestration without changing pixels, pass order, or accounting;
-`T-003` terrain materials follow it.
+without changing this sky contract. REN-001 moves `DaylightSettings`, public
+frame input, production pass composition, and the D3D12 daylight/skybox scene
+helpers behind `shark::renderer::Renderer` without changing pixels, pass order,
+or accounting. There is no public D3D12 `Presentation` class. REN-001 was
+completed on July 18, 2026; work now proceeds to `T-003`, layered PBR terrain
+materials.

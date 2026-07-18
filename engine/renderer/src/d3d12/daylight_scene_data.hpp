@@ -1,27 +1,27 @@
 #pragma once
 
-#include <shark/rhi/d3d12/presentation.hpp>
+#include <shark/renderer/renderer.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 
-namespace shark::rhi::d3d12::detail {
+namespace shark::renderer::d3d12::detail {
 
 inline constexpr std::size_t daylight_constant_bytes =
-    sizeof(DaylightSettings);
+    sizeof(renderer::DaylightSettings);
 inline constexpr std::size_t daylight_direction_offset =
-    offsetof(DaylightSettings, direction_to_sun);
+    offsetof(renderer::DaylightSettings, direction_to_sun);
 inline constexpr std::size_t daylight_sun_color_offset =
-    offsetof(DaylightSettings, sun_color);
+    offsetof(renderer::DaylightSettings, sun_color);
 inline constexpr std::size_t daylight_zenith_color_offset =
-    offsetof(DaylightSettings, zenith_color);
+    offsetof(renderer::DaylightSettings, zenith_color);
 inline constexpr std::size_t daylight_horizon_color_offset =
-    offsetof(DaylightSettings, horizon_color);
+    offsetof(renderer::DaylightSettings, horizon_color);
 inline constexpr std::size_t daylight_nadir_color_offset =
-    offsetof(DaylightSettings, nadir_color);
+    offsetof(renderer::DaylightSettings, nadir_color);
 inline constexpr std::size_t daylight_sky_ambient_color_offset =
-    offsetof(DaylightSettings, sky_ambient_color);
+    offsetof(renderer::DaylightSettings, sky_ambient_color);
 
 static_assert(daylight_constant_bytes == 96);
 static_assert(daylight_direction_offset == 0);
@@ -58,7 +58,7 @@ static_assert(daylight_sky_ambient_color_offset == 80);
 }
 
 [[nodiscard]] inline bool valid_daylight_settings(
-    const DaylightSettings& settings) noexcept
+    const renderer::DaylightSettings& settings) noexcept
 {
     if (!math::is_finite(settings.direction_to_sun) ||
         !unit_interval(settings.sun_color) ||
@@ -172,7 +172,7 @@ static_assert(daylight_sky_ambient_color_offset == 80);
 }
 
 [[nodiscard]] inline math::Float3 evaluate_daylight_sky_linear(
-    const DaylightSettings& settings,
+    const renderer::DaylightSettings& settings,
     const math::Float3 direction) noexcept
 {
     const auto unit_direction = normalized(direction);
@@ -221,7 +221,7 @@ static_assert(daylight_sky_ambient_color_offset == 80);
 }
 
 [[nodiscard]] inline math::Float3 evaluate_daylight_illumination(
-    const DaylightSettings& settings,
+    const renderer::DaylightSettings& settings,
     const math::Float3 normal) noexcept
 {
     const auto unit_normal = normalized(normal);
@@ -249,4 +249,4 @@ static_assert(daylight_sky_ambient_color_offset == 80);
     return add(ambient, sunlight);
 }
 
-} // namespace shark::rhi::d3d12::detail
+} // namespace shark::renderer::d3d12::detail

@@ -8,7 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace shark::rhi::d3d12::detail {
+namespace shark::renderer::d3d12::detail {
 
 inline constexpr std::uint32_t terrain_vertex_stride =
     sizeof(float) * 6U;
@@ -67,4 +67,4 @@ inline constexpr std::uint32_t terrain_query_marker_index_count = 6;
 static_assert(terrain_vertex_stride == 24);
 static_assert(terrain_normal_offset == 12);
 
-} // namespace shark::rhi::d3d12::detail
+} // namespace shark::renderer::d3d12::detail

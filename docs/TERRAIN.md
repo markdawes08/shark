@@ -1,6 +1,6 @@
 # Canonical Terrain-Tile Contract
 
-- **Completed through:** `T-002`
+- **Completed through:** `REN-001`
 - **Last verified:** July 18, 2026
 
 T-001 verification snapshot: Debug and Release each passed the full `94/94`
@@ -49,7 +49,7 @@ spacing, nonfinite origins or heights, storage that does not match the declared
 dimensions, nonfinite generated positions, and degenerate or downward
 triangulation. Degenerate validation also rejects origins/spacings whose
 float-rounded adjacent sample coordinates collapse. This validation belongs to
-the canonical surface. The presentation-only `uint16` vertex limit is applied
+the canonical surface. The render-mesh-only `uint16` vertex limit is applied
 later by `build_lod0_mesh`; it is not a query-surface ownership limit.
 
 ## Fixed LOD0 surface
@@ -90,7 +90,7 @@ footprint, or either nonfinite coordinate, produces no sample.
 `sample_lod0_height` and `sample_lod0_normal` are focused views of that same
 operation. Heights are planar triangle interpolation, not bilinear heightfield
 interpolation. Query normals are constant per triangle and are not the smooth
-presentation normals.
+render normals.
 
 ## Bounds and ray queries
 
@@ -133,7 +133,7 @@ directly; acceleration belongs with later chunk/spatial-index work.
 and emits the same fixed cell indices. It also accumulates each adjacent
 triangle's unnormalized cross product and normalizes the sum to produce one
 area-weighted smooth normal per vertex. Those normals make the visible surface
-readable under daylight, but they are presentation data only.
+readable under daylight, but they are derived render data only.
 
 `HeightTileSurface` never reads the mesh, its smooth normals, GPU buffers, or a
 D3D12 resource. Rendering receives derived vertices plus one query-derived
@@ -166,7 +166,8 @@ one static upload submission, and six startup transitions.
 
 ## Frame graph and diagnostics
 
-T-002 preserves the three-pass order:
+T-002 preserves the three-pass order. REN-001 moves its production declaration
+to the renderer-owned `frame_pipeline` composer without changing it:
 
 1. `Terrain` clears color/depth, draws the selected solid or wireframe surface,
    then draws the magenta AABB and cyan query marker.
@@ -281,7 +282,11 @@ water, editor, dynamic mouse picking, general debug-draw service, or general
 scene/mesh resource system. The fixed ray proof and static pin are diagnostics,
 not gameplay or an editor selection tool.
 
-The upcoming increment is `REN-001`: move renderer orchestration out of the
-D3D12 presentation class without changing pixels, resources, pass order, or
-smoke accounting. `T-003` layered PBR terrain materials follows that boundary
-cleanup.
+REN-001 moves `TerrainRenderMode`, mesh upload configuration, statistics, the
+production frame composer, and the terrain D3D12 scene helper behind
+`shark::renderer::Renderer`. `HeightTileSurface` remains platform-independent
+and authoritative; there is no public D3D12 `Presentation` class. REN-001 was
+completed on July 18, 2026 without changing pixels, resources, the
+`7/3/2/4/16` graph contract, five draws, four geometry buffers, PIX/timestamps,
+or smoke accounting. The upcoming increment is `T-003`, layered PBR terrain
+materials.

@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <span>
 
-namespace shark::rhi::d3d12::detail {
+namespace shark::renderer::d3d12::detail {
 
 inline constexpr std::size_t gpu_timestamp_queries_per_frame = 8;
 inline constexpr std::size_t gpu_timestamp_result_bytes_per_frame =
@@ -88,4 +88,4 @@ private:
     std::uint64_t skybox_last_ticks_{};
 };
 
-} // namespace shark::rhi::d3d12::detail
+} // namespace shark::renderer::d3d12::detail

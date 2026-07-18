@@ -1,6 +1,6 @@
 # Direct3D 12 Presentation and Frame-Resource Contract
 
-- **Completed through:** `S-002A`
+- **Completed through:** `T-002`
 - **Last verified:** July 18, 2026
 
 G-002 produced Shark's first pixels through a resize-safe Direct3D 12
@@ -21,7 +21,9 @@ terrain root signature, solid/wireframe pipelines, and a depth-tested
 diagnostic bounds draw while preserving the cube and sky paths. S-002A changes
 that sky to a procedural daylight model, shares its finite sun data with
 terrain, and removes the dormant cubemap from the per-frame graph without
-removing its startup asset proof.
+removing its startup asset proof. T-002 keeps every presentation resource and
+pass boundary while appending a cyan line-list pin derived from the canonical
+terrain surface query to the existing terrain buffers and `Terrain` callback.
 
 ## Public boundary and ownership
 
@@ -35,8 +37,10 @@ daylight direction, disk, gradient, ambient, halo, and intensity values, which
 the per-frame call borrows while recording the terrain/cube/sky frame. It also
 selects the finite `TerrainRenderMode` (`solid` or `wireframe`).
 `TerrainMeshUploadView` lends interleaved position/normal vertices, triangle
-indices, and eight-vertex/24-index bounds lines only during synchronous
-creation.
+indices, eight-vertex/24-index bounds lines, and six-vertex/six-index query
+marker lines only during synchronous creation. The presentation layer receives
+the already-derived marker geometry; it neither owns nor performs terrain
+surface queries.
 
 The internal `detail::DeviceAccess` bridge borrows the authoritative D3D12
 device and DXGI factory from `Device`. It does not transfer ownership. The
@@ -71,9 +75,9 @@ The presentation object owns:
   vertices and one committed default-heap index buffer containing 36
   `uint16_t` indices;
 - one committed default-heap terrain vertex buffer containing the 1,089
-  position/normal surface vertices followed by eight bounds vertices and one
-  terrain index buffer containing 6,144 triangle indices followed by 24 bounds
-  line indices;
+  position/normal surface vertices followed by eight bounds vertices and six
+  query-marker vertices, and one terrain index buffer containing 6,144 triangle
+  indices followed by 24 bounds-line indices and six marker-line indices;
 - one committed default-heap `8x8` one-mip
   `DXGI_FORMAT_R8G8B8A8_UNORM` procedural checker texture;
 - one committed default-heap `8x8`, one-mip, six-face
@@ -134,8 +138,8 @@ One frame performs the following work:
    256-byte frame record from the upload heap to the context's
    default-heap probe destination on the direct queue, outside the graph;
 9. execute the graph, which records `PRESENT -> RENDER_TARGET`, invokes
-   `Terrain` to clear and draw the selected surface plus bounds, invokes
-   `TexturedCube` without clearing, transitions depth
+   `Terrain` to clear and draw the selected surface, bounds, and query marker,
+   invokes `TexturedCube` without clearing, transitions depth
    `DEPTH_WRITE -> DEPTH_READ`, invokes the b0-only procedural `Skybox` with the
    read-only DSV, then restores color/depth final states;
 10. write the frame-end timestamp, resolve all eight query values to the
@@ -218,7 +222,7 @@ and six cubemap copies plus six initialization barriers. Each submitted
 `Frame` begins after command-list reset and encloses the diagnostic probe copy,
 graph barriers, all three passes, and timestamp resolve. Each nested marker
 contains only its callback's bind/draw work; `Terrain` also owns the attachment
-clears and its bounds draw.
+clears, bounds draw, and cyan query-marker draw.
 
 The direct queue's GPU tick frequency is queried once. The global query/readback
 allocation is split exactly:
@@ -323,9 +327,13 @@ deadline, and is registered with a 240-second CTest timeout. A successful run:
 - matches `frame_context_acquisitions`, `camera_constant_updates`,
   `upload_allocations`, `descriptor_allocations`, and fence-tracked
   `frame_submissions` to successful plus occluded present attempts;
-- proves one terrain surface draw and one 24-index terrain-bounds draw, one
-  cube and one skybox draw with 36 indices each, one depth clear, and one
-  texture binding per frame submission;
+- proves five indexed draws per frame: one 6,144-index terrain surface draw,
+  one 24-index terrain-bounds draw, one six-index terrain-query-marker draw,
+  and one 36-index draw for each of the cube and skybox; it also proves one
+  depth clear and one texture binding per frame submission;
+- proves the static query marker contains exactly six vertices and six indices,
+  and its draw count equals frame submissions with six submitted indices per
+  draw;
 - proves both terrain modes execute at least once and their counts sum to the
   terrain surface draw count;
 - proves one graph compilation/execution, seven imports, three pass
@@ -359,9 +367,9 @@ deadline, and is registered with a 240-second CTest timeout. A successful run:
   initial frame, aspect-changing resize, and scripted yaw at the
   three-quarter checkpoint;
 - on paths that exercise minimization, verifies no terrain/cube/sky draw,
-  terrain-bounds draw, texture binding, camera upload, depth clear, PIX
-  frame/pass event, timestamp write/resolve, or timing-sample consumption
-  occurs while minimized;
+  terrain-bounds draw, terrain-query-marker draw, texture binding, camera
+  upload, depth clear, PIX frame/pass event, timestamp write/resolve, or
+  timing-sample consumption occurs while minimized;
 - explicitly shuts down and validates presentation children;
 - posts and accepts the native close request; and
 - observes final HWND destruction.
@@ -384,7 +392,7 @@ unit tests.
 
 ## Explicit non-goals
 
-S-002A does not expose a public/general upload allocator, global upload ring,
+T-002 does not expose a public/general upload allocator, global upload ring,
 persistent descriptor allocator, generic deferred-destruction system, or
 readback/image validation. Its timestamp query heap and readback buffer are a
 fixed presentation diagnostic, not a general query allocator or asynchronous
@@ -392,6 +400,12 @@ readback service. Its two-slot shader-visible heap, focused root signatures,
 static scene geometry, checker, retained startup cubemap SRV, and fixed PSOs
 remain deliberately specific to this proof, not a general mesh manager,
 material layout, pipeline cache, or hot-reload boundary.
+
+The query-derived marker adds no GPU resource, descriptor, PSO, graph pass,
+dependency, barrier, PIX event, or timestamp. The established frame remains
+seven imports, three passes, two dependencies, four recorded barriers, 16
+elisions, four geometry buffers, and eight timestamps. Its query ownership and
+metric semantics remain in the platform-independent terrain module.
 
 The graph remains frame-local, direct-queue, serial, and limited to imported
 whole resources. It adds no graph-owned transients, lifetime/aliasing analysis,
@@ -416,5 +430,6 @@ details plus manual PIX acceptance. See
 [the DDS cubemap contract](DDS_CUBEMAP.md) for asset validation, orientation,
 deployment, upload, and persistent-SRV rules, and
 [the skybox contract](SKYBOX.md) for the visible background acceptance. See
-[the terrain contract](TERRAIN.md) for the deterministic tile and diagnostic
-rendering modes.
+[the terrain contract](TERRAIN.md) for the canonical surface-query contract,
+deterministic tile, and diagnostic rendering modes. The next increment is
+`REN-001`, followed by `T-003`.

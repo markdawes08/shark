@@ -52,12 +52,17 @@ inline constexpr D3D12_PRIMITIVE_TOPOLOGY terrain_topology =
     D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 inline constexpr D3D12_PRIMITIVE_TOPOLOGY terrain_bounds_topology =
     D3D_PRIMITIVE_TOPOLOGY_LINELIST;
+inline constexpr D3D12_PRIMITIVE_TOPOLOGY
+    terrain_query_marker_topology =
+        D3D_PRIMITIVE_TOPOLOGY_LINELIST;
 inline constexpr D3D12_DEPTH_WRITE_MASK terrain_depth_write_mask =
     cube_depth_write_mask;
 inline constexpr D3D12_DEPTH_WRITE_MASK terrain_bounds_depth_write_mask =
     D3D12_DEPTH_WRITE_MASK_ZERO;
 inline constexpr D3D12_COMPARISON_FUNC terrain_depth_comparison =
     cube_depth_comparison;
+inline constexpr std::uint32_t terrain_query_marker_vertex_count = 6;
+inline constexpr std::uint32_t terrain_query_marker_index_count = 6;
 
 static_assert(terrain_vertex_stride == 24);
 static_assert(terrain_normal_offset == 12);

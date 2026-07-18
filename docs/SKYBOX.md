@@ -1,8 +1,8 @@
 # Procedural Daylight Sky Contract
 
-- **Completed through:** `S-002A`
+- **Completed through:** `T-002`
 - **Last verified:** July 18, 2026
-- **Next planned increment:** `T-002` - canonical terrain queries
+- **Next planned increment:** `REN-001` - renderer boundary cleanup
 
 S-002A is a bounded visual diversion before terrain work continues. It replaces
 the temporary flat-blue treatment of Shark's diagnostic cubemap with a basic
@@ -150,8 +150,11 @@ depth write/read transitions around the sky pass. Removing the cubemap import
 removes its two equal-state elisions. Only the checker cube binds a texture, so
 the exact per-frame texture-binding count is now one.
 
-No pass, draw, PSO, timestamp interval, attachment, or queue is added. The
-existing PIX hierarchy and eight-query frame layout remain:
+T-002 adds one query-marker draw inside `Terrain`, bringing the submitted-frame
+total to five indexed draws, but adds no pass, PSO, timestamp interval,
+attachment, or queue. The marker is packed into the existing terrain buffers,
+so the static scene remains four geometry buffers. The existing PIX hierarchy
+and eight-query frame layout remain:
 
 ```text
 Frame
@@ -192,6 +195,8 @@ clouds, cloud shadows, shadow maps, cascaded sunlight, dynamic time of day,
 weather-driven sky state, HDR framebuffer, exposure, tone mapping, image-based
 lighting, cubemap conversion, reflection probes, or final material system.
 
-The procedural daylight sky is the stable basic background while the engine
-grows. Work now returns to the planned roadmap at `T-002`: exact height, normal,
-bounds, and ray queries from the canonical terrain data.
+The procedural daylight sky remains the stable basic background while the
+engine grows. T-002 adds canonical terrain queries and a cyan normal pin
+without changing this sky contract. Work now proceeds to `REN-001`, which must
+move renderer orchestration without changing pixels, pass order, or accounting;
+`T-003` terrain materials follow it.

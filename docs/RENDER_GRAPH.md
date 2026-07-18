@@ -1,7 +1,7 @@
 # Minimal Render-Graph Contract
 
-- **Completed through:** `S-002A`
-- **Presentation integration verified through:** `S-002A`
+- **Completed through:** `T-002`
+- **Presentation integration verified through:** `T-002`
 - **Last updated:** July 18, 2026
 
 G-006 moves the existing textured-cube frame behind Shark's first render graph
@@ -10,7 +10,9 @@ passes, read-only depth, and exact persistent texture-read declarations. T-001
 adds the first `Terrain` pass and explicitly declares the cube and terrain
 input-assembler buffers. S-002A replaces cubemap sampling with a procedural
 daylight sky and removes that now-unused texture from the per-frame graph while
-retaining its startup asset proof. The graph remains a small,
+retaining its startup asset proof. T-002 appends a canonical-query diagnostic
+draw to the existing `Terrain` callback and packed terrain buffers without
+changing the graph. The graph remains a small,
 platform-independent planner plus a Direct3D 12 legacy-barrier executor. It
 proves declared resource access, deterministic dependency compilation, and
 centralized frame barriers before later work adds more passes or graph-owned
@@ -171,8 +173,8 @@ staging its frame context. It imports:
 | `CheckerTexture` | `pixel_shader_read` | `pixel_shader_read` | persistent checker texture |
 | `CubeVertexBuffer` | `vertex_buffer` | `vertex_buffer` | persistent 24-vertex cube buffer |
 | `CubeIndexBuffer` | `index_buffer` | `index_buffer` | persistent 36-index cube buffer |
-| `TerrainVertexBuffer` | `vertex_buffer` | `vertex_buffer` | persistent terrain and bounds vertices |
-| `TerrainIndexBuffer` | `index_buffer` | `index_buffer` | persistent terrain and bounds indices |
+| `TerrainVertexBuffer` | `vertex_buffer` | `vertex_buffer` | persistent surface, bounds, and query-marker vertices |
+| `TerrainIndexBuffer` | `index_buffer` | `index_buffer` | persistent surface, bounds, and query-marker indices |
 
 The graph contains three passes. `Terrain` declares:
 
@@ -198,9 +200,10 @@ The graph contains three passes. `Terrain` declares:
 
 The terrain callback resolves its four declared resources, clears color/depth,
 draws the selected 6,144-index surface PSO, and draws the always-present
-24-index bounds box. The cube callback resolves its five declared resources;
-the procedural-sky callback resolves its four. Neither clears. Color/depth
-hazards produce
+24-index bounds box plus the six-index cyan surface-query marker with the same
+line PSO. The cube callback resolves its five declared resources; the
+procedural-sky callback resolves its four. Neither clears. Color/depth hazards
+produce
 `Terrain -> TexturedCube -> Skybox`, deduplicated to two dependencies. The
 compiled frame therefore has:
 
@@ -261,8 +264,12 @@ terrain_draw_calls + cube_draw_calls + skybox_draw_calls
     == render_graph_pass_executions
 ```
 
-The separate terrain bounds draw is part of the `Terrain` callback and therefore
-does not add another graph pass.
+The separate terrain bounds and query-marker draws are part of the `Terrain`
+callback and therefore do not add graph passes. A submitted frame has five
+indexed draws but still exactly seven imports, three pass executions, two
+dependencies, four recorded barriers, and 16 elided transitions. The marker is
+packed into the existing terrain buffers, so the static scene still has four
+geometry buffers.
 
 The hardware and normal packaged-WARP presentation processes complete exactly
 1,000 successful presents. The focused packaged-WARP GPU-validation process
@@ -295,7 +302,9 @@ automatic graph-owned PIX/timestamp instrumentation. Graph compilation is
 intentionally frame-local and serial. T-001's three named GPU intervals use the
 existing presentation and callback boundaries without broadening this graph
 contract. S-002A changes only the sky's declared inputs and the exact import
-and elision counts; it adds no pass, transition, or scheduler behavior.
+and elision counts; it adds no pass, transition, or scheduler behavior. T-002
+changes only commands inside `Terrain`; it adds no import, pass, dependency,
+transition, scheduler behavior, PIX event, or timestamp.
 
 See [the presentation and frame-resource contract](GRAPHICS_PRESENTATION.md)
 for submission and resize ownership, [the HLSL pipeline contract](GRAPHICS_PIPELINE.md)
@@ -305,4 +314,5 @@ for the commands recorded by the graphics passes, and
 [the terrain contract](TERRAIN.md) for the first pass and input-assembler
 declarations, and
 [the GPU diagnostics contract](GPU_DIAGNOSTICS.md) for the presentation-owned
-marker/query lifecycle.
+PIX-marker/timestamp-query lifecycle. The next increment is `REN-001`, followed
+by `T-003`.

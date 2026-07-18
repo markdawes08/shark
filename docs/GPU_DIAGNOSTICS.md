@@ -1,6 +1,6 @@
 # Direct3D 12 GPU Diagnostics Contract
 
-- **Completed through:** `S-002A`
+- **Completed through:** `T-002`
 - **Last verified:** July 18, 2026
 
 G-007 adds the first bounded GPU diagnostics to the existing G-006
@@ -8,7 +8,9 @@ presentation path. S-002 retains the frame interval and adds separate stable
 PIX/timestamp intervals for the `TexturedCube` and `Skybox` graph passes.
 T-001 adds the `Terrain` pass interval and expands the one-time named upload to
 the complete static scene. S-002A keeps every marker and timestamp boundary
-while changing `Skybox` to a b0-only procedural daylight draw.
+while changing `Skybox` to a b0-only procedural daylight draw. T-002 appends a
+cyan, query-derived line-list pin to the existing `Terrain` interval without
+adding or moving a PIX marker or timestamp.
 
 The diagnostics remain fixed-capacity and fence-delayed while the visible
 contract uses three passes, seven resource imports, four attachment
@@ -28,9 +30,9 @@ The marker names and boundaries are part of the diagnostics contract:
 
 | Marker | Color index | Frequency | Command-list boundary |
 |---|---:|---:|---|
-| `StaticSceneUpload` | 3 | Once for the one static upload submission | Begins after the upload command list is reset; contains the cube and terrain vertex/index buffer copies, checker-texture copy, six cubemap face/mip copies, and six initialization transitions; ends before command-list close, execution, fence signal, and the required initialization wait |
+| `StaticSceneUpload` | 3 | Once for the one static upload submission | Begins after the upload command list is reset; contains the cube and packed surface/bounds/query-marker terrain vertex/index buffer copies, checker-texture copy, six cubemap face/mip copies, and six initialization transitions; ends before command-list close, execution, fence signal, and the required initialization wait |
 | `Frame` | 1 | Once per submitted frame | Begins after the reusable frame command list is reset; contains the frame timestamp interval, 256-byte constants/probe copy, complete render-graph execution, and timestamp resolve; ends before command-list close, execution, fence signal, and `Present` |
-| `Terrain` | 4 | Once per graph-pass execution | Begins after declared color/depth and terrain-buffer access is validated; contains the pass timestamp interval, attachment clears, selected solid/wireframe surface draw, and depth-tested bounds-line draw; ends before the callback returns |
+| `Terrain` | 4 | Once per graph-pass execution | Begins after declared color/depth and terrain-buffer access is validated; contains the pass timestamp interval, attachment clears, selected solid/wireframe surface draw, depth-tested bounds-line draw, and depth-tested cyan query-marker draw; ends before the callback returns |
 | `TexturedCube` | 2 | Once per graph-pass execution | Begins inside the graph callback after declared resource access is validated; contains the pass timestamp interval, attachment and checker binding, and indexed draw without clearing; ends before the callback returns |
 | `Skybox` | 3 | Once per graph-pass execution | Begins after its declared color/depth and cube-buffer access is validated; contains its timestamp interval, b0-only procedural-sky setup, read-only DSV, and reused 36-index draw; ends before the callback returns |
 
@@ -77,7 +79,7 @@ Each submitted frame writes exactly eight timestamps in this order:
 |---:|---|---|
 | 0 | `frame_begin` | Immediately after the `Frame` PIX marker begins and before the per-frame diagnostic probe copy |
 | 1 | `terrain_begin` | Immediately after the `Terrain` marker begins and before attachment clears |
-| 2 | `terrain_end` | Immediately after the surface and bounds draws and before the terrain marker ends |
+| 2 | `terrain_end` | Immediately after the surface, bounds, and query-marker draws and before the terrain marker ends |
 | 3 | `textured_cube_begin` | Immediately after the `TexturedCube` marker begins and before attachment/resource setup |
 | 4 | `textured_cube_end` | Immediately after the cube draw and before its marker ends |
 | 5 | `skybox_begin` | Immediately after the `Skybox` marker begins and before read-only depth/resource setup |
@@ -95,7 +97,7 @@ reset frame command list
   -> graph transition: PRESENT -> RENDER_TARGET
   -> begin PIX "Terrain"
        -> write terrain_begin
-       -> clear/bind/draw surface, bind/draw bounds
+       -> clear/bind/draw surface, bind/draw bounds, bind/draw query marker
        -> write terrain_end
      end PIX "Terrain"
   -> begin PIX "TexturedCube"
@@ -179,10 +181,10 @@ queue submission, the fence signal, swap-chain `Present`, display latency, and
 the one-time static upload.
 
 The terrain, cube, and sky durations are each their named end minus begin.
-Terrain timing includes its clears, selected surface setup/draw, and bounds
-setup/draw. Cube timing includes setup and indexed draw; sky timing includes
-daylight-CBV setup, the read-only DSV, and indexed draw. All three exclude graph
-barriers and callback resource-access validation.
+Terrain timing includes its clears, selected surface setup/draw, bounds
+setup/draw, and query-marker setup/draw. Cube timing includes setup and indexed
+draw; sky timing includes daylight-CBV setup, the read-only DSV, and indexed
+draw. All three exclude graph barriers and callback resource-access validation.
 
 These are stable measurement boundaries, not fixed performance expectations.
 Exact values depend on the selected adapter, driver, power state, validation
@@ -214,7 +216,19 @@ gpu_timing_samples == frame_submissions
 render_graph_resource_imports == frame_submissions * 7
 render_graph_elided_transitions == frame_submissions * 16
 texture_bindings == frame_submissions
+
+terrain_query_marker_draw_calls == frame_submissions
+terrain_query_marker_indices == terrain_query_marker_draw_calls * 6
+terrain_query_marker_vertex_count == 6
+terrain_query_marker_index_count == 6
 ```
+
+Each submitted frame therefore contains five indexed draws: terrain surface,
+terrain bounds, terrain query marker, textured cube, and sky. The marker is
+packed into the existing terrain buffers, so startup still creates four
+geometry buffers. The graph and diagnostics totals remain seven imports, three
+passes, two dependencies, four barriers, 16 elisions, and eight timestamp
+writes per frame.
 
 The aggregate checks also require:
 
@@ -235,10 +249,10 @@ gpu_skybox_min_ticks <= gpu_skybox_max_ticks
 ```
 
 While the window is minimized, no frame submission, graph execution, frame or
-pass PIX marker, timestamp allocation, resolve batch, consumed sample, draw,
-camera update, or depth clear may advance. The existing smoke additionally
-retains exactly seven imports, four graph barriers, 16 elided transitions, and
-one checker-texture binding per frame.
+pass PIX marker, timestamp allocation, resolve batch, consumed sample, terrain
+query-marker draw, other draw, camera update, or depth clear may advance. The
+existing smoke additionally retains exactly seven imports, four graph barriers,
+16 elided transitions, and one checker-texture binding per frame.
 
 The successful smoke summary contains these reproducible fields:
 
@@ -291,8 +305,8 @@ For manual PIX acceptance:
 2. Capture a rendered frame after the window appears.
 3. Confirm the GPU event hierarchy contains one `Frame` scope with sequential
    nested `Terrain`, `TexturedCube`, and `Skybox` scopes. `Terrain` contains
-   the indexed surface draw and indexed bounds-line draw; each other pass has
-   one indexed draw.
+   the indexed surface draw, indexed bounds-line draw, and indexed six-index
+   cyan query-marker draw; each other pass has one indexed draw.
 4. Confirm the graph owns all four attachment transitions inside `Frame`: the
    back buffer enters render-target state before `Terrain`, depth enters
    read state before `Skybox`, and both attachments return to their imported
@@ -323,12 +337,15 @@ The render graph remains frame-local and serial. T-001 adds only the explicit
 terrain pass and persistent scene-buffer declarations; it does not add general
 scheduling, transient-resource allocation, or queue selection. S-002A changes
 the sky callback's resource declarations without changing its diagnostic
-interval. See
+interval. T-002 adds one draw inside that existing interval; it adds no PIX
+scope, timestamp, query heap slot, graph pass, resource, dependency, or barrier.
+See
 [the render-graph contract](RENDER_GRAPH.md) for pass/barrier ownership and
 [the presentation contract](GRAPHICS_PRESENTATION.md) for frame-context,
 resize, and shutdown ownership. See [the skybox contract](SKYBOX.md) for the
 visual and orientation acceptance procedure and
 [the DDS cubemap contract](DDS_CUBEMAP.md) for the retained startup texture
 contract.
-See [the terrain contract](TERRAIN.md) for the deterministic tile and its
-diagnostic rendering modes.
+See [the terrain contract](TERRAIN.md) for the canonical surface query,
+deterministic tile, and diagnostic rendering modes. The next increment is
+`REN-001`, followed by `T-003`.

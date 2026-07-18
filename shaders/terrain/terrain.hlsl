@@ -25,11 +25,17 @@ VertexOutput VSMain(const VertexInput input)
 
 float4 PSMain(const VertexOutput input) : SV_Target0
 {
-    // T-001 encodes the bounds overlay with a negative-Y sentinel normal.
-    // Keep it unmistakable while the terrain surface gains daylight shading.
+    // A negative-Y sentinel selects diagnostic lines. Absolute X selects
+    // magenta versus cyan through the complementary green channel, while
+    // absolute Z supplies blue.
     if (input.normal.y < -0.5F)
     {
-        return float4(1.0F, 0.0F, 1.0F, 1.0F);
+        const float3 encoded = saturate(abs(input.normal));
+        return float4(
+            encoded.x,
+            1.0F - encoded.x,
+            encoded.z,
+            1.0F);
     }
 
     const float3 unit_normal = normalize(input.normal);

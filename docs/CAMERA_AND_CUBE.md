@@ -1,6 +1,6 @@
 # Camera, Reversed-Z Depth, Cube, and Skybox Contract
 
-- **Completed through:** `S-002A`
+- **Completed through:** `T-002`
 - **Last verified:** July 18, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
@@ -16,7 +16,10 @@ the first terrain tile and drawing terrain before the cube.
 S-002A keeps that translation-free cube and far-depth technique but replaces
 the diagnostic cubemap's visible contribution with a continuous procedural
 daylight gradient, sun disk, and halo. The same fixed direction-to-sun now
-provides simple ambient-plus-Lambert terrain illumination.
+provides simple ambient-plus-Lambert terrain illumination. T-002 preserves
+every camera, matrix, depth, and input convention while adding a cyan terrain
+normal pin whose anchor and geometric direction come from the canonical
+surface query.
 
 This remains a deliberately narrow proof. It establishes conventions and
 lifetime rules that later sky, terrain, rain, and water passes can reuse; it is
@@ -112,13 +115,13 @@ deterministically in memory. Adjacent texels alternate between
 identifier, color-space metadata, compression, mip generation, or streaming
 behavior.
 
-Presentation records the cube and terrain vertex/index buffers, checker, and
-S-001 cubemap copies into one `StaticSceneUpload` direct-queue submission
-during startup. Six barriers transition the buffers to their input-assembler
-states and both textures to `PIXEL_SHADER_RESOURCE`, then it signals the normal
-monotonic direct fence and performs one bounded startup wait before releasing
-the temporary upload storage. No copy queue, background transfer, or per-frame
-static upload exists.
+Presentation records the cube and packed surface/bounds/query-marker terrain
+vertex/index buffers, checker, and S-001 cubemap copies into one
+`StaticSceneUpload` direct-queue submission during startup. Six barriers
+transition the buffers to their input-assembler states and both textures to
+`PIXEL_SHADER_RESOURCE`, then it signals the normal monotonic direct fence and
+performs one bounded startup wait before releasing the temporary upload
+storage. No copy queue, background transfer, or per-frame static upload exists.
 
 ## Resource binding and shaders
 
@@ -199,9 +202,10 @@ skips that already-covered interval.
 
 The permanent accounting contract requires:
 
-- one terrain draw, one bounds draw, one cube draw, one skybox draw, 36 indices
-  for each cube-based draw, one checker binding, one frame-constant upload, and
-  one depth clear per submitted frame;
+- five indexed draws per submitted frame: one terrain surface, one 24-index
+  bounds box, one six-index cyan query marker, one 36-index cube, and one
+  36-index skybox; plus one checker binding, one frame-constant upload, and one
+  depth clear;
 - one graph compilation/execution, three pass executions, seven imports, two
   dependencies, four recorded transitions, and 16 elided transitions per frame;
 - frame submissions equal successful plus occluded present attempts;
@@ -213,8 +217,8 @@ The permanent accounting contract requires:
   bounded fence wait before the first frame;
 - depth-resource and read-only DSV-view creations each equal
   `resize_count + 1`;
-- the normal paths prove no draw, texture bind, frame-constant upload, graph
-  work, or depth clear occurs while minimized;
+- the normal paths prove no query-marker or other draw, texture bind,
+  frame-constant upload, graph work, or depth clear occurs while minimized;
 - scene and sky matrix-change counts are each at least three, covering the
   initial matrix, aspect-changing resize, and scripted yaw at the
   three-quarter checkpoint (frame 750 normally or frame 90 under focused
@@ -231,9 +235,11 @@ The permanent accounting contract requires:
 The smoke does not read back or compare pixels. Manual acceptance requires a
 clearly textured cube, a continuous procedural daylight background with a warm
 fixed-world sun, unchanged sky direction under translation, correct near/far
-occlusion, perspective that does not stretch after resize, and clean
-minimize/restore and shutdown. No cube face, edge, or corner may appear as a
-painted wall. See [the sky procedure](SKYBOX.md#manual-visual-acceptance).
+occlusion, a cyan terrain pin anchored to the displayed surface and pointing
+along its exact geometric normal, perspective that does not stretch after
+resize, and clean minimize/restore and shutdown. No cube face, edge, or corner
+may appear as a painted wall. See
+[the sky procedure](SKYBOX.md#manual-visual-acceptance).
 
 CPU coverage is discovered through the existing `unit.` CTest prefix from
 `math_tests.cpp`, `camera_tests.cpp`, `camera_controller_tests.cpp`,
@@ -246,12 +252,17 @@ Graphics coverage is registered as
 
 ## Explicit non-goals
 
-S-002A adds only fixed LDR procedural daylight and simple unshadowed terrain
+T-002 retains the fixed LDR procedural daylight and simple unshadowed terrain
 illumination beside the retained S-001 startup asset proof. It adds no general
 DDS/WIC/glTF importer, runtime mip generation, compression, texture streaming,
 HDR conversion, material/PBR system, shadow map, atmospheric scattering,
 cloud, exposure, time-of-day, image-based lighting, terrain streaming/LOD, or
 content database.
+
+The query marker adds no camera state, control, matrix, GPU resource, PSO,
+graph pass, dependency, barrier, PIX event, or timestamp. The established
+seven imports, three passes, two dependencies, four barriers, 16 elisions, four
+geometry buffers, and eight timestamps remain exact.
 
 It also adds no general mesh/resource/descriptor manager, typed GPU handles,
 placed-resource pool, copy queue, deferred uploader, shader reflection, runtime
@@ -267,4 +278,5 @@ with ordered `Terrain`, `TexturedCube`, and `Skybox` passes. See
 [the DDS cubemap contract](DDS_CUBEMAP.md) for the source texture, and
 [the skybox contract](SKYBOX.md) for the visible procedural daylight rules.
 See [the terrain contract](TERRAIN.md) for its separate geometry and
-diagnostic rendering contract. T-002 remains the next increment.
+canonical query/diagnostic rendering contract. The next increment is
+`REN-001`, followed by `T-003`.

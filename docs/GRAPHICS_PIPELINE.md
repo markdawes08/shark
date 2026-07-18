@@ -1,6 +1,6 @@
 # HLSL Graphics Pipeline Contract
 
-- **Completed through:** `S-002A`
+- **Completed through:** `T-002`
 - **Last verified:** July 18, 2026
 
 G-004 established one reproducible path from project-owned HLSL to a real
@@ -14,7 +14,9 @@ pipelines, not a general shader asset system or renderer abstraction. T-001
 adds a build-time position/normal terrain program, a dedicated root signature,
 solid/wireframe surface PSOs, and a bounds-line PSO. S-002A keeps those shader
 targets and PSOs while replacing visible cubemap sampling with a procedural
-daylight sky and sharing the same sun constants with terrain lighting.
+daylight sky and sharing the same sun constants with terrain lighting. T-002
+reuses the bounds-line PSO and terrain shader for a cyan line-list pin whose
+anchor and direction come from the canonical terrain surface query.
 
 ## Pinned compiler boundary
 
@@ -117,8 +119,10 @@ byte offset 12 from a 24-byte interleaved stream. It transforms position by the
 same scene matrix and passes the area-weighted smooth normal to the pixel
 shader. The terrain pixel shader normalizes that value and produces a temporary
 Lambert-lit terrain color using the same direction, sun color, intensity, and
-sky ambient as the visible sun. Bounds retain their constant diagnostic color
-rather than being interpreted as a lit surface.
+sky ambient as the visible sun. Negative-Y sentinel normals bypass lighting and
+encode line colors: `{1, -1, 1}` keeps the bounds magenta, while
+`{0, -1, 1}` makes T-002's exact surface-normal pin cyan. These sentinel values
+are presentation data and are not terrain surface normals.
 
 The shared root-CBV layout is exact:
 
@@ -179,7 +183,8 @@ The solid and wireframe terrain surface PSOs use position/normal input,
 triangle topology, culling disabled, opaque color writes, reversed-Z
 `GREATER_EQUAL`, and depth writes enabled; they differ only in fill mode. The
 terrain-bounds PSO uses line topology and disables depth writes while retaining
-the same depth comparison.
+the same depth comparison. T-002 uses that same line PSO for both the bounds
+and query-marker draws; no fourth terrain PSO is created.
 
 PSO creation cannot occur unexpectedly in the frame loop. All PSOs and both
 root signatures survive swap-chain resize because none depends on the
@@ -206,7 +211,8 @@ Every non-minimized frame then:
 4. executes the graph's pre-terrain back-buffer transition;
 5. invokes `Terrain`, which clears the current attachments, selects solid or
    wireframe, draws 6,144 triangle indices, then draws 24 depth-tested bounds
-   indices without writing depth;
+   indices and six depth-tested cyan query-marker indices without writing
+   depth;
 6. invokes `TexturedCube`, which preserves the current attachments, binds the
    RTV/DSV pair, root signature, checker descriptor heap, root CBV, SRV table,
    physical-pixel viewport/scissor, vertex/index buffers, and triangle-list
@@ -218,12 +224,12 @@ Every non-minimized frame then:
 9. submits, signals the context fence, and presents through the established
    G-003 lifecycle.
 
-The fixed presentation smoke requires four indexed draws (terrain surface,
-terrain bounds, textured cube, and skybox), one frame-constant upload, one
-depth clear, one checker-texture binding, three pass executions, seven imported
-resources, two dependencies, four graph transitions, and 16 elided transitions
-per frame. It runs solid terrain for the first half and wireframe terrain for
-the second half.
+The fixed presentation smoke requires five indexed draws (terrain surface,
+terrain bounds, terrain query marker, textured cube, and skybox), one
+frame-constant upload, one depth clear, one checker-texture binding, three pass
+executions, seven imported resources, two dependencies, four graph transitions,
+and 16 elided transitions per frame. It runs solid terrain for the first half
+and wireframe terrain for the second half.
 Hardware and normal packaged WARP must each complete 1,000 successful presents.
 The focused packaged-WARP GPU-validation path completes 120 successful presents
 with resize and rotation checks at frames 30 and 90, intentionally skips the
@@ -232,16 +238,17 @@ deadline plus a 240-second CTest timeout. Every path requires zero DirectX
 corruption/errors and no live D3D12 presentation children.
 
 The smoke does not read back or compare pixels. Visual acceptance is the
-Lambert-lit or wireframe terrain and depth-tested bounds, procedurally textured
-cube with stable perspective and correct hidden-surface occlusion, and a
-translation-invariant, rotation-responsive procedural daylight sky.
+Lambert-lit or wireframe terrain, depth-tested magenta bounds, and cyan
+query-derived normal pin; a procedurally textured cube with stable perspective
+and correct hidden-surface occlusion; and a translation-invariant,
+rotation-responsive procedural daylight sky.
 Command submission,
 indexed-draw/depth accounting, compiler checks, debug-layer validation, and
 WARP provide the permanent automated contract.
 
 ## Explicit non-goals
 
-S-002A adds no general shader artifact database, reflection, root-signature
+T-002 adds no general shader artifact database, reflection, root-signature
 versioning system, persistent descriptor allocator, PSO hash/cache, runtime
 compilation, hot reload, general texture/material loading, runtime mip
 generation, material/PBR system, or image comparison. Its focused root
@@ -250,6 +257,11 @@ PSOs remain specific to the terrain/cube/sky proof. The graph provides only
 frame-local pass/access/barrier orchestration; it is not a shader asset,
 pipeline-layout, or material abstraction.
 
+The marker changes neither the shader-stage set nor the PSO count. It adds no
+resource, descriptor, pass, dependency, barrier, PIX event, or timestamp; the
+established seven imports, three passes, two dependencies, four barriers, 16
+elisions, four geometry buffers, and eight timestamps remain exact.
+
 See [the camera and textured-cube contract](CAMERA_AND_CUBE.md) for the
 coordinate, input, geometry, texture, depth, resize, and acceptance rules. See
 [the minimal render-graph contract](RENDER_GRAPH.md) for the pass declaration
@@ -257,8 +269,9 @@ and barrier execution around this pipeline. See
 [the DDS cubemap contract](DDS_CUBEMAP.md) for the retained startup texture,
 and [the skybox contract](SKYBOX.md) for procedural daylight and depth
 behavior.
-See [the terrain contract](TERRAIN.md) for the deterministic surface and
-diagnostic rendering modes.
+See [the terrain contract](TERRAIN.md) for the canonical surface query,
+deterministic surface, and diagnostic rendering modes. The next increment is
+`REN-001`, followed by `T-003`.
 
 ## Primary references
 

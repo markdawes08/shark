@@ -285,6 +285,14 @@ static_assert(
     constexpr std::size_t bounds_index_count = 24U;
     constexpr std::size_t bounds_index_bytes =
         bounds_index_count * sizeof(std::uint16_t);
+    constexpr auto query_marker_vertex_count =
+        static_cast<std::size_t>(
+            detail::terrain_query_marker_vertex_count);
+    constexpr auto query_marker_index_count =
+        static_cast<std::size_t>(
+            detail::terrain_query_marker_index_count);
+    constexpr std::size_t query_marker_index_bytes =
+        query_marker_index_count * sizeof(std::uint16_t);
     const auto valid_vertex_stream = [=](
         const void* const data,
         const std::size_t count,
@@ -302,7 +310,11 @@ static_assert(
         !valid_vertex_stream(
             terrain.bounds_vertices,
             terrain.bounds_vertex_count,
-            terrain.bounds_vertex_stride)) {
+            terrain.bounds_vertex_stride) ||
+        !valid_vertex_stream(
+            terrain.query_marker_vertices,
+            terrain.query_marker_vertex_count,
+            terrain.query_marker_vertex_stride)) {
         return core::Result<void>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
             "Terrain vertex streams must use bounded interleaved float3 "
@@ -312,16 +324,22 @@ static_assert(
         terrain.index_count == 0 ||
         terrain.index_count % 3U != 0 ||
         terrain.index_count >
-            (maximum_view_bytes - bounds_index_bytes) /
+            (maximum_view_bytes -
+             bounds_index_bytes -
+             query_marker_index_bytes) /
                 sizeof(std::uint16_t) ||
         terrain.bounds_indices == nullptr ||
         terrain.bounds_vertex_count != 8 ||
         terrain.bounds_index_count != bounds_index_count ||
-        terrain.bounds_index_count % 2U != 0) {
+        terrain.bounds_index_count % 2U != 0 ||
+        terrain.query_marker_indices == nullptr ||
+        terrain.query_marker_vertex_count != query_marker_vertex_count ||
+        terrain.query_marker_index_count != query_marker_index_count ||
+        terrain.query_marker_index_count % 2U != 0) {
         return core::Result<void>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
             "Terrain index streams must contain bounded triangle and "
-            "eight-corner AABB line data"));
+            "fixed diagnostic line data"));
     }
     for (std::size_t index = 0;
          index < terrain.index_count;
@@ -340,6 +358,17 @@ static_assert(
             return core::Result<void>::failure(graphics_error(
                 core::ErrorCode::invalid_argument,
                 "Terrain AABB indices reference a missing vertex"));
+        }
+    }
+    for (std::size_t index = 0;
+         index < terrain.query_marker_index_count;
+         ++index) {
+        if (terrain.query_marker_indices[index] >=
+            terrain.query_marker_vertex_count) {
+            return core::Result<void>::failure(graphics_error(
+                core::ErrorCode::invalid_argument,
+                "Terrain query-marker indices reference a missing "
+                "vertex"));
         }
     }
     return core::Result<void>::success();
@@ -1097,6 +1126,15 @@ public:
             terrain_triangle_index_count,
             static_cast<INT>(terrain_vertex_count),
             0);
+        command_list->IASetPrimitiveTopology(
+            detail::terrain_query_marker_topology);
+        command_list->DrawIndexedInstanced(
+            terrain_query_marker_index_count,
+            1,
+            terrain_triangle_index_count + terrain_bounds_index_count,
+            static_cast<INT>(
+                terrain_vertex_count + terrain_bounds_vertex_count),
+            0);
 
         command_list->EndQuery(
             timestamp_query_heap.Get(),
@@ -1520,6 +1558,10 @@ public:
             static_cast<UINT64>(
                 terrain.bounds_vertex_count *
                 terrain.bounds_vertex_stride);
+        const auto terrain_query_marker_vertex_bytes =
+            static_cast<UINT64>(
+                terrain.query_marker_vertex_count *
+                terrain.query_marker_vertex_stride);
         const auto terrain_index_bytes =
             static_cast<UINT64>(
                 terrain.index_count * sizeof(std::uint16_t));
@@ -1527,20 +1569,30 @@ public:
             static_cast<UINT64>(
                 terrain.bounds_index_count *
                 sizeof(std::uint16_t));
+        const auto terrain_query_marker_index_bytes =
+            static_cast<UINT64>(
+                terrain.query_marker_index_count *
+                sizeof(std::uint16_t));
         const auto terrain_vertex_upload_offset =
             (index_upload_offset + index_bytes + 3U) & ~UINT64{3U};
         const auto terrain_bounds_vertex_upload_offset =
             (terrain_vertex_upload_offset +
              terrain_vertex_bytes + 3U) & ~UINT64{3U};
-        const auto terrain_index_upload_offset =
+        const auto terrain_query_marker_vertex_upload_offset =
             (terrain_bounds_vertex_upload_offset +
              terrain_bounds_vertex_bytes + 3U) & ~UINT64{3U};
+        const auto terrain_index_upload_offset =
+            (terrain_query_marker_vertex_upload_offset +
+             terrain_query_marker_vertex_bytes + 3U) & ~UINT64{3U};
         const auto terrain_bounds_index_upload_offset =
             (terrain_index_upload_offset +
              terrain_index_bytes + 3U) & ~UINT64{3U};
-        const auto texture_upload_base =
+        const auto terrain_query_marker_index_upload_offset =
             (terrain_bounds_index_upload_offset +
-             terrain_bounds_index_bytes +
+             terrain_bounds_index_bytes + 3U) & ~UINT64{3U};
+        const auto texture_upload_base =
+            (terrain_query_marker_index_upload_offset +
+             terrain_query_marker_index_bytes +
              D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1U) &
             ~UINT64{D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT - 1U};
 
@@ -1617,7 +1669,9 @@ public:
         ++statistics.geometry_buffer_creations;
 
         const auto terrain_vertex_description = buffer_description(
-            terrain_vertex_bytes + terrain_bounds_vertex_bytes);
+            terrain_vertex_bytes +
+            terrain_bounds_vertex_bytes +
+            terrain_query_marker_vertex_bytes);
         result = native_device->CreateCommittedResource(
             &default_heap,
             D3D12_HEAP_FLAG_NONE,
@@ -1645,7 +1699,9 @@ public:
         ++statistics.geometry_buffer_creations;
 
         const auto terrain_index_description = buffer_description(
-            terrain_index_bytes + terrain_bounds_index_bytes);
+            terrain_index_bytes +
+            terrain_bounds_index_bytes +
+            terrain_query_marker_index_bytes);
         result = native_device->CreateCommittedResource(
             &default_heap,
             D3D12_HEAP_FLAG_NONE,
@@ -1903,6 +1959,11 @@ public:
             static_cast<std::size_t>(
                 terrain_bounds_vertex_bytes));
         std::memcpy(
+            upload_data + terrain_query_marker_vertex_upload_offset,
+            terrain.query_marker_vertices,
+            static_cast<std::size_t>(
+                terrain_query_marker_vertex_bytes));
+        std::memcpy(
             upload_data + terrain_index_upload_offset,
             terrain.indices,
             static_cast<std::size_t>(terrain_index_bytes));
@@ -1911,6 +1972,11 @@ public:
             terrain.bounds_indices,
             static_cast<std::size_t>(
                 terrain_bounds_index_bytes));
+        std::memcpy(
+            upload_data + terrain_query_marker_index_upload_offset,
+            terrain.query_marker_indices,
+            static_cast<std::size_t>(
+                terrain_query_marker_index_bytes));
         constexpr UINT64 checker_source_row_bytes =
             detail::checker_width * 4U;
         static_assert(
@@ -2081,6 +2147,12 @@ public:
             terrain_bounds_vertex_upload_offset,
             terrain_bounds_vertex_bytes);
         command_list->CopyBufferRegion(
+            terrain_vertex_buffer.Get(),
+            terrain_vertex_bytes + terrain_bounds_vertex_bytes,
+            upload_buffer.Get(),
+            terrain_query_marker_vertex_upload_offset,
+            terrain_query_marker_vertex_bytes);
+        command_list->CopyBufferRegion(
             terrain_index_buffer.Get(),
             0,
             upload_buffer.Get(),
@@ -2092,6 +2164,12 @@ public:
             upload_buffer.Get(),
             terrain_bounds_index_upload_offset,
             terrain_bounds_index_bytes);
+        command_list->CopyBufferRegion(
+            terrain_index_buffer.Get(),
+            terrain_index_bytes + terrain_bounds_index_bytes,
+            upload_buffer.Get(),
+            terrain_query_marker_index_upload_offset,
+            terrain_query_marker_index_bytes);
         D3D12_TEXTURE_COPY_LOCATION texture_destination{};
         texture_destination.pResource = checker_texture.Get();
         texture_destination.Type =
@@ -2193,26 +2271,38 @@ public:
         terrain_vertex_buffer_view.BufferLocation =
             terrain_vertex_buffer->GetGPUVirtualAddress();
         terrain_vertex_buffer_view.SizeInBytes = static_cast<UINT>(
-            terrain_vertex_bytes + terrain_bounds_vertex_bytes);
+            terrain_vertex_bytes +
+            terrain_bounds_vertex_bytes +
+            terrain_query_marker_vertex_bytes);
         terrain_vertex_buffer_view.StrideInBytes =
             detail::terrain_vertex_stride;
         terrain_index_buffer_view.BufferLocation =
             terrain_index_buffer->GetGPUVirtualAddress();
         terrain_index_buffer_view.SizeInBytes = static_cast<UINT>(
-            terrain_index_bytes + terrain_bounds_index_bytes);
+            terrain_index_bytes +
+            terrain_bounds_index_bytes +
+            terrain_query_marker_index_bytes);
         terrain_index_buffer_view.Format = detail::terrain_index_format;
         terrain_vertex_count =
             static_cast<UINT>(terrain.vertex_count);
         terrain_triangle_index_count =
             static_cast<UINT>(terrain.index_count);
+        terrain_bounds_vertex_count =
+            static_cast<UINT>(terrain.bounds_vertex_count);
         terrain_bounds_index_count =
             static_cast<UINT>(terrain.bounds_index_count);
+        terrain_query_marker_index_count =
+            static_cast<UINT>(terrain.query_marker_index_count);
         statistics.terrain_vertex_count = terrain.vertex_count;
         statistics.terrain_index_count = terrain.index_count;
         statistics.terrain_bounds_vertex_count =
             terrain.bounds_vertex_count;
         statistics.terrain_bounds_index_count =
             terrain.bounds_index_count;
+        statistics.terrain_query_marker_vertex_count =
+            terrain.query_marker_vertex_count;
+        statistics.terrain_query_marker_index_count =
+            terrain.query_marker_index_count;
         return core::Result<void>::success();
     }
 
@@ -2385,7 +2475,9 @@ public:
     D3D12_INDEX_BUFFER_VIEW terrain_index_buffer_view{};
     UINT terrain_vertex_count{};
     UINT terrain_triangle_index_count{};
+    UINT terrain_bounds_vertex_count{};
     UINT terrain_bounds_index_count{};
+    UINT terrain_query_marker_index_count{};
     std::array<float, 16> last_camera_matrix{};
     bool has_last_camera_matrix{};
     std::array<float, 16> last_skybox_matrix{};
@@ -3805,10 +3897,13 @@ core::Result<PresentStatus> Presentation::present_frame(
         ++implementation_->statistics.terrain_solid_draw_calls;
     }
     ++implementation_->statistics.terrain_bounds_draw_calls;
+    ++implementation_->statistics.terrain_query_marker_draw_calls;
     implementation_->statistics.terrain_indices +=
         implementation_->terrain_triangle_index_count;
     implementation_->statistics.terrain_bounds_indices +=
         implementation_->terrain_bounds_index_count;
+    implementation_->statistics.terrain_query_marker_indices +=
+        implementation_->terrain_query_marker_index_count;
 
     result = implementation_->swap_chain->Present(
         implementation_->synchronize_to_vertical_refresh ? 1 : 0,

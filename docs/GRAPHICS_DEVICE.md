@@ -1,6 +1,6 @@
 # Direct3D 12 Device Contract
 
-- **Completed through:** `S-002A`
+- **Completed through:** `T-002`
 - **Last verified:** July 18, 2026
 
 G-001 establishes adapter discovery, diagnostics, capability reporting, and
@@ -65,7 +65,9 @@ G-005 keeps that diagnostic boundary while adding the camera constants,
 shader-visible checker binding, indexed geometry, static upload submission, and
 reversed-Z depth resource. G-006 keeps the same device and removal-diagnostic
 boundary while routing the two per-frame attachment transitions through the
-minimal render-graph executor.
+minimal render-graph executor. T-001, S-002A, and T-002 preserve that device
+boundary while adding terrain, procedural daylight, canonical CPU terrain
+queries, and the query-derived diagnostic draw.
 
 If a debugger is attached, corruption and error messages also request a debug
 break. Unattended processes count and report those severities instead of
@@ -97,13 +99,14 @@ Selection rules are strict:
 `--gpu-smoke` and `--capabilities` create no window and exit after device
 verification. `--present-smoke` accepts the normal GPU selectors and optional
 GPU-based validation, creates a real window, presents exactly 1,000 successful
-frames containing the indexed terrain, bounds, cube, and skybox, verifies
-camera/depth/resource/graph lifecycles, and exits. The default interactive path
-keeps the device alive while the free-fly camera, daylight-lit diagnostic
-terrain, textured cube, and procedural daylight sky run as the graph's
-`Terrain`, `TexturedCube`, and `Skybox` passes until the window is closed. The
-startup cubemap remains allocated as an asset/upload proof but is not imported,
-bound, or sampled per frame.
+frames containing the indexed terrain surface, bounds, cyan terrain-query
+marker, cube, and skybox, verifies camera/depth/resource/graph lifecycles, and
+exits. The default interactive path keeps the device alive while the free-fly
+camera, daylight-lit diagnostic terrain and query-normal pin, textured cube,
+and procedural daylight sky run as the graph's `Terrain`, `TexturedCube`, and
+`Skybox` passes until the window is closed. The startup cubemap remains
+allocated as an asset/upload proof but is not imported, bound, or sampled per
+frame.
 
 ## Required and optional capabilities
 
@@ -180,7 +183,9 @@ The presentation smoke additionally verifies all three frame contexts are
 reused, every submission compiles and executes exactly three graph passes with
 seven imports, two dependencies, four emitted barriers, and 16 elided
 transitions plus one checker-texture binding, and every submission retires
-during explicit shutdown before frame resources are released.
+during explicit shutdown before frame resources are released. T-002 retains
+four geometry buffers and eight timestamps per frame while requiring five
+indexed draws: surface, bounds, query marker, cube, and sky.
 
 Presentation shutdown explicitly drains and releases its command list,
 terrain/cube/skybox PSOs, both root signatures, descriptor heap,
@@ -196,6 +201,8 @@ draw path. See [the camera and textured-cube contract](CAMERA_AND_CUBE.md) for
 the G-005 input, math, depth, static-resource, and acceptance rules. See
 [the minimal render-graph contract](RENDER_GRAPH.md) for the G-006
 platform-independent planner and D3D12 legacy-barrier executor.
-See [the terrain contract](TERRAIN.md) for the T-001 deterministic tile and
-diagnostic rendering modes, and [the skybox contract](SKYBOX.md) for the
-S-002A procedural daylight background and shared terrain light.
+See [the terrain contract](TERRAIN.md) for the T-002 canonical query,
+deterministic tile, and diagnostic rendering modes, and
+[the skybox contract](SKYBOX.md) for the S-002A procedural daylight background
+and shared terrain light. T-002 adds no device capability or lifetime policy;
+the next increment is `REN-001`, followed by `T-003`.

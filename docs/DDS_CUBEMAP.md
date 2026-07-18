@@ -1,6 +1,6 @@
 # DDS Cubemap Asset and Upload Contract
 
-- **Completed through:** `S-002A`
+- **Completed through:** `T-002`
 - **Last verified:** July 18, 2026
 
 S-001 establishes Shark's first file-backed texture asset. It loads one
@@ -164,11 +164,13 @@ cubemap_srgb_resources == 1
 
 The startup path remains exactly one static submission, one
 `StaticSceneUpload` PIX event, and one bounded initialization wait. The normal
-frame graph now has seven imports, ordered
-`Terrain`/`TexturedCube`/`Skybox` passes, four attachment transitions, 16
-elided same-state transitions, one checker binding, and eight timestamps per
-frame. Cubemap creation/upload counters remain startup invariants, but there is
-no per-frame cubemap read or binding to count.
+frame graph now has seven imports, three ordered
+`Terrain`/`TexturedCube`/`Skybox` passes, two dependencies, four attachment
+transitions, 16 elided same-state transitions, one checker binding, five
+indexed draws, and eight timestamps per frame. T-002's query marker is packed
+into the existing terrain buffers, preserving four total geometry buffers.
+Cubemap creation/upload counters remain startup invariants, but there is no
+per-frame cubemap read or binding to count.
 Hardware and normal WARP execute 1,000 successful presents; focused WARP with
 GPU-based validation executes 120 presents, retaining resize and rotation while
 intentionally skipping the normal paths' minimize/restore interval, with a
@@ -182,4 +184,5 @@ load general 2D materials, create asset IDs or caches, or establish a general
 descriptor allocator. The retained orientation resource is not a reflection
 environment, image-based light, or hidden color input to the procedural sky.
 See [the skybox contract](SKYBOX.md) for the current visible daylight path.
-T-002 remains the next increment.
+T-002 adds canonical terrain queries without changing this retained asset
+proof. `REN-001` is the next increment, followed by `T-003`.

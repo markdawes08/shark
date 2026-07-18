@@ -33,6 +33,9 @@ TEST_CASE(
     STATIC_REQUIRE(
         terrain_bounds_topology == D3D_PRIMITIVE_TOPOLOGY_LINELIST);
     STATIC_REQUIRE(
+        terrain_query_marker_topology ==
+        D3D_PRIMITIVE_TOPOLOGY_LINELIST);
+    STATIC_REQUIRE(
         terrain_depth_write_mask == D3D12_DEPTH_WRITE_MASK_ALL);
     STATIC_REQUIRE(
         terrain_bounds_depth_write_mask ==
@@ -40,4 +43,6 @@ TEST_CASE(
     STATIC_REQUIRE(
         terrain_depth_comparison ==
         D3D12_COMPARISON_FUNC_GREATER_EQUAL);
+    STATIC_REQUIRE(terrain_query_marker_vertex_count == 6);
+    STATIC_REQUIRE(terrain_query_marker_index_count == 6);
 }

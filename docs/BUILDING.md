@@ -97,12 +97,13 @@ generated binaries stay under ignored `out/`. The WARP NuGet binary is for
 local development and testing only and must never enter a packaged product.
 
 With no arguments, `SharkSandbox` initializes the highest-priority eligible
-hardware device, opens the native Win32 window, and continuously draws the
-deterministic height tile, procedural-checker cube, and procedural daylight sky
-as named `Terrain`, `TexturedCube`, and `Skybox` graph passes. S-002A keeps the
-triple frame-resource lifecycle and resize-safe reversed-Z target, and reports
-separate PIX/timestamp intervals for all three passes. Press `F1` to toggle the
-terrain between solid daylight shading and wireframe. Use `W`/`S` along the
+hardware device, creates the validated canonical `HeightTileSurface`, and
+continuously draws its deterministic terrain, query-derived cyan normal pin,
+procedural-checker cube, and procedural daylight sky as named `Terrain`,
+`TexturedCube`, and `Skybox` graph passes. T-002 keeps the triple
+frame-resource lifecycle and resize-safe reversed-Z target and reports separate
+PIX/timestamp intervals for all three passes. Press `F1` to toggle the terrain
+between solid daylight shading and wireframe. Use `W`/`S` along the
 camera forward axis, `A`/`D` to strafe, `Q`/`E` to move down/up, hold `Shift`
 to move faster, and hold the right mouse button while dragging to look around.
 `Control` and `Space` are down/up aliases. Resize or minimize/restore the
@@ -145,7 +146,9 @@ Run only the normal shader target and focused build checks with:
 For the visual acceptance check, run `SharkSandbox` without arguments. A solid
 height tile must show simple green-to-rock slope coloring under the shared
 ambient-plus-directional daylight, its magenta depth-tested bounds overlay must
-enclose the tile, and `F1` must reveal the fixed triangle split in wireframe.
+enclose the tile, and the cyan query pin must begin on the visible LOD0 surface
+and extend along its exact triangle normal. `F1` must reveal the fixed triangle
+split in wireframe without disconnecting or hiding the pin.
 The textured cube must retain correct hidden-surface occlusion and perspective.
 The background must form one continuous blue zenith/horizon/nadir gradient
 with a warm sun disk and restrained halo, without visible cube-face seams or
@@ -230,17 +233,20 @@ destination.
 Creation records one `StaticSceneUpload` PIX event, one static direct-queue
 upload submission, and one bounded wait for the cube and terrain vertex/index
 buffers, deterministic `8x8` checker, and all six faces of the app-local `8x8`
-sRGB DDS cubemap. The retained cubemap remains a startup asset/upload proof;
-the procedural sky does not read or bind it per frame. The startup list ends
-with six initialization barriers. Every submitted frame records one outer
-`Frame` event with nested `Terrain`, `TexturedCube`, and `Skybox` events. Its
-seven-import graph declares exact vertex/index reads and the checker's one
-pixel-shader read, executes all three passes, two dependencies, four recorded
-transitions, and 16 elided transitions. It issues one terrain triangle draw,
-one terrain-bounds line draw, one 36-index textured-cube draw, one 36-index
-skybox draw, one texture binding, and one reversed-Z depth clear. Terrain owns
-the clear, the cube preserves it, and the sky uses the read-only DSV and writes
-no depth.
+sRGB DDS cubemap. The terrain buffers pack the 1,089-vertex/6,144-index
+surface, eight-vertex/24-index AABB, and six-vertex/six-index query marker
+without adding a resource. The retained cubemap remains a startup asset/upload
+proof; the procedural sky does not read or bind it per frame. The startup list
+ends with six initialization barriers.
+
+Every submitted frame records one outer `Frame` event with nested `Terrain`,
+`TexturedCube`, and `Skybox` events. Its seven-import graph declares exact
+vertex/index reads and the checker's one pixel-shader read, executes all three
+passes, two dependencies, four recorded transitions, and 16 elided
+transitions. It issues five indexed draws: terrain surface, terrain AABB,
+terrain query marker, 36-index textured cube, and 36-index skybox. It retains
+one texture binding and one reversed-Z depth clear. Terrain owns the clear,
+cube preserves it, and sky uses the read-only DSV and writes no depth.
 
 The direct queue reports its timestamp frequency once. One 24-entry query heap
 and one 192-byte persistently mapped readback buffer are split into three
@@ -254,8 +260,8 @@ resize/shutdown drain; timing adds no normal-frame drain.
 
 The summary reports graph pass/barrier counts, PIX event counts, query
 high-water/capacity, timing sample count, average/maximum frame,
-`Terrain`, `TexturedCube`, and `Skybox` milliseconds, terrain solid/wireframe
-and bounds counts, all draw/index counts,
+`Terrain`, `TexturedCube`, and `Skybox` milliseconds, terrain
+solid/wireframe/bounds/query-marker counts, all draw/index counts,
 scene/sky matrix changes, `depth_clear_count`, depth-resource/read-only-view
 creation counts, other resource creation counts,
 context reuse, blocking reuse waits, queue drains, and upload/descriptor
@@ -272,6 +278,7 @@ directly with:
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[timestamps]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[skybox]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[daylight]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][query]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[assets][dds][cubemap]"
 ```
@@ -318,10 +325,10 @@ timestamp boundaries, fence-delayed readback, smoke accounting, and manual
 capture acceptance. See [the DDS cubemap contract](DDS_CUBEMAP.md) for the
 tracked fixture, strict loader, app-local deployment, retained startup upload,
 and deliberately absent per-frame sky read. See
-[the terrain contract](TERRAIN.md) for the deterministic source, mesh, normal,
-bounds, and diagnostic-mode rules. After S-002A, the roadmap resumes at T-002
-with canonical terrain spatial queries; daylight adds no material, shadow, HDR,
-or time-of-day system.
+[the terrain contract](TERRAIN.md) for canonical ownership, exact query
+semantics, render-mesh separation, and diagnostic rules. T-002 is complete;
+the upcoming `REN-001` increment moves renderer orchestration without changing
+pixels or accounting, and `T-003` terrain materials follows it.
 
 ## Visual Studio
 

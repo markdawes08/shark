@@ -25,6 +25,7 @@ add_executable(SharkTests
     unit/result_tests.cpp
     unit/sandbox_options_tests.cpp
     unit/terrain_height_tile_tests.cpp
+    unit/terrain_height_tile_query_tests.cpp
     unit/windows_application_tests.cpp
 )
 

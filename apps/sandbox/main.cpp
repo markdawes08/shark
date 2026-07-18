@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -585,14 +586,28 @@ void log_platform_event(const shark::platform::Event& event)
         ? rhi::d3d12::TextureDataFormat::rgba8_unorm_srgb
         : rhi::d3d12::TextureDataFormat::rgba8_unorm;
 
-    const auto terrain_tile =
-        terrain::make_deterministic_height_tile();
+    auto terrain_surface_result = terrain::HeightTileSurface::create(
+        terrain::make_deterministic_height_tile());
+    if (!terrain_surface_result) {
+        return core::Result<void>::failure(
+            std::move(terrain_surface_result).error());
+    }
+    auto terrain_surface = std::move(terrain_surface_result).value();
+    const auto& terrain_tile = terrain_surface.tile();
     auto terrain_mesh_result = terrain::build_lod0_mesh(terrain_tile);
     if (!terrain_mesh_result) {
         return core::Result<void>::failure(
             std::move(terrain_mesh_result).error());
     }
     auto terrain_mesh = std::move(terrain_mesh_result).value();
+    if (terrain_surface.bounds() != terrain_mesh.bounds) {
+        return core::Result<void>::failure(core::Error{
+            core::ErrorCategory::simulation,
+            core::ErrorCode::invalid_state,
+            "The canonical terrain query bounds disagree with the LOD0 "
+            "render mesh",
+        });
+    }
     std::vector<TerrainGpuVertex> terrain_vertices;
     terrain_vertices.reserve(terrain_mesh.positions.size());
     for (std::size_t index = 0;
@@ -617,6 +632,118 @@ void log_platform_event(const shark::platform::Event& event)
             bounds_diagnostic_color,
         };
     }
+
+    constexpr float query_marker_world_x = -5.125F;
+    constexpr float query_marker_world_z = -3.25F;
+    const auto query_marker_sample =
+        terrain_surface.sample_lod0_surface(
+            query_marker_world_x,
+            query_marker_world_z);
+    if (!query_marker_sample.has_value()) {
+        return core::Result<void>::failure(core::Error{
+            core::ErrorCategory::simulation,
+            core::ErrorCode::invalid_state,
+            "The deterministic terrain query marker is outside the "
+            "canonical LOD0 surface",
+        });
+    }
+    constexpr terrain::Ray3 query_marker_ray{
+        {query_marker_world_x, 10.0F, query_marker_world_z},
+        {0.0F, -1.0F, 0.0F},
+    };
+    auto query_marker_hit_result =
+        terrain_surface.raycast_lod0(query_marker_ray, 20.0F);
+    if (!query_marker_hit_result) {
+        return core::Result<void>::failure(
+            std::move(query_marker_hit_result).error());
+    }
+    const auto query_marker_hit =
+        query_marker_hit_result.value();
+    if (!query_marker_hit.has_value()) {
+        return core::Result<void>::failure(core::Error{
+            core::ErrorCategory::simulation,
+            core::ErrorCode::invalid_state,
+            "The deterministic terrain query-marker ray missed the "
+            "canonical LOD0 surface",
+        });
+    }
+    constexpr float query_agreement_tolerance = 0.00001F;
+    const auto nearly_equal = [](const float left, const float right) {
+        return std::abs(left - right) <= query_agreement_tolerance;
+    };
+    const auto equal_position = [&nearly_equal](
+                                    const math::Float3 left,
+                                    const math::Float3 right) {
+        return nearly_equal(left.x, right.x) &&
+            nearly_equal(left.y, right.y) &&
+            nearly_equal(left.z, right.z);
+    };
+    const auto& marker_sample = *query_marker_sample;
+    const auto& marker_hit = *query_marker_hit;
+    if (!equal_position(marker_hit.position, marker_sample.position) ||
+        !equal_position(marker_hit.normal, marker_sample.normal) ||
+        marker_hit.cell_x != marker_sample.cell_x ||
+        marker_hit.cell_z != marker_sample.cell_z ||
+        marker_hit.triangle != marker_sample.triangle ||
+        !equal_position(
+            marker_hit.barycentrics,
+            marker_sample.barycentrics) ||
+        !nearly_equal(
+            marker_hit.distance,
+            query_marker_ray.origin.y - marker_sample.position.y)) {
+        return core::Result<void>::failure(core::Error{
+            core::ErrorCategory::simulation,
+            core::ErrorCode::invalid_state,
+            "The direct terrain sample and downward LOD0 ray disagree "
+            "at the query-marker location",
+        });
+    }
+
+    constexpr math::Float3 query_marker_diagnostic_color{
+        0.0F,
+        -1.0F,
+        1.0F,
+    };
+    constexpr float query_marker_length = 1.0F;
+    constexpr float query_marker_cross_radius = 0.20F;
+    const math::Float3 query_marker_tip{
+        marker_sample.position.x +
+            marker_sample.normal.x * query_marker_length,
+        marker_sample.position.y +
+            marker_sample.normal.y * query_marker_length,
+        marker_sample.position.z +
+            marker_sample.normal.z * query_marker_length,
+    };
+    const std::array<TerrainGpuVertex, 6> terrain_query_marker_vertices{{
+        {marker_sample.position, query_marker_diagnostic_color},
+        {query_marker_tip, query_marker_diagnostic_color},
+        {{
+             query_marker_tip.x - query_marker_cross_radius,
+             query_marker_tip.y,
+             query_marker_tip.z,
+         },
+         query_marker_diagnostic_color},
+        {{
+             query_marker_tip.x + query_marker_cross_radius,
+             query_marker_tip.y,
+             query_marker_tip.z,
+         },
+         query_marker_diagnostic_color},
+        {{
+             query_marker_tip.x,
+             query_marker_tip.y,
+             query_marker_tip.z - query_marker_cross_radius,
+         },
+         query_marker_diagnostic_color},
+        {{
+             query_marker_tip.x,
+             query_marker_tip.y,
+             query_marker_tip.z + query_marker_cross_radius,
+         },
+         query_marker_diagnostic_color},
+    }};
+    constexpr std::array<std::uint16_t, 6>
+        terrain_query_marker_indices{{0, 1, 2, 3, 4, 5}};
 
     rhi::d3d12::PresentationConfig presentation_config;
     presentation_config.native_window =
@@ -666,6 +793,13 @@ void log_platform_event(const shark::platform::Event& event)
         .bounds_vertex_stride = sizeof(TerrainGpuVertex),
         .bounds_indices = terrain_mesh.bounds_lines.indices.data(),
         .bounds_index_count = terrain_mesh.bounds_lines.indices.size(),
+        .query_marker_vertices = terrain_query_marker_vertices.data(),
+        .query_marker_vertex_count =
+            terrain_query_marker_vertices.size(),
+        .query_marker_vertex_stride = sizeof(TerrainGpuVertex),
+        .query_marker_indices = terrain_query_marker_indices.data(),
+        .query_marker_index_count =
+            terrain_query_marker_indices.size(),
     };
     presentation_config.synchronize_to_vertical_refresh = !smoke_mode;
     auto presentation_result = rhi::d3d12::Presentation::create(
@@ -720,6 +854,19 @@ void log_platform_event(const shark::platform::Event& event)
 
     core::log_message(
         core::LogLevel::info,
+        "terrain.query",
+        std::string{"Verified LOD0 sample/ray marker: position=("} +
+            std::to_string(marker_sample.position.x) + ", " +
+            std::to_string(marker_sample.position.y) + ", " +
+            std::to_string(marker_sample.position.z) + "), normal=(" +
+            std::to_string(marker_sample.normal.x) + ", " +
+            std::to_string(marker_sample.normal.y) + ", " +
+            std::to_string(marker_sample.normal.z) + "), cell=(" +
+            std::to_string(marker_sample.cell_x) + ", " +
+            std::to_string(marker_sample.cell_z) + ")");
+
+    core::log_message(
+        core::LogLevel::info,
         "sandbox",
         smoke_mode
             ? "Running fixed " +
@@ -765,6 +912,7 @@ void log_platform_event(const shark::platform::Event& event)
     std::uint64_t timing_samples_when_minimized = 0;
     std::uint64_t terrain_draws_when_minimized = 0;
     std::uint64_t terrain_bounds_draws_when_minimized = 0;
+    std::uint64_t terrain_query_marker_draws_when_minimized = 0;
     std::uint64_t cube_draws_when_minimized = 0;
     std::uint64_t skybox_draws_when_minimized = 0;
     std::uint64_t texture_bindings_when_minimized = 0;
@@ -967,6 +1115,8 @@ void log_platform_event(const shark::platform::Event& event)
                     stats.terrain_draw_calls;
                 terrain_bounds_draws_when_minimized =
                     stats.terrain_bounds_draw_calls;
+                terrain_query_marker_draws_when_minimized =
+                    stats.terrain_query_marker_draw_calls;
                 cube_draws_when_minimized = stats.cube_draw_calls;
                 skybox_draws_when_minimized = stats.skybox_draw_calls;
                 texture_bindings_when_minimized = stats.texture_bindings;
@@ -1010,6 +1160,8 @@ void log_platform_event(const shark::platform::Event& event)
                             terrain_draws_when_minimized ||
                         stats.terrain_bounds_draw_calls !=
                             terrain_bounds_draws_when_minimized ||
+                        stats.terrain_query_marker_draw_calls !=
+                            terrain_query_marker_draws_when_minimized ||
                         stats.cube_draw_calls !=
                             cube_draws_when_minimized ||
                         stats.skybox_draw_calls !=
@@ -1240,6 +1392,8 @@ void log_platform_event(const shark::platform::Event& event)
             stats.terrain_draw_calls != stats.frame_submissions ||
             stats.terrain_bounds_draw_calls !=
                 stats.frame_submissions ||
+            stats.terrain_query_marker_draw_calls !=
+                stats.frame_submissions ||
             stats.terrain_solid_draw_calls == 0 ||
             stats.terrain_wireframe_draw_calls == 0 ||
             stats.terrain_solid_draw_calls +
@@ -1258,12 +1412,16 @@ void log_platform_event(const shark::platform::Event& event)
                     terrain::deterministic_tile_index_count ||
             stats.terrain_bounds_indices !=
                 stats.terrain_bounds_draw_calls * 24 ||
+            stats.terrain_query_marker_indices !=
+                stats.terrain_query_marker_draw_calls * 6 ||
             stats.terrain_vertex_count !=
                 terrain::deterministic_tile_vertex_count ||
             stats.terrain_index_count !=
                 terrain::deterministic_tile_index_count ||
             stats.terrain_bounds_vertex_count != 8 ||
             stats.terrain_bounds_index_count != 24 ||
+            stats.terrain_query_marker_vertex_count != 6 ||
+            stats.terrain_query_marker_index_count != 6 ||
             stats.camera_constant_updates !=
                 stats.frame_submissions ||
             stats.camera_matrix_changes < 3 ||
@@ -1372,7 +1530,7 @@ void log_platform_event(const shark::platform::Event& event)
         summary.append(format_gpu_milliseconds(
             stats.gpu_skybox_max_ticks,
             stats.gpu_timestamp_frequency_hz));
-        summary.append(", terrain(solid/wire/bounds)-draws=");
+        summary.append(", terrain(solid/wire/bounds/query-marker)-draws=");
         summary.append(std::to_string(
             stats.terrain_solid_draw_calls));
         summary.push_back('/');
@@ -1381,6 +1539,9 @@ void log_platform_event(const shark::platform::Event& event)
         summary.push_back('/');
         summary.append(std::to_string(
             stats.terrain_bounds_draw_calls));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.terrain_query_marker_draw_calls));
         summary.append(", cube/sky-draws=");
         summary.append(std::to_string(stats.cube_draw_calls));
         summary.push_back('/');

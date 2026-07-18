@@ -5,12 +5,13 @@ engine. Its first vertical slice is an interactive outdoor environment with a
 skybox, textured terrain, rain, terrain collision, and progressively simulated
 surface water.
 
-The latest completed increment is `S-002A`, a short visual diversion after
-`T-001`. A continuous procedural daylight sky now supplies a horizon, zenith,
-lower-sky haze, and fixed sun, while the same sun direction gives the
-deterministic `33x33` terrain simple ambient-plus-Lambert lighting. The
-translation-invariant far-depth sky technique and terrain diagnostics remain
-intact; work returns to the exact canonical spatial queries planned in `T-002`.
+The latest completed increment is `T-002`. A platform-independent
+`HeightTileSurface` now owns validated canonical terrain samples and provides
+exact LOD0 height, geometric-normal, bounds, and nearest-ray queries. The
+sandbox proves the direct sample and downward ray agree by drawing a cyan
+normal pin on the visible triangle surface. The upcoming increment is
+`REN-001`, a renderer-boundary cleanup with no intended pixel or accounting
+change; `T-003` terrain materials follow it.
 
 - [Engine architecture and roadmap](docs/ENGINE_PLAN.md)
 - [Windows build and test guide](docs/BUILDING.md)

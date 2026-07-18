@@ -58,9 +58,9 @@ struct TextureCubeUploadView final {
     std::size_t subresource_count{};
 };
 
-// Terrain and its diagnostic bounds are copied synchronously during create().
-// Both vertex streams use interleaved float3 POSITION / float3 NORMAL data;
-// both index streams use uint16_t.
+// Terrain, its diagnostic bounds, and its query marker are copied
+// synchronously during create(). Every vertex stream uses interleaved float3
+// POSITION / float3 NORMAL data; every index stream uses uint16_t.
 struct TerrainMeshUploadView final {
     const void* vertices{};
     std::size_t vertex_count{};
@@ -72,6 +72,11 @@ struct TerrainMeshUploadView final {
     std::size_t bounds_vertex_stride{};
     const std::uint16_t* bounds_indices{};
     std::size_t bounds_index_count{};
+    const void* query_marker_vertices{};
+    std::size_t query_marker_vertex_count{};
+    std::size_t query_marker_vertex_stride{};
+    const std::uint16_t* query_marker_indices{};
+    std::size_t query_marker_index_count{};
 };
 
 // Temporary LDR daylight controls for the bootstrap presentation boundary.
@@ -197,12 +202,16 @@ struct PresentationStats final {
     std::uint64_t terrain_solid_draw_calls{};
     std::uint64_t terrain_wireframe_draw_calls{};
     std::uint64_t terrain_bounds_draw_calls{};
+    std::uint64_t terrain_query_marker_draw_calls{};
     std::uint64_t terrain_indices{};
     std::uint64_t terrain_bounds_indices{};
+    std::uint64_t terrain_query_marker_indices{};
     std::uint64_t terrain_vertex_count{};
     std::uint64_t terrain_index_count{};
     std::uint64_t terrain_bounds_vertex_count{};
     std::uint64_t terrain_bounds_index_count{};
+    std::uint64_t terrain_query_marker_vertex_count{};
+    std::uint64_t terrain_query_marker_index_count{};
     std::uint64_t camera_constant_updates{};
     std::uint64_t camera_matrix_changes{};
     std::uint64_t skybox_matrix_changes{};

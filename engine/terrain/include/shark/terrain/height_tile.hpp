@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace shark::terrain {
@@ -32,6 +33,100 @@ struct HeightTile final {
     [[nodiscard]] friend bool operator==(
         const HeightTile&,
         const HeightTile&) = default;
+};
+
+enum class HeightTileTriangle : std::uint8_t {
+    v00_v01_v11 = 1,
+    v00_v11_v10,
+};
+
+struct HeightTileSurfaceSample final {
+    math::Float3 position;
+    math::Float3 normal;
+    std::uint32_t cell_x{};
+    std::uint32_t cell_z{};
+    HeightTileTriangle triangle{};
+
+    // The components correspond to the vertices named by triangle, in order.
+    math::Float3 barycentrics;
+
+    [[nodiscard]] friend bool operator==(
+        const HeightTileSurfaceSample&,
+        const HeightTileSurfaceSample&) = default;
+};
+
+struct Ray3 final {
+    math::Float3 origin;
+    math::Float3 direction;
+
+    [[nodiscard]] friend bool operator==(
+        const Ray3&,
+        const Ray3&) = default;
+};
+
+struct BoundsInterval final {
+    float entry_distance{};
+    float exit_distance{};
+
+    [[nodiscard]] friend bool operator==(
+        const BoundsInterval&,
+        const BoundsInterval&) = default;
+};
+
+struct HeightTileRayHit final {
+    float distance{};
+    math::Float3 position;
+    math::Float3 normal;
+    std::uint32_t cell_x{};
+    std::uint32_t cell_z{};
+    HeightTileTriangle triangle{};
+
+    // The components correspond to the vertices named by triangle, in order.
+    math::Float3 barycentrics;
+
+    [[nodiscard]] friend bool operator==(
+        const HeightTileRayHit&,
+        const HeightTileRayHit&) = default;
+};
+
+// Owns one validated canonical tile and its cached world-space bounds. Query
+// normals are exact geometric LOD0 triangle normals, not smooth render normals.
+class HeightTileSurface final {
+public:
+    [[nodiscard]] static core::Result<HeightTileSurface> create(
+        HeightTile tile);
+
+    [[nodiscard]] const HeightTile& tile() const noexcept;
+    [[nodiscard]] const Bounds3& bounds() const noexcept;
+
+    // The tile's maximum X/Z edges are inclusive. A point outside the tile or
+    // with nonfinite coordinates has no sample.
+    [[nodiscard]] std::optional<HeightTileSurfaceSample>
+        sample_lod0_surface(float world_x, float world_z) const noexcept;
+    [[nodiscard]] std::optional<float> sample_lod0_height(
+        float world_x,
+        float world_z) const noexcept;
+    [[nodiscard]] std::optional<math::Float3> sample_lod0_normal(
+        float world_x,
+        float world_z) const noexcept;
+
+    // Directions are normalized internally, so all returned distances are
+    // meters. Invalid rays or nonfinite/nonpositive limits fail; a valid miss
+    // succeeds with an empty optional.
+    [[nodiscard]] core::Result<std::optional<BoundsInterval>>
+        intersect_bounds(
+            const Ray3& ray,
+            float maximum_distance) const;
+    [[nodiscard]] core::Result<std::optional<HeightTileRayHit>>
+        raycast_lod0(
+            const Ray3& ray,
+            float maximum_distance) const;
+
+private:
+    HeightTileSurface(HeightTile tile, Bounds3 bounds);
+
+    HeightTile tile_;
+    Bounds3 bounds_;
 };
 
 struct BoundsLineGeometry final {

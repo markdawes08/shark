@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 18, 2026
-- **Latest completed:** `S-002A` - procedural daylight baseline after `T-001`
-- **Next increment:** `T-002` - canonical terrain spatial queries
+- **Latest completed:** `T-002` - canonical terrain spatial queries
+- **Next increment:** `REN-001` - separate renderer orchestration from D3D12
 
 ## 1. Project direction
 
@@ -28,7 +28,8 @@ The first vertical slice, **Environment Lab 0.1**, will contain:
 The next slice, **Simulation Lab 0.2**, will add:
 
 - a deterministic fixed simulation clock;
-- terrain height, normal, and ray queries shared with rendering;
+- physics use of the canonical terrain height, normal, and ray queries already
+  shared with rendering;
 - basic rigid bodies colliding with terrain;
 - a conservative shallow-water solver; and
 - rendering driven by the simulated water state.
@@ -237,20 +238,23 @@ flowchart TD
 | `Fluids` | water depth/momentum, solver, conservation accounting, coupling | presentation or material decisions |
 | `Diagnostics` | tests, scenario capture, debug HUD, timings, validation output | production simulation policy |
 
-Through S-002A, the bootstrap `RHI/D3D12::Presentation` class still combines
+Through T-002, the bootstrap `RHI/D3D12::Presentation` class still combines
 renderer pass orchestration with low-level D3D12 ownership inherited from the
-first-pixel increments. The canonical terrain module remains platform
-independent and lends only derived presentation data, so no simulation boundary
-depends on D3D12. This bootstrap placement is not the durable architecture:
+first-pixel increments. The platform-independent `HeightTileSurface` owns a
+validated canonical tile and cached bounds; height, exact triangle-normal,
+bounds, and ray queries never read the smooth render mesh or a D3D12 resource.
+Only derived presentation data and the query-derived diagnostic pin cross into
+the bootstrap renderer. This placement is not the durable architecture:
 `REN-001` must move pass-specific configuration, statistics, and orchestration
 behind the `Renderer` boundary before terrain materials expand it.
 
 ### Non-negotiable ownership rules
 
-1. Full-resolution `TerrainData` is the single source of truth for collision and
-   the fluid bed. LOD0 rendering uses the same cell split/interpolation exactly;
-   coarser visual LODs are derived approximations with a measured error bound and
-   never change physics with camera distance.
+1. Full-resolution `HeightTileSurface` data is the single source of truth for
+   future collision and the fluid bed. LOD0 rendering and queries use the same
+   `v00 -> v11` cell split and planar interpolation exactly; coarser visual LODs
+   are derived approximations with a measured error bound and never change
+   physics with camera distance.
 2. Physics never reads a render mesh or Direct3D resource.
 3. Visual rain particles and physical rainfall share `WeatherState`, but particle
    count never determines water volume.
@@ -425,6 +429,10 @@ across resources or frames.
 
 1. Render one procedural or loaded height tile with solid/wireframe debug views.
 2. Add exact CPU height, normal, bounds, and ray queries from the same data.
+   T-002 completes this with an owning, validated `HeightTileSurface`, inclusive
+   maximum footprint edges, float-rounded render-coordinate bracketing,
+   deterministic triangle ties, metric rays with scale-relative triangle
+   tolerances, and a visible query-derived normal pin.
 3. Add PBR texture arrays and slope/height or painted blend weights.
 4. Add chunks and frustum culling at full resolution.
 5. Add derived visual LODs with crack-free seams and measured error bounds.
@@ -708,7 +716,7 @@ entity scale or query patterns make it useful.
 | D3D12 lifetime/synchronization bugs | One queue first, centralized graph/barriers, fence retirement, debug layer, GPU validation, DRED |
 | Preview API churn | Pin retail Agility/DXC on `main`; experiments stay isolated |
 | Hardware differences | Startup capability report, explicit adapter choice, WARP smoke, multi-vendor tolerance tests |
-| Render/collision mismatch | One `TerrainData` source and identical cell interpolation rules |
+| Render/collision mismatch | One canonical `HeightTileSurface` source and identical fixed-triangle interpolation rules |
 | Custom physics robustness | Restrict shapes/features, build analytic tests, and keep a replaceable backend boundary |
 | Fluid instability or lost water | Conservative scheme, CFL substeps, positivity checks, lake-at-rest and mass accounting tests |
 | CPU/GPU stalls | GPU-owned fluid state, immutable snapshots, delayed/coarse queries, no full per-frame readback |
@@ -718,24 +726,23 @@ entity scale or query patterns make it useful.
 
 ## 14. Immediate next increment
 
-After `S-002A` is reviewed and committed by the owner, return to the roadmap
-and implement only `T-002`:
+After `T-002` is reviewed and committed by the owner, implement only
+`REN-001`:
 
-- add exact CPU height and normal sampling against the fixed LOD0 triangle
-  split;
-- add bounds and ray queries against the same canonical CPU height data;
-- place a diagnostic marker on the queried visible LOD0 surface; and
-- stop before PBR materials, chunks, LOD, streaming, collision, weather, or
-  fluid coupling.
+- move scene-pass configuration, statistics, and orchestration out of the
+  bootstrap D3D12 presentation class and behind the `Renderer` boundary;
+- preserve the `Terrain -> TexturedCube -> Skybox` order, pixels, public
+  behavior, smoke accounting, resource lifetimes, PIX names, and timestamp
+  boundaries exactly;
+- keep `HeightTileSurface` and all authoritative terrain queries independent of
+  rendering and D3D12; and
+- stop before PBR materials, new passes, new renderer features, or performance
+  restructuring.
 
-`T-001` begins M3 with a deterministic `33x33` CPU-owned height tile, fixed
-cell triangulation, area-weighted presentation normals, solid and wireframe
-diagnostics, and an always-present, depth-tested bounds overlay. `S-002A`
-temporarily gives that surface simple green/rock daylight shading so the fixed
-sun reads as a scene light; it does not add materials or shadows. The terrain
-still deliberately lacks the canonical spatial queries assigned to `T-002`;
-the renderer-boundary cleanup remains separately reviewable as `REN-001`
-before material work begins.
+`T-002` completes the canonical terrain-query foundation and its visible cyan
+normal-pin proof. `REN-001` is intentionally a no-pixel/no-accounting
+architecture increment. After it is committed, `T-003` adds the first layered
+PBR terrain materials.
 
 ## 15. Primary technical references
 

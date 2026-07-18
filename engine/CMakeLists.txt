@@ -45,7 +45,9 @@ add_library(SharkEngine STATIC
     rhi/d3d12/src/render_graph_executor.cpp
     rhi/d3d12/src/render_graph_executor.hpp
     terrain/include/shark/terrain/height_tile.hpp
+    terrain/include/shark/terrain/material_palette.hpp
     terrain/src/height_tile.cpp
+    terrain/src/material_palette.cpp
     world/include/shark/world/camera.hpp
     world/src/camera.cpp
 )

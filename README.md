@@ -11,13 +11,13 @@ not a recreation or a 2004 technology restriction: the engine remains an
 independent modern Direct3D 12 project, and the current environment, physics,
 and coupled-water roadmap is unchanged.
 
-The latest completed increment is `REN-001` (July 18, 2026). The move-only
-`shark::renderer::Renderer` now owns public renderer configuration, frame
-input, status, statistics, and the production `Terrain -> TexturedCube ->
-Skybox` frame pipeline. Its Direct3D 12 backend and scene helpers are private;
-the sandbox passes the D3D12 `Device` only at the composition root. This
-boundary cleanup preserves the existing pixels and exact smoke accounting.
-The upcoming increment is `T-003`, layered PBR terrain materials.
+The latest completed increment is `T-003` (July 18, 2026). Terrain now blends
+two deterministic, project-owned ground and rock layers from matching albedo,
+normal, and roughness texture arrays. World-space tiling, slope/height weights,
+normal mapping, and direct-sun dielectric GGX shading provide the first bounded
+PBR material path. `F1` toggles solid/wireframe fill; `F2` cycles shaded,
+material-weight, and world-normal views. The upcoming increment is `S-003`,
+HDR environment lighting.
 
 - [Engine architecture and roadmap](docs/ENGINE_PLAN.md)
 - [Windows build and test guide](docs/BUILDING.md)

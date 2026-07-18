@@ -1,7 +1,7 @@
 # Minimal Render-Graph Contract
 
-- **Completed through:** `REN-001`
-- **Renderer integration verified through:** `REN-001`
+- **Completed through:** `T-003`
+- **Renderer integration verified through:** `T-003`
 - **Last updated:** July 18, 2026
 
 G-006 moves the existing textured-cube frame behind Shark's first render graph
@@ -18,7 +18,9 @@ declaration or count. The graph remains a small, platform-independent planner
 plus a Direct3D 12 legacy-barrier executor. It
 proves declared resource access, deterministic dependency compilation, and
 centralized frame barriers before later work adds more passes or graph-owned
-resources.
+resources. T-003 imports three persistent terrain material arrays and declares
+them as exact pixel-shader reads in the existing `Terrain` pass; it adds no
+pass, dependency, or emitted transition.
 
 ## Boundary and ownership
 
@@ -47,7 +49,7 @@ builder.
 
 The generic graph does not know Shark's current scene. The private
 `shark::renderer::detail::compose_frame_pipeline` production composer owns the
-seven semantic external IDs, exact import names/states, typed resource bundles
+ten semantic external IDs, exact import names/states, typed resource bundles
 for each callback, and the `Terrain -> TexturedCube -> Skybox` declarations.
 Its focused unit test executes that production composer rather than maintaining
 a second hand-written copy of the frame graph. The private D3D12 renderer
@@ -186,13 +188,19 @@ staging its frame context. It imports:
 | `CubeIndexBuffer` | `index_buffer` | `index_buffer` | persistent 36-index cube buffer |
 | `TerrainVertexBuffer` | `vertex_buffer` | `vertex_buffer` | persistent surface, bounds, and query-marker vertices |
 | `TerrainIndexBuffer` | `index_buffer` | `index_buffer` | persistent surface, bounds, and query-marker indices |
+| `TerrainAlbedoLayers` | `pixel_shader_read` | `pixel_shader_read` | persistent two-layer sRGB albedo array |
+| `TerrainNormalLayers` | `pixel_shader_read` | `pixel_shader_read` | persistent two-layer linear normal array |
+| `TerrainRoughnessLayers` | `pixel_shader_read` | `pixel_shader_read` | persistent two-layer linear roughness array |
 
 The graph contains three passes. `Terrain` declares:
 
 - write access to `BackBuffer` as `render_target`;
 - write access to `DepthBuffer` as `depth_write`;
 - read access to `TerrainVertexBuffer` as `vertex_buffer`; and
-- read access to `TerrainIndexBuffer` as `index_buffer`.
+- read access to `TerrainIndexBuffer` as `index_buffer`;
+- read access to `TerrainAlbedoLayers` as `pixel_shader_read`;
+- read access to `TerrainNormalLayers` as `pixel_shader_read`; and
+- read access to `TerrainRoughnessLayers` as `pixel_shader_read`.
 
 `TexturedCube` declares:
 
@@ -209,7 +217,7 @@ The graph contains three passes. `Terrain` declares:
 - read access to `CubeVertexBuffer` as `vertex_buffer`; and
 - read access to `CubeIndexBuffer` as `index_buffer`.
 
-The terrain callback resolves its four declared resources, clears color/depth,
+The terrain callback resolves its seven declared resources, clears color/depth,
 draws the selected 6,144-index surface PSO, and draws the always-present
 24-index bounds box plus the six-index cyan surface-query marker with the same
 line PSO. The cube callback resolves its five declared resources; the
@@ -219,23 +227,23 @@ produce
 compiled frame therefore has:
 
 ```text
-imports                 7
+imports                10
 passes                  3
 dependencies            2
 emitted transitions     4
-elided transitions      16
+elided transitions      22
 ```
 
 The emitted barriers are `PRESENT -> RENDER_TARGET` before `Terrain`,
 `DEPTH_WRITE -> DEPTH_READ` before `Skybox`, and final
 `RENDER_TARGET -> PRESENT` plus `DEPTH_READ -> DEPTH_WRITE`. All matching
-attachment, checker-texture, vertex-buffer, and index-buffer
-declarations/final states account for the 16 elisions.
+attachment, checker-texture, terrain-material, vertex-buffer, and index-buffer
+declarations/final states account for the 22 elisions.
 
 The retained 256-byte diagnostic `CopyBufferRegion` remains outside the graph
 and uses D3D12 buffer promotion/decay. That record contains 224 bytes of
 matrix/daylight constants and the retained `FrameProbe` at byte 224. The
-one-time vertex, index, checker, and cubemap uploads remain in the startup
+one-time vertex, index, checker, cubemap, and material-array uploads remain in the startup
 upload path. The graph owns all four per-frame attachment barriers plus the
 checker-texture and input-assembler declarations; it does not own startup
 copies or the diagnostic buffer copy. The retained cubemap is not imported
@@ -268,19 +276,19 @@ For a successful fixed presentation smoke:
 ```text
 render_graph_compilations       == frame_submissions
 render_graph_executions         == frame_submissions
-render_graph_resource_imports    == frame_submissions * 7
+render_graph_resource_imports    == frame_submissions * 10
 render_graph_pass_executions     == frame_submissions * 3
 render_graph_dependencies        == frame_submissions * 2
 render_graph_transition_barriers == frame_submissions * 4
-render_graph_elided_transitions  == frame_submissions * 16
+render_graph_elided_transitions  == frame_submissions * 22
 terrain_draw_calls + cube_draw_calls + skybox_draw_calls
     == render_graph_pass_executions
 ```
 
 The separate terrain bounds and query-marker draws are part of the `Terrain`
 callback and therefore do not add graph passes. A submitted frame has five
-indexed draws but still exactly seven imports, three pass executions, two
-dependencies, four recorded barriers, and 16 elided transitions. The marker is
+indexed draws but still exactly ten imports, three pass executions, two
+dependencies, four recorded barriers, and 22 elided transitions. The marker is
 packed into the existing terrain buffers, so the static scene still has four
 geometry buffers.
 
@@ -310,7 +318,7 @@ copy/compute queue activation, async compute, cross-queue fences, or enhanced
 barriers.
 
 REN-001 adds only the focused public renderer configuration/frame boundary. It
-adds no renderer scene extraction, generalized scene/ECS API, material system,
+adds no renderer scene extraction, generalized scene/ECS API,
 typed RHI resource handles, PSO cache, shader reflection, timing HUD, or
 automatic graph-owned PIX/timestamp instrumentation. Graph compilation is
 intentionally frame-local and serial. T-001's three named GPU intervals use the
@@ -320,7 +328,10 @@ and elision counts; it adds no pass, transition, or scheduler behavior. T-002
 changes only commands inside `Terrain`; it adds no import, pass, dependency,
 transition, scheduler behavior, PIX event, or timestamp. REN-001 moves
 production composition and scene helpers to the renderer but deliberately adds
-no feature or accounting change.
+no feature or accounting change. T-003 declares three persistent read-only
+arrays in `Terrain`; because their initial, required, and final states match,
+they contribute six elisions and no emitted barriers or scheduling edge. It
+adds no graph-owned material system, transient resource, or scheduler behavior.
 
 See [the presentation and frame-resource contract](GRAPHICS_PRESENTATION.md)
 for submission and resize ownership, [the HLSL pipeline contract](GRAPHICS_PIPELINE.md)
@@ -330,5 +341,5 @@ for the commands recorded by the graphics passes, and
 [the terrain contract](TERRAIN.md) for the first pass and input-assembler
 declarations, and
 [the GPU diagnostics contract](GPU_DIAGNOSTICS.md) for the renderer/backend
-PIX-marker/timestamp-query lifecycle. `REN-001` was completed on July 18, 2026.
-The next increment is `T-003`, layered PBR terrain materials.
+PIX-marker/timestamp-query lifecycle. `T-003` was completed on July 18, 2026.
+The next increment is `S-003`, HDR environment lighting.

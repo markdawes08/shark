@@ -1,6 +1,6 @@
 # HLSL Graphics Pipeline Contract
 
-- **Completed through:** `REN-001`
+- **Completed through:** `T-003`
 - **Last verified:** July 18, 2026
 
 G-004 established one reproducible path from project-owned HLSL to a real
@@ -19,6 +19,9 @@ reuses the bounds-line PSO and terrain shader for a cyan line-list pin whose
 anchor and direction come from the canonical terrain surface query. REN-001
 moves the scene-specific pipeline helpers into the private renderer D3D12
 backend without changing shader bytecode, root signatures, PSOs, or draws.
+T-003 expands only the terrain pipeline with a bounded three-array material
+table, camera/view root constants, world-XZ sampling, normal mapping, and
+direct-sun dielectric GGX shading.
 
 ## Pinned compiler boundary
 
@@ -120,13 +123,16 @@ bytecode pointer.
 
 The terrain vertex shader consumes `POSITION` at byte offset 0 and `NORMAL` at
 byte offset 12 from a 24-byte interleaved stream. It transforms position by the
-same scene matrix and passes the area-weighted smooth normal to the pixel
-shader. The terrain pixel shader normalizes that value and produces a temporary
-Lambert-lit terrain color using the same direction, sun color, intensity, and
-sky ambient as the visible sun. Negative-Y sentinel normals bypass lighting and
-encode line colors: `{1, -1, 1}` keeps the bounds magenta, while
-`{0, -1, 1}` makes T-002's exact surface-normal pin cyan. These sentinel values
-are presentation data and are not terrain surface normals.
+same scene matrix and passes world position plus the area-weighted smooth
+normal to the pixel shader. The terrain pixel shader derives deterministic
+slope/height ground and rock weights, samples three two-layer arrays through
+world-XZ UVs, builds a derivative cotangent frame, applies the blended normal,
+and evaluates hemisphere ambient plus an unshadowed direct-sun dielectric GGX
+BRDF. Albedo is sampled from an sRGB resource; normal and roughness are linear.
+Negative-Y sentinel normals bypass material sampling and lighting: `{1, -1,
+1}` keeps the bounds magenta, while `{0, -1, 1}` keeps T-002's exact
+surface-normal pin cyan. These sentinel values are presentation data and are
+not terrain surface normals.
 
 The shared root-CBV layout is exact:
 
@@ -153,15 +159,19 @@ access, and contains:
 - one pixel-visible descriptor table covering a single SRV at `t0`; and
 - one pixel-visible point-filtered wrap static sampler at `s0`.
 
-The shader-visible CBV/SRV/UAV heap has two persistent slots. `TexturedCube`
+The shader-visible CBV/SRV/UAV heap has five persistent slots. `TexturedCube`
 points the one-entry root table at checker slot 0. The startup TextureCube SRV
-remains in slot 1 as the S-001 asset/upload proof, but the procedural sky does
-not bind it. The heap and static sampler do not establish a general persistent
-descriptor allocator, bindless convention, or material layout.
+remains in slot 1 as the S-001 asset/upload proof. Terrain points a contiguous
+three-entry table at slots 2-4 for albedo, normal, and roughness
+`Texture2DArray` SRVs. The procedural sky binds no descriptor. This fixed heap
+does not establish a general persistent descriptor allocator or bindless
+convention.
 
-Terrain and the procedural sky use a second focused version-1 root signature
-with only a `D3D12_SHADER_VISIBILITY_ALL` root CBV at `b0`. They need no
-descriptor heap or sampler.
+Terrain uses a focused version-1 root signature containing the shared root CBV
+at `b0`, four 32-bit constants at `b1` (camera world position plus material
+view), a pixel-visible three-SRV table at `t0..t2`, and one anisotropic-wrap
+static sampler at `s0`. The procedural sky uses a separate b0-only root
+signature so T-003 does not expose unused material bindings to it.
 
 One immutable named cube PSO, one immutable named skybox PSO, and three
 immutable named terrain PSOs are created during renderer startup. The
@@ -181,7 +191,7 @@ culling disabled, their declared root signature, and pinned generated
 
 The skybox PSO consumes only the position input from the reused cube buffer,
 uses the same color/depth formats, compares `GREATER_EQUAL`, disables depth
-writes, uses the b0-only terrain/sky root signature, and binds the read-only
+writes, uses the b0-only sky root signature, and binds the read-only
 DSV after the graph transitions depth to `DEPTH_READ`.
 
 The solid and wireframe terrain surface PSOs use position/normal input,
@@ -200,8 +210,9 @@ frames before releasing the command list, PSOs, and root signatures.
 
 The static scene upload occurs once before the first frame. One direct-queue
 submission copies cube and terrain vertex/index data, the deterministic `8x8`
-one-mip checker, and all six startup-cubemap faces into immutable default-heap
-resources. Six initialization barriers establish shader/input states before
+one-mip checker, all six startup-cubemap faces, and all 36 material-array
+subresources into immutable default-heap resources. Nine initialization
+barriers establish shader/input states before
 the monotonic direct fence and bounded startup wait release temporary storage.
 
 Every non-minimized frame then:
@@ -210,20 +221,21 @@ Every non-minimized frame then:
    sky, and daylight constants followed by retained probe data at byte 224 in
    the acquired context, then preserves its diagnostic GPU copy;
 2. compiles one frame-local graph importing color, depth, checker, cube
-   vertex/index buffers, and terrain vertex/index buffers, with exact reads
-   declared by each consumer;
+   vertex/index buffers, terrain vertex/index buffers, and the three terrain
+   material arrays, with exact reads declared by each consumer;
 3. resets the shared command list with the solid terrain PSO;
 4. executes the graph's pre-terrain back-buffer transition;
 5. invokes `Terrain`, which clears the current attachments, selects solid or
-   wireframe, draws 6,144 triangle indices, then draws 24 depth-tested bounds
-   indices and six depth-tested cyan query-marker indices without writing
-   depth;
+   wireframe, binds its material constants and three-SRV table, draws 6,144
+   triangle indices in the selected shaded/weight/normal view, then draws 24
+   depth-tested bounds indices and six depth-tested cyan query-marker indices
+   without writing depth;
 6. invokes `TexturedCube`, which preserves the current attachments, binds the
    RTV/DSV pair, root signature, checker descriptor heap, root CBV, SRV table,
    physical-pixel viewport/scissor, vertex/index buffers, and triangle-list
    topology, then issues exactly `DrawIndexedInstanced(36, 1, 0, 0, 0)`;
 7. transitions depth to read-only state and invokes `Skybox`, which binds the
-   second PSO, b0-only root signature, read-only DSV, and reused cube buffers
+   sky PSO, b0-only root signature, read-only DSV, and reused cube buffers
    before a second `DrawIndexedInstanced(36, 1, 0, 0, 0)`;
 8. restores back-buffer/depth final states; and
 9. submits, signals the context fence, and presents through the established
@@ -232,9 +244,10 @@ Every non-minimized frame then:
 The fixed presentation smoke requires five indexed draws (terrain surface,
 terrain bounds, terrain query marker, textured cube, and skybox), one
 frame-constant upload, one depth clear, one checker-texture binding, three pass
-executions, seven imported resources, two dependencies, four graph transitions,
-and 16 elided transitions per frame. It runs solid terrain for the first half
-and wireframe terrain for the second half.
+executions, ten imported resources, two dependencies, four graph transitions,
+and 22 elided transitions per frame. Each frame also binds the terrain
+three-SRV table, so total texture-table bindings equal two per submission. The
+smoke exercises both fill modes and all three material views.
 Hardware and normal packaged WARP must each complete 1,000 successful presents.
 The focused packaged-WARP GPU-validation path completes 120 successful presents
 with resize and rotation checks at frames 30 and 90, intentionally skips the
@@ -243,29 +256,33 @@ deadline plus a 240-second CTest timeout. Every path requires zero DirectX
 corruption/errors and no live renderer-owned D3D12 children.
 
 The smoke does not read back or compare pixels. Visual acceptance is the
-Lambert-lit or wireframe terrain, depth-tested magenta bounds, and cyan
-query-derived normal pin; a procedurally textured cube with stable perspective
-and correct hidden-surface occlusion; and a translation-invariant,
-rotation-responsive procedural daylight sky.
+layered, normal-mapped shaded terrain plus its material-weight/world-normal
+views, solid/wireframe fill, depth-tested magenta bounds, and cyan query-derived
+normal pin; a procedurally textured cube with stable perspective and correct
+hidden-surface occlusion; and a translation-invariant, rotation-responsive
+procedural daylight sky.
 Command submission,
 indexed-draw/depth accounting, compiler checks, debug-layer validation, and
 WARP provide the permanent automated contract.
 
 ## Explicit non-goals
 
-T-002 adds no general shader artifact database, reflection, root-signature
+T-003 adds no general shader artifact database, reflection, root-signature
 versioning system, persistent descriptor allocator, PSO hash/cache, runtime
-compilation, hot reload, general texture/material loading, runtime mip
-generation, material/PBR system, or image comparison. Its focused root
-signatures, two-slot proof heap, static sampler, static geometry, and fixed
-PSOs remain specific to the terrain/cube/sky proof. The graph provides only
-frame-local pass/access/barrier orchestration; it is not a shader asset,
-pipeline-layout, or material abstraction.
+compilation, hot reload, authored texture/material loading, runtime mip
+generation, arbitrary material graph/layer system, or image comparison. Its
+focused root signatures, five-slot heap, static samplers, procedural material
+fixture, static geometry, and fixed PSOs remain specific to the
+terrain/cube/sky proof. The graph provides only frame-local
+pass/access/barrier orchestration; it is not a shader asset, pipeline-layout,
+or material abstraction.
 
-The marker changes neither the shader-stage set nor the PSO count. It adds no
-resource, descriptor, pass, dependency, barrier, PIX event, or timestamp; the
-established seven imports, three passes, two dependencies, four barriers, 16
-elisions, four geometry buffers, and eight timestamps remain exact.
+T-003 changes neither the shader-stage set nor the terrain PSO count. Its three
+arrays add three imports, six same-state elisions, three SRVs, one terrain table
+bind per frame, and three one-time initialization transitions. The current
+contract is ten imports, three passes, two dependencies, four barriers, 22
+elisions, four geometry buffers, five persistent descriptors, two per-frame
+texture-table binds, and eight timestamps.
 
 REN-001 relocates `cube_scene_data`, `daylight_scene_data`,
 `skybox_scene_data`, and `terrain_scene_data` from the D3D12 RHI into
@@ -281,8 +298,9 @@ and barrier execution around this pipeline. See
 and [the skybox contract](SKYBOX.md) for procedural daylight and depth
 behavior.
 See [the terrain contract](TERRAIN.md) for the canonical surface query,
-deterministic surface, and diagnostic rendering modes. `REN-001` was completed
-on July 18, 2026. The next increment is `T-003`, layered PBR terrain materials.
+deterministic surface, material fixture, and diagnostic rendering modes.
+`T-003` was completed on July 18, 2026. The next increment is `S-003`, HDR
+environment lighting.
 
 ## Primary references
 

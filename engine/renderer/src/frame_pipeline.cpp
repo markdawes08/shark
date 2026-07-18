@@ -121,11 +121,47 @@ core::Result<render_graph::CompiledGraph> compose_frame_pipeline(
     const auto terrain_index_buffer =
         terrain_index_buffer_result.value();
 
+    auto terrain_albedo_layers_result = builder.import_resource(
+        "TerrainAlbedoLayers",
+        frame_terrain_albedo_layers_external_id,
+        render_graph::ResourceState::pixel_shader_read,
+        render_graph::ResourceState::pixel_shader_read);
+    if (!terrain_albedo_layers_result) {
+        return pipeline_failure(std::move(terrain_albedo_layers_result));
+    }
+    const auto terrain_albedo_layers =
+        terrain_albedo_layers_result.value();
+
+    auto terrain_normal_layers_result = builder.import_resource(
+        "TerrainNormalLayers",
+        frame_terrain_normal_layers_external_id,
+        render_graph::ResourceState::pixel_shader_read,
+        render_graph::ResourceState::pixel_shader_read);
+    if (!terrain_normal_layers_result) {
+        return pipeline_failure(std::move(terrain_normal_layers_result));
+    }
+    const auto terrain_normal_layers =
+        terrain_normal_layers_result.value();
+
+    auto terrain_roughness_layers_result = builder.import_resource(
+        "TerrainRoughnessLayers",
+        frame_terrain_roughness_layers_external_id,
+        render_graph::ResourceState::pixel_shader_read,
+        render_graph::ResourceState::pixel_shader_read);
+    if (!terrain_roughness_layers_result) {
+        return pipeline_failure(std::move(terrain_roughness_layers_result));
+    }
+    const auto terrain_roughness_layers =
+        terrain_roughness_layers_result.value();
+
     const TerrainPassResources terrain_resources{
         back_buffer,
         depth_buffer,
         terrain_vertex_buffer,
         terrain_index_buffer,
+        terrain_albedo_layers,
+        terrain_normal_layers,
+        terrain_roughness_layers,
     };
     auto terrain_pass_result = builder.add_pass(
         "Terrain",
@@ -166,6 +202,27 @@ core::Result<render_graph::CompiledGraph> compose_frame_pipeline(
         render_graph::ResourceState::index_buffer);
     if (!terrain_index_result) {
         return pipeline_failure(std::move(terrain_index_result));
+    }
+    auto terrain_albedo_result = builder.read(
+        terrain_pass,
+        terrain_albedo_layers,
+        render_graph::ResourceState::pixel_shader_read);
+    if (!terrain_albedo_result) {
+        return pipeline_failure(std::move(terrain_albedo_result));
+    }
+    auto terrain_normal_result = builder.read(
+        terrain_pass,
+        terrain_normal_layers,
+        render_graph::ResourceState::pixel_shader_read);
+    if (!terrain_normal_result) {
+        return pipeline_failure(std::move(terrain_normal_result));
+    }
+    auto terrain_roughness_result = builder.read(
+        terrain_pass,
+        terrain_roughness_layers,
+        render_graph::ResourceState::pixel_shader_read);
+    if (!terrain_roughness_result) {
+        return pipeline_failure(std::move(terrain_roughness_result));
     }
 
     const TexturedCubePassResources textured_cube_resources{

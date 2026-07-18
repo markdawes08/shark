@@ -1,6 +1,6 @@
 # Direct3D 12 Device Contract
 
-- **Completed through:** `REN-001`
+- **Completed through:** `T-003`
 - **Last verified:** July 18, 2026
 
 G-001 establishes adapter discovery, diagnostics, capability reporting, and
@@ -74,7 +74,9 @@ device contract while moving scene helpers, pass composition, and public
 statistics into the renderer. Its private D3D12 backend also owns the
 scene-named timestamp layout and accumulator. Generic frame-resource,
 device-access, and legacy-transition helpers remain private D3D12 RHI
-implementation details.
+implementation details. T-003 adds fixed renderer-owned material resources and
+bindings without changing adapter selection, feature-level requirements,
+device ownership, validation, or removal diagnostics.
 
 If a debugger is attached, corruption and error messages also request a debug
 break. Unattended processes count and report those severities instead of
@@ -188,15 +190,16 @@ cycle/access/failure validation, transition elision, exact legacy state
 mapping/alias handling, and native binding rejection.
 The presentation smoke additionally verifies all three frame contexts are
 reused, every submission compiles and executes exactly three graph passes with
-seven imports, two dependencies, four emitted barriers, and 16 elided
-transitions plus one checker-texture binding, and every submission retires
-during explicit shutdown before frame resources are released. T-002 retains
+ten imports, two dependencies, four emitted barriers, and 22 elided
+transitions plus checker and terrain-material table bindings, and every
+submission retires during explicit shutdown before frame resources are
+released. T-002 retains
 four geometry buffers and eight timestamps per frame while requiring five
 indexed draws: surface, bounds, query marker, cube, and sky.
 
 Renderer shutdown explicitly drains and releases its command list,
-terrain/cube/skybox PSOs, both root signatures, descriptor heap,
-checker/cubemap textures, cube/terrain vertex/index buffers, depth texture/DSVs,
+terrain/cube/skybox PSOs, all three root signatures, descriptor heap,
+checker/cubemap/material textures, cube/terrain vertex/index buffers, depth texture/DSVs,
 swap-chain resources, and frame contexts before
 `Device::validate_debug_state` checks new D3D12 and DXGI messages plus live
 D3D12 child objects. Debug and Release must both build and pass all registered
@@ -212,6 +215,6 @@ See [the terrain contract](TERRAIN.md) for the T-002 canonical query,
 deterministic tile, and diagnostic rendering modes, and
 [the skybox contract](SKYBOX.md) for the S-002A procedural daylight background
 and shared terrain light. T-002 adds no device capability or lifetime policy;
-REN-001 likewise changes no device capability or lifetime policy. It was
-completed on July 18, 2026. The next increment is `T-003`, layered PBR terrain
-materials.
+REN-001 and T-003 likewise change no device capability or lifetime policy.
+T-003 was completed on July 18, 2026. The next increment is `S-003`, HDR
+environment lighting.

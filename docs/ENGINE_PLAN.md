@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 18, 2026
-- **Latest completed:** `REN-001` - renderer orchestration separated from D3D12 RHI
-- **Next increment:** `T-003` - layered PBR terrain materials
+- **Latest completed:** `T-003` - layered PBR terrain materials
+- **Next increment:** `S-003` - HDR environment lighting
 
 ## 1. Project direction
 
@@ -293,7 +293,7 @@ REN-001 completes the first durable renderer boundary. The public move-only
 D3D12 `Presentation` class. Presentation and swap-chain operations continue in
 the private `engine/renderer/src/d3d12` backend.
 
-The renderer-owned production `frame_pipeline` composes the exact seven
+The renderer-owned production `frame_pipeline` composes the exact ten
 imports and `Terrain -> TexturedCube -> Skybox` passes. Cube, daylight, skybox,
 and terrain scene helpers also live under the private renderer D3D12 backend.
 The renderer D3D12 backend owns the fixed scene-named timestamp query layout
@@ -303,7 +303,10 @@ state, and legacy transition recording without owning scene policy.
 The platform-independent `HeightTileSurface` still owns a validated canonical
 tile and cached bounds; height, exact triangle-normal, bounds, and ray queries
 never read the smooth render mesh or a D3D12 resource. Only derived render data
-and the query-derived diagnostic pin cross into `Renderer`.
+and the query-derived diagnostic pin cross into `Renderer`. T-003's separate
+platform-independent `MaterialPalette` produces two bounded visual layers and
+three full-mip arrays. Material weights and sampled normals remain derived
+presentation data and never alter canonical terrain queries.
 
 ### Non-negotiable ownership rules
 
@@ -384,8 +387,10 @@ unstable circular solve; iterative two-way coupling is a later milestone.
   its visible content from the diagnostic cubemap to procedural daylight.
   T-001 adds terrain vertex/index buffers plus
   solid, wireframe, and bounds PSOs in the same bounded static-upload and
-  startup lifetime; shutdown releases every persistent object after the final
-  drain. Generic fence-keyed deferred destruction remains later.
+  startup lifetime. T-003 adds three material arrays and a dedicated terrain
+  root signature while splitting the procedural sky onto its own b0-only root
+  signature; shutdown releases every persistent object after the final drain.
+  Generic fence-keyed deferred destruction remains later.
 
 ### Resources and descriptors
 
@@ -401,7 +406,9 @@ unstable circular solve; iterative two-way coupling is a later milestone.
   G-005 proves the checker at shader-visible SRV slot 0 and one static sampler.
   S-001 retains the uploaded orientation cubemap at slot 1 as an asset-path
   proof. S-002A makes `Skybox` b0-only and removes that dormant texture from
-  the per-frame graph; the stable-index allocator remains future work.
+  the per-frame graph. T-003 fixes albedo, normal, and roughness array SRVs at
+  slots 2-4 and binds them as one three-entry terrain table; the stable-index
+  allocator remains future work.
 - Keep CPU-only RTV and DSV allocators separate.
 - Add upload and readback arenas, with a per-frame linear upload ring.
 - Expose descriptor use and DXGI video-memory budget in diagnostics before
@@ -422,7 +429,9 @@ unstable circular solve; iterative two-way coupling is a later milestone.
   confirmed. S-002A's frame CBV contains the row-major scene and
   translation-free sky matrices plus six packed daylight rows and is visible
   to vertex and pixel stages. The checker cube separately retains one
-  single-SRV descriptor table and static sampler. This is not yet a versioned
+  single-SRV descriptor table and static sampler. T-003's terrain root adds
+  four b1 constants, one `t0..t2` array table, and an anisotropic sampler while
+  the sky retains a separate b0-only signature. This is not yet a versioned
   renderer-wide layout.
 - Key shader artifacts by source/include hashes, entry point, target, defines,
   flags, compiler version, and root-signature version.
@@ -657,7 +666,7 @@ the debug layer and readable in a PIX capture.
 | `S-002A` | V | Replace the diagnostic cubemap's visible RGB with a continuous procedural LDR daylight gradient, soft sun disk/halo, and the same unshadowed ambient-plus-Lambert sun direction on terrain; retain the far-depth sky technique and return immediately to terrain queries | `feat(sky): add procedural daylight and sun` |
 | `T-002` | - | Add exact height, normal, bounds, and ray queries; a marker rests on the visible LOD0 triangle surface | `feat(terrain): add canonical terrain queries` |
 | `REN-001` | - | Complete: move scene-pass configuration, statistics, helpers, and production orchestration behind the public `Renderer` boundary without changing pixels or smoke accounting | `refactor(render): separate renderer orchestration from D3D12 RHI` |
-| `T-003` | V | Blend PBR albedo/normal/roughness texture arrays by slope/height or weights with normal/material debug views | `feat(terrain): add layered PBR materials` |
+| `T-003` | V | Complete: blend two project-owned ground/rock layers from matching `32x32`, six-mip albedo/normal/roughness texture arrays by deterministic slope and height; add world-XZ tiling, tangent-free normal mapping, direct-sun dielectric GGX, and material-weight/world-normal views | `feat(terrain): add layered PBR materials` |
 | `S-003` | V | Add HDR environment conversion plus diffuse/specular IBL and verify it on terrain and one material sphere | `feat(sky): add image-based environment lighting` |
 | `T-004` | V | Split the full-resolution terrain into several chunks and add frustum culling with visible bounds/counts | `feat(terrain): add chunk culling` |
 | `T-005` | V | Add one coarser derived LOD with crack-free seams and a measured geometric-error bound; collision remains full resolution | `feat(terrain): add bounded terrain LOD` |
@@ -837,21 +846,25 @@ online architecture is not implied.
 ## 14. Immediate next increment
 
 The San Andreas-class scope amendment does not change the current goalpost.
-After `REN-001` is reviewed and committed by the owner, implement only `T-003`:
+After `T-003` is reviewed and committed by the owner, implement only `S-003`:
 
-- add bounded terrain albedo, normal, and roughness material layers through the
-  public `Renderer` boundary and private D3D12 backend;
-- blend those layers with deterministic slope/height rules or explicit weights
-  and provide material/normal diagnostic views;
-- preserve `HeightTileSurface` as the authoritative query/collision surface;
-- update descriptor, texture, graph, draw, PIX, timestamp, and smoke contracts
-  for only the resources that T-003 intentionally adds; and
-- stop before HDR image-based lighting (`S-003`), terrain chunking/culling,
-  visual LOD, streaming, weather interaction, or physics.
+- add a bounded HDR environment source and deterministic offline/runtime
+  conversion contract;
+- derive diffuse irradiance and specular prefilter data for image-based
+  lighting;
+- combine that environment response with the existing terrain BRDF and verify
+  the result on terrain plus one material sphere;
+- preserve the procedural daylight path as a clear fallback and retain the
+  canonical terrain/query ownership boundary; and
+- stop before terrain chunks/culling, visual LOD, streaming, dynamic
+  atmosphere/clouds, weather interaction, or physics.
 
-`REN-001` completed the no-pixel/no-accounting architecture cleanup on
-July 18, 2026. `T-003` now adds the first visible layered PBR terrain
-materials through that boundary.
+`T-003` completed the first visible layered terrain material path on
+July 18, 2026: two project-owned ground/rock layers, three matching `32x32`
+full-mip texture arrays, slope/height blending, world-XZ tiling, normal
+mapping, direct-sun dielectric GGX, and two diagnostic material views. It
+preserves the San Andreas-class feature ceiling while using a modern,
+independent Direct3D 12 implementation.
 
 ## 15. Primary technical references
 

@@ -1,6 +1,6 @@
 # Renderer and Direct3D 12 Presentation/Frame-Resource Contract
 
-- **Completed through:** `REN-001`
+- **Completed through:** `T-003`
 - **Last verified:** July 18, 2026
 
 G-002 produced Shark's first pixels through a resize-safe Direct3D 12
@@ -25,7 +25,10 @@ removing its startup asset proof. T-002 keeps every rendering resource and
 pass boundary while appending a cyan line-list pin derived from the canonical
 terrain surface query to the existing terrain buffers and `Terrain` callback.
 REN-001 preserves those pixels and all accounting while moving the public
-scene/pass boundary and production frame composer out of the D3D12 RHI.
+scene/pass boundary and production frame composer out of the D3D12 RHI. T-003
+uses that boundary for two project-owned ground/rock layers in three matching
+texture arrays, while preserving the three passes, five draws, and existing
+frame-resource lifecycle.
 
 ## Public boundary and ownership
 
@@ -33,15 +36,16 @@ scene/pass boundary and production frame composer out of the D3D12 RHI.
 defines `RenderExtent`, `RendererConfig`, `RenderFrameData`, `RenderStatus`,
 and `RendererStats`, plus COM-free shader and generic texture upload views.
 `RendererConfig` carries the opaque native-window pointer, physical extent,
-clear color, and borrowed shader-bytecode, cubemap, and terrain upload views,
-plus vertical-synchronization policy. `Renderer::create` consumes every
-pointer-based view synchronously.
+clear color, and borrowed shader-bytecode, cubemap, terrain-mesh, and three-map
+terrain-material upload views, plus vertical-synchronization policy.
+`Renderer::create` consumes every pointer-based view synchronously.
 
 `RenderFrameData` contains finite engine-owned row-major `view_projection` and
 `sky_view_projection` matrices plus finite daylight direction, disk, gradient,
 ambient, halo, and intensity values, which `Renderer::render_frame` borrows
 while recording the terrain/cube/sky frame. It also selects the finite
-`TerrainRenderMode` (`solid` or `wireframe`).
+`TerrainRenderMode` (`solid` or `wireframe`), finite camera world position, and
+`TerrainMaterialView` (`shaded`, `material_weights`, or `shading_normal`).
 `TerrainMeshUploadView` lends interleaved position/normal vertices, triangle
 indices, eight-vertex/24-index bounds lines, and six-vertex/six-index query
 marker lines only during synchronous creation. The renderer receives
@@ -68,7 +72,7 @@ failure but cannot replace explicit validation.
 REN-001 also makes the source boundary explicit:
 
 - `engine/renderer/src/frame_pipeline.*` owns the production
-  `compose_frame_pipeline` policy: seven semantic imports, three pass
+  `compose_frame_pipeline` policy: ten semantic imports, three pass
   declarations, their access states, and `Terrain -> TexturedCube -> Skybox`;
 - `engine/renderer/src/d3d12` privately owns the cube, daylight, skybox, and
   terrain scene helpers, scene-named timestamp layout/accumulator, and D3D12
@@ -78,11 +82,13 @@ REN-001 also makes the source boundary explicit:
   frame-resource state machine, and legacy render-graph transition recorder.
   No public scene-pass API remains in the RHI.
 
-The REN-001 acceptance baseline is intentionally exact: seven imports, three
-passes, two dependencies, four transitions, 16 elisions, five indexed draws,
-four geometry buffers, two textures, the existing PIX/timestamp hierarchy and
-eight-query layout, the 256-byte constants/probe record, and every resize,
-retirement, shutdown, and smoke count below are unchanged.
+The historical REN-001 acceptance baseline was intentionally exact: seven
+imports, three passes, two dependencies, four transitions, 16 elisions, five
+indexed draws, four geometry buffers, two textures, the existing PIX/timestamp
+hierarchy and eight-query layout, the 256-byte constants/probe record, and every
+resize, retirement, and shutdown policy. T-003 adds three persistent material
+arrays, three imports, six elisions, and one table bind while preserving those
+lifecycle and draw/pass/timestamp counts.
 
 ## Swap chain and physical extent
 
@@ -97,9 +103,9 @@ The private D3D12 renderer backend owns:
 - one CPU-only DSV heap with writable and read-only descriptors plus one
   `DXGI_FORMAT_D32_FLOAT` depth texture matching the current physical extent;
 - one reusable graphics command list;
-- one resource-bound cube root signature, one b0-only terrain/sky root
-  signature, immutable cube and skybox PSOs, immutable solid and wireframe
-  terrain PSOs, and one terrain-bounds line PSO;
+- one resource-bound cube root signature, one material-bound terrain root
+  signature, one b0-only sky root signature, immutable cube and skybox PSOs,
+  immutable solid and wireframe terrain PSOs, and one terrain-bounds line PSO;
 - one committed default-heap cube vertex buffer containing 24 position/UV
   vertices and one committed default-heap index buffer containing 36
   `uint16_t` indices;
@@ -111,8 +117,11 @@ The private D3D12 renderer backend owns:
   `DXGI_FORMAT_R8G8B8A8_UNORM` procedural checker texture;
 - one committed default-heap `8x8`, one-mip, six-face
   `DXGI_FORMAT_R8G8B8A8_UNORM_SRGB` startup cubemap;
-- one persistent two-slot shader-visible CBV/SRV/UAV heap holding the checker
-  2D SRV at slot 0 and cubemap SRV at slot 1;
+- three committed default-heap, two-layer, `32x32`, six-mip terrain arrays:
+  sRGB albedo plus linear normal and roughness;
+- one persistent five-slot shader-visible CBV/SRV/UAV heap holding the checker
+  2D SRV at slot 0, cubemap SRV at slot 1, and material-array SRVs at slots
+  2-4;
 - three frame contexts, each containing one direct command allocator, one
   persistently mapped 64 KiB committed upload buffer, one 256-byte default-heap
   upload-probe destination, one CPU-only 64-slot CBV/SRV/UAV staging heap, a
@@ -136,8 +145,9 @@ has already retired.
 ## Frame acquisition, staging, and present
 
 Renderer creation records one direct-queue static upload submission for the
-cube and terrain vertex/index data, checker, and every cubemap face/mip. Its six
-initialization barriers transition the immutable resources to their final
+cube and terrain vertex/index data, checker, every cubemap face/mip, and all
+36 terrain-material subresources. Its nine initialization barriers transition
+the immutable resources to their final
 shader/input states, then it signals the normal
 monotonic fence, performs one bounded startup wait, and releases the temporary
 upload resources before the first frame. No static geometry or texture upload
@@ -159,16 +169,17 @@ One frame performs the following work:
 5. reserve the context's exact eight-query timestamp slice;
 6. ask the renderer-owned production `frame_pipeline` composer to build and
    compile one frame-local graph that imports back buffer, depth, checker, cube
-   vertex/index buffers, and terrain vertex/index buffers; declares their
-   exact shader/input reads; and orders `Terrain`, `TexturedCube`, then the
-   depth-reading procedural `Skybox`;
+   vertex/index buffers, terrain vertex/index buffers, and three material
+   arrays; declares their exact shader/input reads; and orders `Terrain`,
+   `TexturedCube`, then the depth-reading procedural `Skybox`;
 7. reset that context's command allocator and the shared command list with the
    immutable solid-terrain PSO;
 8. begin the `Frame` PIX event, write the frame-begin timestamp, and copy the
    256-byte frame record from the upload heap to the context's
    default-heap probe destination on the direct queue, outside the graph;
 9. execute the graph, which records `PRESENT -> RENDER_TARGET`, invokes
-   `Terrain` to clear and draw the selected surface, bounds, and query marker,
+    `Terrain` to clear, bind the selected material view, and draw the selected
+    surface, bounds, and query marker,
    invokes `TexturedCube` without clearing, transitions depth
    `DEPTH_WRITE -> DEPTH_READ`, invokes the b0-only procedural `Skybox` with the
    read-only DSV, then restores color/depth final states;
@@ -219,10 +230,10 @@ Vertical synchronization may block inside `Present`, and context reuse may
 perform a bounded fence wait; G-003 removes only the unconditional queue drain
 after every frame.
 
-The generated shader byte arrays and CPU cubemap subresource views are borrowed
-only during synchronous creation. `Renderer` owns neither source code,
+The generated shader byte arrays and CPU cubemap/material subresource views are
+borrowed only during synchronous creation. `Renderer` owns neither source code,
 shader artifacts, nor caller CPU pixels afterward. The root signatures, PSOs,
-cube/terrain buffers, checker, cubemap, and persistent texture heap remain valid
+cube/terrain buffers, checker, cubemap, material arrays, and persistent texture heap remain valid
 across swap-chain resize and are released only after shutdown drains and retires
 every submitted frame.
 
@@ -250,7 +261,8 @@ Frame
 ```
 
 `StaticSceneUpload` surrounds the one-time cube/terrain vertex/index, checker,
-and six cubemap copies plus six initialization barriers. Each submitted
+six cubemap, and 36 material-subresource copies plus nine initialization
+barriers. Each submitted
 `Frame` begins after command-list reset and encloses the diagnostic probe copy,
 graph barriers, all three passes, and timestamp resolve. Each nested marker
 contains only its callback's bind/draw work; `Terrain` also owns the attachment
@@ -362,14 +374,16 @@ deadline, and is registered with a 240-second CTest timeout. A successful run:
 - proves five indexed draws per frame: one 6,144-index terrain surface draw,
   one 24-index terrain-bounds draw, one six-index terrain-query-marker draw,
   and one 36-index draw for each of the cube and skybox; it also proves one
-  depth clear and one texture binding per frame submission;
+  depth clear and two texture-table bindings per frame submission;
 - proves the static query marker contains exactly six vertices and six indices,
   and its draw count equals frame submissions with six submitted indices per
   draw;
 - proves both terrain modes execute at least once and their counts sum to the
   terrain surface draw count;
-- proves one graph compilation/execution, seven imports, three pass
-  executions, two dependencies, four recorded transitions, and 16 elided
+- proves all three terrain material views execute at least once and their
+  counts sum to the terrain surface draw count;
+- proves one graph compilation/execution, ten imports, three pass
+  executions, two dependencies, four recorded transitions, and 22 elided
   transitions per frame submission;
 - proves one `StaticSceneUpload` PIX event, one `Frame` event per submission,
   plus one `Terrain`, one `TexturedCube`, and one `Skybox` event per submission;
@@ -385,11 +399,14 @@ deadline, and is registered with a 240-second CTest timeout. A successful run:
   attempt, with high-water marks of 256 bytes and one descriptor;
 - proves `static_upload_submissions == 1`,
   `geometry_buffer_creations == 4`, `checker_texture_creations == 1`, and
-  `cubemap_texture_creations == 1`;
+  `cubemap_texture_creations == 1`, plus three material-array creations;
 - proves six faces, one mip, six subresources, and 1,536 source bytes were
-  uploaded, with `texture_srv_creations == 2`,
-  `cubemap_srv_creations == 1`, and two persistent texture descriptors; the
+  uploaded, with `texture_srv_creations == 5`,
+  `cubemap_srv_creations == 1`, and five persistent texture descriptors; the
   static upload completes its bounded wait before the first frame;
+- proves the terrain material fixture has two layers, six mips, 36
+  subresources, 32,760 meaningful source bytes, one sRGB array, three material
+  SRVs, and one material binding per submitted frame;
 - proves both `depth_resource_creations` and `depth_read_view_creations` equal
   `resize_count + 1`, and
   `full_queue_drains == resize_count + 1` for effective resizes plus shutdown,
@@ -410,8 +427,8 @@ Early close, dropped lifecycle events, occlusion that prevents progress,
 deadline expiry, a dimension mismatch, any graphics failure, incomplete close,
 or a final count other than the selected 1,000/120 target returns a nonzero
 process exit code.
-The smoke automatically selects solid terrain for the first half and wireframe
-for the second half. It validates compilation, resource binding, indexed draw
+The smoke automatically exercises both fill modes and all three material
+views. It validates compilation, resource binding, indexed draw
 and depth submission, aspect propagation, lifetime, and diagnostics; it does
 not read back or compare the final pixels.
 
@@ -424,19 +441,22 @@ unit tests.
 
 ## Explicit non-goals
 
-REN-001 does not expose a public/general upload allocator, global upload ring,
+T-003 does not expose a public/general upload allocator, global upload ring,
 persistent descriptor allocator, generic deferred-destruction system, or
 readback/image validation. Its timestamp query heap and readback buffer are a
 fixed renderer diagnostic, not a general query allocator or asynchronous
-readback service. Its two-slot shader-visible heap, focused root signatures,
-static scene geometry, checker, retained startup cubemap SRV, and fixed PSOs
-remain deliberately specific to this proof, not a general mesh manager,
-material layout, pipeline cache, or hot-reload boundary.
+readback service. Its five-slot shader-visible heap, focused root signatures,
+static scene geometry, checker, retained startup cubemap SRV, fixed procedural
+material fixture, and fixed PSOs remain deliberately specific to this proof,
+not a general mesh manager, arbitrary material layout, pipeline cache, or
+hot-reload boundary.
 
 The query-derived marker adds no GPU resource, descriptor, PSO, graph pass,
-dependency, barrier, PIX event, or timestamp. The established frame remains
-seven imports, three passes, two dependencies, four recorded barriers, 16
-elisions, four geometry buffers, and eight timestamps. Its query ownership and
+dependency, barrier, PIX event, or timestamp. T-003 adds three arrays/imports,
+six elisions, and one terrain table bind without adding a draw, pass,
+dependency, recorded barrier, PIX event, or timestamp. The established frame
+is ten imports, three passes, two dependencies, four recorded barriers, 22
+elisions, four geometry buffers, and eight timestamps. Query ownership and
 metric semantics remain in the platform-independent terrain module.
 
 The graph remains frame-local, direct-queue, serial, and limited to imported
@@ -463,5 +483,6 @@ details plus manual PIX acceptance. See
 deployment, upload, and persistent-SRV rules, and
 [the skybox contract](SKYBOX.md) for the visible background acceptance. See
 [the terrain contract](TERRAIN.md) for the canonical surface-query contract,
-deterministic tile, and diagnostic rendering modes. `REN-001` was completed on
-July 18, 2026. The next increment is `T-003`, layered PBR terrain materials.
+deterministic tile, material fixture, and diagnostic rendering modes. `T-003`
+was completed on July 18, 2026. The next increment is `S-003`, HDR environment
+lighting.

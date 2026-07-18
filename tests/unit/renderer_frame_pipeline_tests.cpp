@@ -94,6 +94,9 @@ TEST_CASE(
             const auto depth = context.write(resources.depth_buffer);
             const auto vertices = context.read(resources.vertex_buffer);
             const auto indices = context.read(resources.index_buffer);
+            const auto albedo = context.read(resources.albedo_layers);
+            const auto normal = context.read(resources.normal_layers);
+            const auto roughness = context.read(resources.roughness_layers);
             if (context.pass_name() != "Terrain" ||
                 !color || color.value() !=
                     frame_back_buffer_external_id ||
@@ -102,7 +105,13 @@ TEST_CASE(
                 !vertices || vertices.value() !=
                     frame_terrain_vertex_buffer_external_id ||
                 !indices || indices.value() !=
-                    frame_terrain_index_buffer_external_id) {
+                    frame_terrain_index_buffer_external_id ||
+                !albedo || albedo.value() !=
+                    frame_terrain_albedo_layers_external_id ||
+                !normal || normal.value() !=
+                    frame_terrain_normal_layers_external_id ||
+                !roughness || roughness.value() !=
+                    frame_terrain_roughness_layers_external_id) {
                 return core::Result<void>::failure(
                     callback_error("Terrain"));
             }
@@ -164,11 +173,11 @@ TEST_CASE(
     auto graph = std::move(graph_result).value();
 
     REQUIRE((graph.stats() == CompiledGraphStats{
-        .imported_resource_count = 7,
+        .imported_resource_count = 10,
         .pass_count = 3,
         .dependency_count = 2,
         .transition_count = 4,
-        .elided_transition_count = 16,
+        .elided_transition_count = 22,
     }));
 
     const auto passes = graph.passes();
@@ -182,7 +191,7 @@ TEST_CASE(
     REQUIRE((passes[2].dependencies ==
         std::vector<PassHandle>{passes[1].handle}));
 
-    REQUIRE(passes[0].accesses.size() == 4);
+    REQUIRE(passes[0].accesses.size() == 7);
     require_access(
         passes[0].accesses[0],
         frame_back_buffer_external_id,
@@ -202,6 +211,21 @@ TEST_CASE(
         passes[0].accesses[3],
         frame_terrain_index_buffer_external_id,
         ResourceState::index_buffer,
+        AccessMode::read);
+    require_access(
+        passes[0].accesses[4],
+        frame_terrain_albedo_layers_external_id,
+        ResourceState::pixel_shader_read,
+        AccessMode::read);
+    require_access(
+        passes[0].accesses[5],
+        frame_terrain_normal_layers_external_id,
+        ResourceState::pixel_shader_read,
+        AccessMode::read);
+    require_access(
+        passes[0].accesses[6],
+        frame_terrain_roughness_layers_external_id,
+        ResourceState::pixel_shader_read,
         AccessMode::read);
 
     REQUIRE(passes[1].accesses.size() == 5);

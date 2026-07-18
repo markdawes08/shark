@@ -18,11 +18,34 @@ TEST_CASE(
     STATIC_REQUIRE(std::is_standard_layout_v<RenderExtent>);
     STATIC_REQUIRE(std::is_standard_layout_v<RenderFrameData>);
     STATIC_REQUIRE(std::is_standard_layout_v<RendererStats>);
+    STATIC_REQUIRE(std::is_standard_layout_v<Texture2DArrayUploadView>);
+    STATIC_REQUIRE(std::is_standard_layout_v<TerrainMaterialUploadView>);
 
     const RendererConfig config;
     REQUIRE((config.extent == RenderExtent{1280, 720}));
     REQUIRE(config.synchronize_to_vertical_refresh);
     REQUIRE(config.native_window == nullptr);
+    REQUIRE(config.terrain_materials.albedo.subresources == nullptr);
+    REQUIRE(config.terrain_materials.normal.subresources == nullptr);
+    REQUIRE(config.terrain_materials.roughness.subresources == nullptr);
+
+    const RenderFrameData frame;
+    REQUIRE(
+        frame.terrain_mode == TerrainRenderMode::solid);
+    REQUIRE(
+        frame.terrain_material_view ==
+        TerrainMaterialView::shaded);
+    REQUIRE(
+        frame.camera_world_position == shark::math::Float3{});
+
+    STATIC_REQUIRE(
+        static_cast<std::uint32_t>(TerrainMaterialView::shaded) == 1);
+    STATIC_REQUIRE(
+        static_cast<std::uint32_t>(
+            TerrainMaterialView::material_weights) == 2);
+    STATIC_REQUIRE(
+        static_cast<std::uint32_t>(
+            TerrainMaterialView::shading_normal) == 3);
 }
 
 TEST_CASE(
@@ -40,5 +63,8 @@ TEST_CASE(
     REQUIRE(changed != baseline);
     changed = baseline;
     changed.terrain_query_marker_draw_calls = 1;
+    REQUIRE(changed != baseline);
+    changed = baseline;
+    changed.terrain_material_texture_array_creations = 3;
     REQUIRE(changed != baseline);
 }

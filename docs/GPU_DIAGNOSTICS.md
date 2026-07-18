@@ -1,6 +1,6 @@
 # Direct3D 12 GPU Diagnostics Contract
 
-- **Completed through:** `REN-001`
+- **Completed through:** `T-003`
 - **Last verified:** July 18, 2026
 
 G-007 adds the first bounded GPU diagnostics to the existing G-006
@@ -12,11 +12,14 @@ while changing `Skybox` to a b0-only procedural daylight draw. T-002 appends a
 cyan, query-derived line-list pin to the existing `Terrain` interval without
 adding or moving a PIX marker or timestamp. REN-001 moves scene/pass policy
 and public statistics to `shark::renderer` while preserving every diagnostic
-boundary and count.
+boundary and count. T-003 adds material resources and binding/accounting inside
+the existing upload, graph, and `Terrain` scopes without adding a marker or
+timestamp.
 
 The diagnostics remain fixed-capacity and fence-delayed while the visible
-contract uses three passes, seven resource imports, four attachment
-transitions, exact vertex/index reads, and one per-frame checker binding. The
+contract uses three passes, ten resource imports, four attachment
+transitions, exact vertex/index/material reads, and two per-frame texture-table
+bindings. The
 retained cubemap remains part of startup diagnostics but not the frame graph.
 
 ## PIX runtime and marker contract
@@ -32,9 +35,9 @@ The marker names and boundaries are part of the diagnostics contract:
 
 | Marker | Color index | Frequency | Command-list boundary |
 |---|---:|---:|---|
-| `StaticSceneUpload` | 3 | Once for the one static upload submission | Begins after the upload command list is reset; contains the cube and packed surface/bounds/query-marker terrain vertex/index buffer copies, checker-texture copy, six cubemap face/mip copies, and six initialization transitions; ends before command-list close, execution, fence signal, and the required initialization wait |
+| `StaticSceneUpload` | 3 | Once for the one static upload submission | Begins after the upload command list is reset; contains the cube and packed surface/bounds/query-marker terrain vertex/index buffer copies, checker-texture copy, six cubemap face/mip copies, 36 terrain-material subresource copies, and nine initialization transitions; ends before command-list close, execution, fence signal, and the required initialization wait |
 | `Frame` | 1 | Once per submitted frame | Begins after the reusable frame command list is reset; contains the frame timestamp interval, 256-byte constants/probe copy, complete render-graph execution, and timestamp resolve; ends before command-list close, execution, fence signal, and `Present` |
-| `Terrain` | 4 | Once per graph-pass execution | Begins after declared color/depth and terrain-buffer access is validated; contains the pass timestamp interval, attachment clears, selected solid/wireframe surface draw, depth-tested bounds-line draw, and depth-tested cyan query-marker draw; ends before the callback returns |
+| `Terrain` | 4 | Once per graph-pass execution | Begins after declared color/depth, terrain-buffer, and three material-array accesses are validated; contains the pass timestamp interval, material table/constants, selected solid/wireframe surface draw and material view, depth-tested bounds-line draw, and depth-tested cyan query-marker draw; ends before the callback returns |
 | `TexturedCube` | 2 | Once per graph-pass execution | Begins inside the graph callback after declared resource access is validated; contains the pass timestamp interval, attachment and checker binding, and indexed draw without clearing; ends before the callback returns |
 | `Skybox` | 3 | Once per graph-pass execution | Begins after its declared color/depth and cube-buffer access is validated; contains its timestamp interval, b0-only procedural-sky setup, read-only DSV, and reused 36-index draw; ends before the callback returns |
 
@@ -217,21 +220,31 @@ timestamp_query_high_water == 8
 timestamp_queries_written == frame_submissions * 8
 timestamp_resolve_batches == frame_submissions
 gpu_timing_samples == frame_submissions
-render_graph_resource_imports == frame_submissions * 7
-render_graph_elided_transitions == frame_submissions * 16
-texture_bindings == frame_submissions
+render_graph_resource_imports == frame_submissions * 10
+render_graph_elided_transitions == frame_submissions * 22
+texture_bindings == frame_submissions * 2
+terrain_material_bindings == frame_submissions
 
 terrain_query_marker_draw_calls == frame_submissions
 terrain_query_marker_indices == terrain_query_marker_draw_calls * 6
 terrain_query_marker_vertex_count == 6
 terrain_query_marker_index_count == 6
+
+terrain_material_texture_array_creations == 3
+terrain_material_srv_creations == 3
+terrain_material_layers == 2
+terrain_material_mip_levels == 6
+terrain_material_subresources_uploaded == 36
+terrain_material_source_bytes_uploaded == 32760
+terrain_material_srgb_resources == 1
+persistent_texture_descriptors == 5
 ```
 
 Each submitted frame therefore contains five indexed draws: terrain surface,
 terrain bounds, terrain query marker, textured cube, and sky. The marker is
 packed into the existing terrain buffers, so startup still creates four
-geometry buffers. The graph and diagnostics totals remain seven imports, three
-passes, two dependencies, four barriers, 16 elisions, and eight timestamp
+geometry buffers. The graph and diagnostics totals are ten imports, three
+passes, two dependencies, four barriers, 22 elisions, and eight timestamp
 writes per frame.
 
 The aggregate checks also require:
@@ -256,8 +269,8 @@ While the window is minimized, the smoke compares the complete `RendererStats`
 snapshot and no counter may advance. This covers frame submission, graph work,
 PIX markers, timestamp allocation/resolution/consumption, every draw, uploads,
 matrix updates, texture bindings, clears, and resource accounting. Submitted
-frames still retain exactly seven imports, four graph barriers, 16 elided
-transitions, and one checker-texture binding each.
+frames still retain exactly ten imports, four graph barriers, 22 elided
+transitions, one checker-texture binding, and one terrain-material binding each.
 
 The successful smoke summary contains these reproducible fields:
 
@@ -288,8 +301,8 @@ The unit tests cover:
   high-water accounting.
 
 The renderer-owned production `frame_pipeline` test additionally proves the
-seven imports, `Terrain -> TexturedCube -> Skybox` callback order, exact
-resource access sets, two dependencies, four transitions, and 16 elisions.
+ten imports, `Terrain -> TexturedCube -> Skybox` callback order, exact
+resource access sets, two dependencies, four transitions, and 22 elisions.
 The scene-named timestamp tests move with the private renderer D3D12 helper.
 Generic frame-resource state and the legacy transition recorder/tests remain
 under the D3D12 RHI because those helpers contain no scene policy.
@@ -322,9 +335,9 @@ For manual PIX acceptance:
 4. Confirm the graph owns all four attachment transitions inside `Frame`: the
    back buffer enters render-target state before `Terrain`, depth enters
    read state before `Skybox`, and both attachments return to their imported
-   final states after `Skybox`. The checker texture remains in exact
-   `pixel_shader_read` state and requires no transition. The retained startup
-   cubemap is absent from the per-frame graph.
+   final states after `Skybox`. The checker texture and three material arrays
+   remain in exact `pixel_shader_read` state and require no transition. The
+   retained startup cubemap is absent from the per-frame graph.
 5. Use a startup-inclusive capture or timing capture to verify the one-time
    `StaticSceneUpload` scope. A frame capture started after initialization is not
    expected to contain that startup-only event.
@@ -354,6 +367,8 @@ scope, timestamp, query heap slot, graph pass, resource, dependency, or barrier.
 REN-001 moves the cube/daylight/skybox/terrain helpers into the private
 renderer D3D12 backend and removes the public D3D12 `Presentation` class; it
 does not change presentation operations, diagnostics, pixels, or accounting.
+T-003 retains the same marker/timestamp layout while adding three persistent
+material arrays, their exact graph reads, and one terrain table bind per frame.
 See
 [the render-graph contract](RENDER_GRAPH.md) for pass/barrier ownership and
 [the presentation contract](GRAPHICS_PRESENTATION.md) for frame-context,
@@ -362,5 +377,6 @@ visual and orientation acceptance procedure and
 [the DDS cubemap contract](DDS_CUBEMAP.md) for the retained startup texture
 contract.
 See [the terrain contract](TERRAIN.md) for the canonical surface query,
-deterministic tile, and diagnostic rendering modes. `REN-001` was completed on
-July 18, 2026. The next increment is `T-003`, layered PBR terrain materials.
+deterministic tile, material fixture, and diagnostic rendering modes. `T-003`
+was completed on July 18, 2026. The next increment is `S-003`, HDR environment
+lighting.

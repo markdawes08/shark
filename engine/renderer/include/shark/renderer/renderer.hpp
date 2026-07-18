@@ -60,6 +60,18 @@ struct TextureCubeUploadView final {
     std::size_t subresource_count{};
 };
 
+// Subresources are ordered layer-major, then mip-minor. Renderer consumes
+// these borrowed views synchronously during create().
+struct Texture2DArrayUploadView final {
+    std::uint32_t width{};
+    std::uint32_t height{};
+    std::uint32_t array_layers{};
+    std::uint32_t mip_levels{};
+    TextureDataFormat format{};
+    const TextureSubresourceDataView* subresources{};
+    std::size_t subresource_count{};
+};
+
 // Terrain, its diagnostic bounds, and its query marker are copied
 // synchronously during create(). Every vertex stream uses interleaved float3
 // POSITION / float3 NORMAL data; every index stream uses uint16_t.
@@ -79,6 +91,12 @@ struct TerrainMeshUploadView final {
     std::size_t query_marker_vertex_stride{};
     const std::uint16_t* query_marker_indices{};
     std::size_t query_marker_index_count{};
+};
+
+struct TerrainMaterialUploadView final {
+    Texture2DArrayUploadView albedo;
+    Texture2DArrayUploadView normal;
+    Texture2DArrayUploadView roughness;
 };
 
 // Temporary LDR daylight controls for the environment renderer boundary.
@@ -117,6 +135,12 @@ enum class TerrainRenderMode : std::uint8_t {
     wireframe,
 };
 
+enum class TerrainMaterialView : std::uint32_t {
+    shaded = 1,
+    material_weights,
+    shading_normal,
+};
+
 struct RendererConfig final {
     void* native_window{};
     RenderExtent extent{1280, 720};
@@ -129,6 +153,7 @@ struct RendererConfig final {
     ShaderBytecodeView terrain_pixel_shader{};
     TextureCubeUploadView startup_cubemap{};
     TerrainMeshUploadView terrain_mesh{};
+    TerrainMaterialUploadView terrain_materials{};
     bool synchronize_to_vertical_refresh{true};
 };
 
@@ -136,7 +161,10 @@ struct RenderFrameData final {
     math::Matrix4x4 view_projection{};
     math::Matrix4x4 sky_view_projection{};
     DaylightSettings daylight{};
+    math::Float3 camera_world_position{};
     TerrainRenderMode terrain_mode{TerrainRenderMode::solid};
+    TerrainMaterialView terrain_material_view{
+        TerrainMaterialView::shaded};
 };
 
 enum class RenderStatus : std::uint8_t {
@@ -203,6 +231,9 @@ struct RendererStats final {
     std::uint64_t terrain_draw_calls{};
     std::uint64_t terrain_solid_draw_calls{};
     std::uint64_t terrain_wireframe_draw_calls{};
+    std::uint64_t terrain_shaded_draw_calls{};
+    std::uint64_t terrain_material_weight_draw_calls{};
+    std::uint64_t terrain_shading_normal_draw_calls{};
     std::uint64_t terrain_bounds_draw_calls{};
     std::uint64_t terrain_query_marker_draw_calls{};
     std::uint64_t terrain_indices{};
@@ -221,6 +252,7 @@ struct RendererStats final {
     std::uint64_t depth_resource_creations{};
     std::uint64_t depth_read_view_creations{};
     std::uint64_t texture_bindings{};
+    std::uint64_t terrain_material_bindings{};
     std::uint64_t static_upload_submissions{};
     std::uint64_t geometry_buffer_creations{};
     std::uint64_t checker_texture_creations{};
@@ -231,6 +263,13 @@ struct RendererStats final {
     std::uint64_t cubemap_mip_levels{};
     std::uint64_t cubemap_subresources_uploaded{};
     std::uint64_t cubemap_source_bytes_uploaded{};
+    std::uint64_t terrain_material_texture_array_creations{};
+    std::uint64_t terrain_material_srv_creations{};
+    std::uint64_t terrain_material_layers{};
+    std::uint64_t terrain_material_mip_levels{};
+    std::uint64_t terrain_material_subresources_uploaded{};
+    std::uint64_t terrain_material_source_bytes_uploaded{};
+    std::uint64_t terrain_material_srgb_resources{};
     std::uint64_t persistent_texture_descriptors{};
     std::uint64_t cubemap_srgb_resources{};
     std::uint64_t last_submission_fence{};

@@ -1,6 +1,6 @@
 # Building Shark
 
-- **Completed through:** `REN-001`
+- **Completed through:** `T-003`
 - **Last verified:** July 18, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
@@ -49,7 +49,8 @@ DirectXMath package for camera and transform math, and G-007 links the pinned
 WinPixEventRuntime so named command-list events remain available in Debug and
 Release. G-006's planner and executor remain engine-owned. S-001 privately
 links the pinned DirectXTex runtime behind the engine-owned DDS cubemap
-boundary.
+boundary. T-003's material fixture and mip generation are first-party CPU code
+and add no dependency or runtime content file.
 
 The checked-in toolchain also scopes `UCRTContentRoot` to the complete Windows
 SDK payload for the CMake process. This avoids a Visual Studio 2026 installation
@@ -108,8 +109,8 @@ frame-resource lifecycle and resize-safe reversed-Z target and reports separate
 PIX/timestamp intervals for all three passes. REN-001 routes this through the
 public `shark::renderer::Renderer`; the sandbox creates the D3D12 `Device` and
 passes it to `Renderer::create` only at the composition root. Press `F1` to
-toggle the terrain
-between solid daylight shading and wireframe. Use `W`/`S` along the
+toggle terrain fill between solid and wireframe. Press `F2` to cycle shaded,
+ground/rock weight, and mapped world-normal views. Use `W`/`S` along the
 camera forward axis, `A`/`D` to strafe, `Q`/`E` to move down/up, hold `Shift`
 to move faster, and hold the right mouse button while dragging to look around.
 `Control` and `Space` are down/up aliases. Resize or minimize/restore the
@@ -150,11 +151,14 @@ Run only the normal shader target and focused build checks with:
 ```
 
 For the visual acceptance check, run `SharkSandbox` without arguments. A solid
-height tile must show simple green-to-rock slope coloring under the shared
-ambient-plus-directional daylight, its magenta depth-tested bounds overlay must
-enclose the tile, and the cyan query pin must begin on the visible LOD0 surface
-and extend along its exact triangle normal. `F1` must reveal the fixed triangle
-split in wireframe without disconnecting or hiding the pin.
+height tile must show tiled ground and rock materials blended by slope and
+height, mapped surface detail, and direct-sun roughness response under the
+shared daylight. Its magenta depth-tested bounds overlay must enclose the tile,
+and the cyan query pin must begin on the visible LOD0 surface and extend along
+its exact triangle normal. `F1` must reveal the fixed triangle split in
+wireframe without disconnecting or hiding the pin. `F2` must cycle shaded,
+complementary material-weight, and mapped world-normal views without changing
+the canonical geometry.
 The textured cube must retain correct hidden-surface occlusion and perspective.
 The background must form one continuous blue zenith/horizon/nadir gradient
 with a warm sun disk and restrained halo, without visible cube-face seams or
@@ -239,19 +243,22 @@ destination.
 Creation records one `StaticSceneUpload` PIX event, one static direct-queue
 upload submission, and one bounded wait for the cube and terrain vertex/index
 buffers, deterministic `8x8` checker, and all six faces of the app-local `8x8`
-sRGB DDS cubemap. The terrain buffers pack the 1,089-vertex/6,144-index
+sRGB DDS cubemap, plus the three two-layer `32x32` full-mip terrain material
+arrays. Those arrays contain six mips, 12 subresources each, 36 total
+subresources, and 32,760 meaningful source bytes. The terrain buffers pack the
+1,089-vertex/6,144-index
 surface, eight-vertex/24-index AABB, and six-vertex/six-index query marker
 without adding a resource. The retained cubemap remains a startup asset/upload
 proof; the procedural sky does not read or bind it per frame. The startup list
-ends with six initialization barriers.
+ends with nine initialization barriers.
 
 Every submitted frame records one outer `Frame` event with nested `Terrain`,
-`TexturedCube`, and `Skybox` events. Its seven-import graph declares exact
-vertex/index reads and the checker's one pixel-shader read, executes all three
-passes, two dependencies, four recorded transitions, and 16 elided
+`TexturedCube`, and `Skybox` events. Its ten-import graph declares exact
+vertex/index reads plus the checker and three material-array pixel-shader reads,
+executes all three passes, two dependencies, four recorded transitions, and 22 elided
 transitions. It issues five indexed draws: terrain surface, terrain AABB,
 terrain query marker, 36-index textured cube, and 36-index skybox. It retains
-one texture binding and one reversed-Z depth clear. Terrain owns the clear,
+two texture-table bindings and one reversed-Z depth clear. Terrain owns the clear,
 cube preserves it, and sky uses the read-only DSV and writes no depth.
 
 The direct queue reports its timestamp frequency once. One 24-entry query heap
@@ -287,6 +294,7 @@ GPU timestamp-state unit coverage directly with:
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[daylight]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][query]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][material]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[assets][dds][cubemap]"
 ```
 
@@ -333,9 +341,10 @@ capture acceptance. See [the DDS cubemap contract](DDS_CUBEMAP.md) for the
 tracked fixture, strict loader, app-local deployment, retained startup upload,
 and deliberately absent per-frame sky read. See
 [the terrain contract](TERRAIN.md) for canonical ownership, exact query
-semantics, render-mesh separation, and diagnostic rules. `REN-001` completed
-the renderer boundary on July 18, 2026 without changing pixels or accounting.
-The upcoming increment is `T-003`, layered PBR terrain materials.
+semantics, material fixture, render-mesh separation, and diagnostic rules.
+`T-003` completed the bounded layered PBR terrain path on July 18, 2026.
+Debug and Release each pass the full `120/120` CTest suite. The upcoming
+increment is `S-003`, HDR environment lighting.
 
 ## Visual Studio
 

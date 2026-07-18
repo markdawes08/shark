@@ -7,6 +7,7 @@
 #include <shark/rhi/d3d12/device.hpp>
 #include <shark/renderer/renderer.hpp>
 #include <shark/terrain/height_tile.hpp>
+#include <shark/terrain/material_palette.hpp>
 #include <shark/world/camera.hpp>
 
 #include "camera_controller.hpp"
@@ -51,6 +52,50 @@ static_assert(sizeof(TerrainGpuVertex) == sizeof(float) * 6U);
 static_assert(offsetof(TerrainGpuVertex, position) == 0);
 static_assert(
     offsetof(TerrainGpuVertex, normal) == sizeof(float) * 3U);
+
+template<std::size_t Size>
+[[nodiscard]] std::array<
+    shark::renderer::TextureSubresourceDataView,
+    shark::terrain::material_subresources_per_array>
+make_material_subresource_views(
+    const std::array<std::byte, Size>& source) noexcept
+{
+    using namespace shark;
+    static_assert(Size == terrain::material_array_source_bytes);
+
+    std::array<
+        renderer::TextureSubresourceDataView,
+        terrain::material_subresources_per_array> views{};
+    for (std::uint32_t layer = 0;
+         layer < terrain::material_layer_count;
+         ++layer) {
+        for (std::uint32_t mip = 0;
+             mip < terrain::material_texture_mip_levels;
+             ++mip) {
+            const auto index =
+                static_cast<std::size_t>(layer) *
+                    terrain::material_texture_mip_levels +
+                mip;
+            const auto width = terrain::material_mip_width(mip);
+            const auto height = terrain::material_mip_height(mip);
+            const auto row_pitch =
+                static_cast<std::size_t>(width) *
+                terrain::material_texel_bytes;
+            const auto slice_pitch =
+                row_pitch * static_cast<std::size_t>(height);
+            views[index] = {
+                .data = source.data() +
+                    terrain::material_subresource_offset(layer, mip),
+                .data_size = slice_pitch,
+                .width = width,
+                .height = height,
+                .row_pitch = row_pitch,
+                .slice_pitch = slice_pitch,
+            };
+        }
+    }
+    return views;
+}
 
 template<typename... Visitors>
 struct EventVisitor final : Visitors... {
@@ -116,6 +161,37 @@ to_render_extent(
         shark::core::ErrorCode::operation_failed,
         std::move(message),
     };
+}
+
+[[nodiscard]] constexpr shark::renderer::TerrainMaterialView
+next_terrain_material_view(
+    const shark::renderer::TerrainMaterialView view) noexcept
+{
+    using shark::renderer::TerrainMaterialView;
+    switch (view) {
+    case TerrainMaterialView::shaded:
+        return TerrainMaterialView::material_weights;
+    case TerrainMaterialView::material_weights:
+        return TerrainMaterialView::shading_normal;
+    case TerrainMaterialView::shading_normal:
+        return TerrainMaterialView::shaded;
+    }
+    return TerrainMaterialView::shaded;
+}
+
+[[nodiscard]] constexpr std::string_view terrain_material_view_name(
+    const shark::renderer::TerrainMaterialView view) noexcept
+{
+    using shark::renderer::TerrainMaterialView;
+    switch (view) {
+    case TerrainMaterialView::shaded:
+        return "shaded";
+    case TerrainMaterialView::material_weights:
+        return "ground/rock weights";
+    case TerrainMaterialView::shading_normal:
+        return "mapped world normal";
+    }
+    return "invalid";
 }
 
 [[nodiscard]] shark::core::Result<std::filesystem::path>
@@ -745,6 +821,31 @@ void log_platform_event(const shark::platform::Event& event)
     constexpr std::array<std::uint16_t, 6>
         terrain_query_marker_indices{{0, 1, 2, 3, 4, 5}};
 
+    const auto terrain_material_palette =
+        terrain::make_deterministic_material_palette();
+    const auto terrain_albedo_subresources =
+        make_material_subresource_views(
+            terrain_material_palette.albedo);
+    const auto terrain_normal_subresources =
+        make_material_subresource_views(
+            terrain_material_palette.normal);
+    const auto terrain_roughness_subresources =
+        make_material_subresource_views(
+            terrain_material_palette.roughness);
+    const auto make_material_upload_view = [](
+        const auto& subresources,
+        const renderer::TextureDataFormat format) {
+        return renderer::Texture2DArrayUploadView{
+            .width = terrain::material_texture_width,
+            .height = terrain::material_texture_height,
+            .array_layers = terrain::material_layer_count,
+            .mip_levels = terrain::material_texture_mip_levels,
+            .format = format,
+            .subresources = subresources.data(),
+            .subresource_count = subresources.size(),
+        };
+    };
+
     renderer::RendererConfig renderer_config;
     renderer_config.native_window =
         application.native_window_handle().value;
@@ -800,6 +901,17 @@ void log_platform_event(const shark::platform::Event& event)
         .query_marker_indices = terrain_query_marker_indices.data(),
         .query_marker_index_count =
             terrain_query_marker_indices.size(),
+    };
+    renderer_config.terrain_materials = {
+        .albedo = make_material_upload_view(
+            terrain_albedo_subresources,
+            renderer::TextureDataFormat::rgba8_unorm_srgb),
+        .normal = make_material_upload_view(
+            terrain_normal_subresources,
+            renderer::TextureDataFormat::rgba8_unorm),
+        .roughness = make_material_upload_view(
+            terrain_roughness_subresources,
+            renderer::TextureDataFormat::rgba8_unorm),
     };
     renderer_config.synchronize_to_vertical_refresh = !smoke_mode;
     auto renderer_result = renderer::Renderer::create(
@@ -867,6 +979,23 @@ void log_platform_event(const shark::platform::Event& event)
 
     core::log_message(
         core::LogLevel::info,
+        "terrain.materials",
+        std::string{
+            "Created deterministic ground/rock material palette: "
+            "arrays=3, extent="} +
+            std::to_string(terrain::material_texture_width) + "x" +
+            std::to_string(terrain::material_texture_height) +
+            ", layers=" +
+            std::to_string(terrain::material_layer_count) +
+            ", mips=" +
+            std::to_string(terrain::material_texture_mip_levels) +
+            ", subresources=" +
+            std::to_string(terrain::material_total_subresources) +
+            ", source-bytes=" +
+            std::to_string(terrain::material_total_source_bytes));
+
+    core::log_message(
+        core::LogLevel::info,
         "sandbox",
         smoke_mode
             ? "Running fixed " +
@@ -876,7 +1005,8 @@ void log_platform_event(const shark::platform::Event& event)
                     ? " with GPU-based validation"
                     : "")
             : "Direct3D 12 terrain, cube, and procedural daylight sky "
-              "initialized; press F1 to toggle solid/wireframe terrain");
+              "initialized; F1 toggles solid/wireframe and F2 cycles "
+              "terrain material views");
 
     world::Camera camera;
     camera.transform.position = {0.0F, 4.0F, 10.0F};
@@ -884,6 +1014,8 @@ void log_platform_event(const shark::platform::Event& event)
     const renderer::DaylightSettings daylight{};
     sandbox::CameraController camera_controller;
     auto terrain_mode = renderer::TerrainRenderMode::solid;
+    auto terrain_material_view =
+        renderer::TerrainMaterialView::shaded;
     auto previous_frame_time = std::chrono::steady_clock::now();
     const auto smoke_deadline =
         std::chrono::steady_clock::now() + smoke_deadline_duration;
@@ -934,8 +1066,22 @@ void log_platform_event(const shark::platform::Event& event)
                         "terrain",
                         terrain_mode ==
                                 renderer::TerrainRenderMode::solid
-                            ? "Terrain mode: solid normal visualization"
+                            ? "Terrain fill mode: solid"
                             : "Terrain mode: wireframe");
+                }
+                if (key != nullptr &&
+                    key->virtual_key == VK_F2 &&
+                    key->action == platform::KeyAction::pressed &&
+                    !key->repeated) {
+                    terrain_material_view =
+                        next_terrain_material_view(
+                            terrain_material_view);
+                    core::log_message(
+                        core::LogLevel::info,
+                        "terrain.materials",
+                        std::string{"Terrain material view: "} +
+                            std::string{terrain_material_view_name(
+                                terrain_material_view)});
                 }
             }
             camera_controller.handle_event(event);
@@ -1167,11 +1313,27 @@ void log_platform_event(const shark::platform::Event& event)
             smoke_camera_pose_changed = true;
         }
         if (smoke_mode) {
+            const auto presented_frames =
+                renderer_instance.stats().presented_frames;
             terrain_mode =
-                renderer_instance.stats().presented_frames >=
+                presented_frames >=
                     required_smoke_frames / 2U
                 ? renderer::TerrainRenderMode::wireframe
                 : renderer::TerrainRenderMode::solid;
+            if (presented_frames <
+                required_smoke_frames / 3U) {
+                terrain_material_view =
+                    renderer::TerrainMaterialView::shaded;
+            }
+            else if (presented_frames <
+                     required_smoke_frames * 2U / 3U) {
+                terrain_material_view =
+                    renderer::TerrainMaterialView::material_weights;
+            }
+            else {
+                terrain_material_view =
+                    renderer::TerrainMaterialView::shading_normal;
+            }
         }
 
         const auto render_extent = renderer_instance.extent();
@@ -1191,7 +1353,9 @@ void log_platform_event(const shark::platform::Event& event)
             .sky_view_projection =
                 matrices_result.value().sky_view_projection,
             .daylight = daylight,
+            .camera_world_position = camera.transform.position,
             .terrain_mode = terrain_mode,
+            .terrain_material_view = terrain_material_view,
         };
         auto render_result = renderer_instance.render_frame(frame_data);
         if (!render_result) {
@@ -1250,7 +1414,7 @@ void log_platform_event(const shark::platform::Event& event)
             stats.render_graph_executions !=
                 stats.frame_submissions ||
             stats.render_graph_resource_imports !=
-                stats.frame_submissions * 7 ||
+                stats.frame_submissions * 10 ||
             stats.render_graph_pass_executions !=
                 stats.frame_submissions * 3 ||
             stats.render_graph_dependencies !=
@@ -1258,7 +1422,7 @@ void log_platform_event(const shark::platform::Event& event)
             stats.render_graph_transition_barriers !=
                 stats.frame_submissions * 4 ||
             stats.render_graph_elided_transitions !=
-                stats.frame_submissions * 16 ||
+                stats.frame_submissions * 22 ||
             stats.pix_static_upload_events !=
                 stats.static_upload_submissions ||
             stats.pix_frame_events != stats.frame_submissions ||
@@ -1316,6 +1480,13 @@ void log_platform_event(const shark::platform::Event& event)
             stats.terrain_solid_draw_calls +
                     stats.terrain_wireframe_draw_calls !=
                 stats.terrain_draw_calls ||
+            stats.terrain_shaded_draw_calls == 0 ||
+            stats.terrain_material_weight_draw_calls == 0 ||
+            stats.terrain_shading_normal_draw_calls == 0 ||
+            stats.terrain_shaded_draw_calls +
+                    stats.terrain_material_weight_draw_calls +
+                    stats.terrain_shading_normal_draw_calls !=
+                stats.terrain_draw_calls ||
             stats.terrain_draw_calls +
                     stats.cube_draw_calls +
                     stats.skybox_draw_calls !=
@@ -1348,18 +1519,32 @@ void log_platform_event(const shark::platform::Event& event)
                 stats.resize_count + 1 ||
             stats.depth_read_view_creations !=
                 stats.resize_count + 1 ||
-            stats.texture_bindings != stats.frame_submissions ||
+            stats.texture_bindings !=
+                stats.frame_submissions * 2 ||
+            stats.terrain_material_bindings !=
+                stats.frame_submissions ||
             stats.static_upload_submissions != 1 ||
             stats.geometry_buffer_creations != 4 ||
             stats.checker_texture_creations != 1 ||
             stats.cubemap_texture_creations != 1 ||
-            stats.texture_srv_creations != 2 ||
+            stats.texture_srv_creations != 5 ||
             stats.cubemap_srv_creations != 1 ||
             stats.cubemap_faces_uploaded != 6 ||
             stats.cubemap_mip_levels != 1 ||
             stats.cubemap_subresources_uploaded != 6 ||
             stats.cubemap_source_bytes_uploaded != 1'536 ||
-            stats.persistent_texture_descriptors != 2 ||
+            stats.terrain_material_texture_array_creations != 3 ||
+            stats.terrain_material_srv_creations != 3 ||
+            stats.terrain_material_layers !=
+                terrain::material_layer_count ||
+            stats.terrain_material_mip_levels !=
+                terrain::material_texture_mip_levels ||
+            stats.terrain_material_subresources_uploaded !=
+                terrain::material_total_subresources ||
+            stats.terrain_material_source_bytes_uploaded !=
+                terrain::material_total_source_bytes ||
+            stats.terrain_material_srgb_resources != 1 ||
+            stats.persistent_texture_descriptors != 5 ||
             stats.cubemap_srgb_resources != 1 ||
             stats.full_queue_drains != stats.resize_count + 1 ||
             stats.last_submission_fence == 0) {
@@ -1459,6 +1644,15 @@ void log_platform_event(const shark::platform::Event& event)
         summary.push_back('/');
         summary.append(std::to_string(
             stats.terrain_query_marker_draw_calls));
+        summary.append(", terrain(shaded/weights/normals)-views=");
+        summary.append(std::to_string(
+            stats.terrain_shaded_draw_calls));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.terrain_material_weight_draw_calls));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.terrain_shading_normal_draw_calls));
         summary.append(", cube/sky-draws=");
         summary.append(std::to_string(stats.cube_draw_calls));
         summary.push_back('/');
@@ -1479,6 +1673,23 @@ void log_platform_event(const shark::platform::Event& event)
         summary.push_back('/');
         summary.append(std::to_string(
             stats.cubemap_source_bytes_uploaded));
+        summary.append(", materials(arrays/layers/mips/subresources/bytes)=");
+        summary.append(std::to_string(
+            stats.terrain_material_texture_array_creations));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.terrain_material_layers));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.terrain_material_mip_levels));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.terrain_material_subresources_uploaded));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.terrain_material_source_bytes_uploaded));
+        summary.append(", texture-table-binds=");
+        summary.append(std::to_string(stats.texture_bindings));
         core::log_message(
             core::LogLevel::info,
             "gpu.presentation",

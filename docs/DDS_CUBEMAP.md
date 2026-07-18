@@ -1,6 +1,6 @@
 # DDS Cubemap Asset and Upload Contract
 
-- **Completed through:** `REN-001`
+- **Completed through:** `T-003`
 - **Last verified:** July 18, 2026
 
 S-001 establishes Shark's first file-backed texture asset. It loads one
@@ -127,7 +127,7 @@ Startup then:
    `StaticSceneUpload` command list;
 5. transitions all cubemap subresources from `COPY_DEST` to
    `PIXEL_SHADER_RESOURCE`;
-6. expands the persistent shader-visible texture heap from one to two slots,
+6. reserves cubemap slot 1 in the persistent shader-visible texture heap,
    preserving the checker at slot 0; and
 7. creates one `D3D12_SRV_DIMENSION_TEXTURECUBE` SRV at slot 1.
 
@@ -158,17 +158,20 @@ cubemap_faces_uploaded == 6
 cubemap_mip_levels == 1
 cubemap_subresources_uploaded == 6
 cubemap_source_bytes_uploaded == 1536
-persistent_texture_descriptors == 2
-texture_srv_creations == 2
+persistent_texture_descriptors == 5
+texture_srv_creations == 5
 cubemap_srgb_resources == 1
 ```
 
+The five-descriptor totals include T-003's three terrain material SRVs; the
+cubemap-specific creation, face, mip, byte, and sRGB counters remain unchanged.
+
 The startup path remains exactly one static submission, one
 `StaticSceneUpload` PIX event, and one bounded initialization wait. The normal
-frame graph now has seven imports, three ordered
+frame graph now has ten imports, three ordered
 `Terrain`/`TexturedCube`/`Skybox` passes, two dependencies, four attachment
-transitions, 16 elided same-state transitions, one checker binding, five
-indexed draws, and eight timestamps per frame. T-002's query marker is packed
+transitions, 22 elided same-state transitions, one checker binding, one terrain
+material binding, five indexed draws, and eight timestamps per frame. T-002's query marker is packed
 into the existing terrain buffers, preserving four total geometry buffers.
 Cubemap creation/upload counters remain startup invariants, but there is no
 per-frame cubemap read or binding to count.
@@ -188,5 +191,9 @@ See [the skybox contract](SKYBOX.md) for the current visible daylight path.
 T-002 adds canonical terrain queries without changing this retained asset
 proof. REN-001 moves the public upload view into `RendererConfig` and the
 upload implementation into `engine/renderer/src/d3d12`; the D3D12 RHI no
-longer exposes a public `Presentation` class. REN-001 was completed on
-July 18, 2026. The next increment is `T-003`, layered PBR terrain materials.
+longer exposes a public `Presentation` class. T-003 adds three separate
+terrain arrays and descriptors without repurposing or sampling the retained
+cubemap. T-003 was completed on July 18, 2026. The next increment is `S-003`,
+HDR environment lighting, which will define a separate environment-lighting
+asset contract rather than treating this orientation fixture as production
+content.

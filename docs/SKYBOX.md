@@ -1,8 +1,8 @@
 # Procedural Daylight Sky Contract
 
-- **Completed through:** `REN-001`
+- **Completed through:** `T-003`
 - **Last verified:** July 18, 2026
-- **Next planned increment:** `T-003` - layered PBR terrain materials
+- **Next planned increment:** `S-003` - HDR environment lighting
 
 S-002A is a bounded visual diversion before terrain work continues. It replaces
 the temporary flat-blue treatment of Shark's diagnostic cubemap with a basic
@@ -132,23 +132,26 @@ CubeVertexBuffer
 CubeIndexBuffer
 TerrainVertexBuffer
 TerrainIndexBuffer
+TerrainAlbedoLayers
+TerrainNormalLayers
+TerrainRoughnessLayers
 ```
 
 It retains the pass order `Terrain -> TexturedCube -> Skybox`. Per submitted
 frame the exact compilation contract is:
 
 ```text
-imports                 7
+imports                10
 passes                  3
 dependencies            2
 emitted transitions     4
-elided transitions      16
+elided transitions      22
 ```
 
 The four barriers remain the back-buffer present/render transitions and the
-depth write/read transitions around the sky pass. Removing the cubemap import
-removes its two equal-state elisions. Only the checker cube binds a texture, so
-the exact per-frame texture-binding count is now one.
+depth write/read transitions around the sky pass. The checker and three
+material arrays stay in their read states. The cube and terrain each bind one
+texture table, so the exact per-frame texture-binding count is two.
 
 T-002 adds one query-marker draw inside `Terrain`, bringing the submitted-frame
 total to five indexed draws, but adds no pass, PSO, timestamp interval,
@@ -185,8 +188,9 @@ Verify:
    cube perspective changes, but the sky and sun do not translate.
 5. Terrain slopes facing the sun are brighter than slopes facing away, while
    shadow-facing slopes remain readable from ambient light.
-6. Press `F1`, resize, minimize, restore, and close. Terrain diagnostics, sky
-   coverage, reversed-Z occlusion, and Direct3D validation remain clean.
+6. Press `F1` and `F2`, resize, minimize, restore, and close. Terrain fill and
+   material views, sky coverage, reversed-Z occlusion, and Direct3D validation
+   remain clean.
 
 ## Explicit non-goals and continuation
 
@@ -200,6 +204,7 @@ engine grows. T-002 adds canonical terrain queries and a cyan normal pin
 without changing this sky contract. REN-001 moves `DaylightSettings`, public
 frame input, production pass composition, and the D3D12 daylight/skybox scene
 helpers behind `shark::renderer::Renderer` without changing pixels, pass order,
-or accounting. There is no public D3D12 `Presentation` class. REN-001 was
-completed on July 18, 2026; work now proceeds to `T-003`, layered PBR terrain
-materials.
+or accounting. There is no public D3D12 `Presentation` class. T-003 adds
+terrain materials without changing the procedural sky model or pass. T-003 was
+completed on July 18, 2026; work now proceeds to `S-003`, HDR environment
+lighting.

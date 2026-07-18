@@ -1,6 +1,6 @@
 # Camera, Reversed-Z Depth, Cube, and Skybox Contract
 
-- **Completed through:** `REN-001`
+- **Completed through:** `T-003`
 - **Last verified:** July 18, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
@@ -21,7 +21,9 @@ every camera, matrix, depth, and input convention while adding a cyan terrain
 normal pin whose anchor and geometric direction come from the canonical
 surface query. REN-001 preserves those results while moving public frame input
 to `shark::renderer::RenderFrameData` and the D3D12 scene helpers behind the
-private renderer backend.
+private renderer backend. T-003 additionally passes finite camera world
+position for terrain specular evaluation; it does not change the camera,
+controller, matrix, cube, depth, or sky-motion contracts.
 
 This remains a deliberately narrow proof. It establishes conventions and
 lifetime rules that later sky, terrain, rain, and water passes can reuse; it is
@@ -209,16 +211,16 @@ The permanent accounting contract requires:
 
 - five indexed draws per submitted frame: one terrain surface, one 24-index
   bounds box, one six-index cyan query marker, one 36-index cube, and one
-  36-index skybox; plus one checker binding, one frame-constant upload, and one
-  depth clear;
-- one graph compilation/execution, three pass executions, seven imports, two
-  dependencies, four recorded transitions, and 16 elided transitions per frame;
+  36-index skybox; plus checker and terrain-material bindings, one
+  frame-constant upload, and one depth clear;
+- one graph compilation/execution, three pass executions, ten imports, two
+  dependencies, four recorded transitions, and 22 elided transitions per frame;
 - frame submissions equal successful plus occluded present attempts;
 - all three DXGI-selected frame contexts are acquired and reused;
 - every submission retires before shutdown;
 - `static_upload_submissions == 1`, `geometry_buffer_creations == 4`,
   `checker_texture_creations == 1`, `cubemap_texture_creations == 1`, and
-  `texture_srv_creations == 2`; the startup submission completes through its
+  `texture_srv_creations == 5`; the startup submission completes through its
   bounded fence wait before the first frame;
 - depth-resource and read-only DSV-view creations each equal
   `resize_count + 1`;
@@ -257,17 +259,18 @@ Graphics coverage is registered as
 
 ## Explicit non-goals
 
-T-002 retains the fixed LDR procedural daylight and simple unshadowed terrain
-illumination beside the retained S-001 startup asset proof. It adds no general
+T-003 retains the fixed LDR procedural daylight beside the retained S-001
+startup asset proof. It adds no general
 DDS/WIC/glTF importer, runtime mip generation, compression, texture streaming,
-HDR conversion, material/PBR system, shadow map, atmospheric scattering,
+HDR conversion, arbitrary material graph/system, shadow map, atmospheric scattering,
 cloud, exposure, time-of-day, image-based lighting, terrain streaming/LOD, or
 content database.
 
 The query marker adds no camera state, control, matrix, GPU resource, PSO,
-graph pass, dependency, barrier, PIX event, or timestamp. The established
-seven imports, three passes, two dependencies, four barriers, 16 elisions, four
-geometry buffers, and eight timestamps remain exact.
+graph pass, dependency, barrier, PIX event, or timestamp. T-003's material
+arrays establish ten imports, three passes, two dependencies, four barriers,
+22 elisions, four geometry buffers, and eight timestamps as the current exact
+contract.
 
 It also adds no general mesh/resource/descriptor manager, typed GPU handles,
 placed-resource pool, copy queue, deferred uploader, shader reflection, runtime
@@ -283,5 +286,5 @@ with ordered `Terrain`, `TexturedCube`, and `Skybox` passes. See
 [the DDS cubemap contract](DDS_CUBEMAP.md) for the source texture, and
 [the skybox contract](SKYBOX.md) for the visible procedural daylight rules.
 See [the terrain contract](TERRAIN.md) for its separate geometry and
-canonical query/diagnostic rendering contract. `REN-001` was completed on
-July 18, 2026. The next increment is `T-003`, layered PBR terrain materials.
+canonical query/material/diagnostic rendering contract. `T-003` was completed
+on July 18, 2026. The next increment is `S-003`, HDR environment lighting.

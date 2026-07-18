@@ -21,12 +21,21 @@ inline constexpr render_graph::ExternalResourceId
     frame_terrain_vertex_buffer_external_id{6};
 inline constexpr render_graph::ExternalResourceId
     frame_terrain_index_buffer_external_id{7};
+inline constexpr render_graph::ExternalResourceId
+    frame_terrain_albedo_layers_external_id{8};
+inline constexpr render_graph::ExternalResourceId
+    frame_terrain_normal_layers_external_id{9};
+inline constexpr render_graph::ExternalResourceId
+    frame_terrain_roughness_layers_external_id{10};
 
 struct TerrainPassResources final {
     render_graph::ResourceHandle back_buffer;
     render_graph::ResourceHandle depth_buffer;
     render_graph::ResourceHandle vertex_buffer;
     render_graph::ResourceHandle index_buffer;
+    render_graph::ResourceHandle albedo_layers;
+    render_graph::ResourceHandle normal_layers;
+    render_graph::ResourceHandle roughness_layers;
 };
 
 struct TexturedCubePassResources final {

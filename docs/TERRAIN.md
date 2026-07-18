@@ -1,7 +1,11 @@
 # Canonical Terrain-Tile Contract
 
-- **Completed through:** `REN-001`
+- **Completed through:** `T-003`
 - **Last verified:** July 18, 2026
+
+T-003 verification snapshot: Debug and Release each passed the full `120/120`
+CTest suite, including hardware and packaged-WARP presentation plus focused
+packaged-WARP GPU validation.
 
 T-001 verification snapshot: Debug and Release each passed the full `94/94`
 CTest suite, including the 1,000-frame hardware and packaged-WARP runs plus the
@@ -10,11 +14,13 @@ CTest suite, including the 1,000-frame hardware and packaged-WARP runs plus the
 historical T-001 revision's discovered suite size; it is not the current suite
 count or a permanent acceptance constant.
 
-T-001 introduced Shark's deterministic rendered height tile. T-002 now makes
+T-001 introduced Shark's deterministic rendered height tile. T-002 makes
 the same CPU data an authoritative, platform-independent query surface with
 exact height, geometric-normal, bounds, and nearest-ray operations. The
 sandbox compares a direct sample with a downward ray and draws their shared
-result as a cyan normal pin on the visible LOD0 surface.
+result as a cyan normal pin on the visible LOD0 surface. T-003 preserves that
+canonical surface and adds the first bounded visual material path: two
+project-owned ground/rock layers blended by deterministic slope and height.
 
 ## Canonical height fixture
 
@@ -161,8 +167,71 @@ normal sentinel and is independent of daylight.
 The surface vertices, eight AABB vertices, and six marker vertices occupy one
 immutable terrain vertex buffer. Their 6,144, 24, and six indices occupy one
 immutable terrain index buffer. Packing the marker into those existing two
-buffers preserves four total geometry buffers across the cube and terrain,
-one static upload submission, and six startup transitions.
+buffers preserves four total geometry buffers across the cube and terrain.
+T-003 adds three material texture arrays to the same one-time static upload,
+raising its one-time initialization transitions from six to nine without
+changing geometry storage.
+
+## Layered material fixture
+
+`shark::terrain::MaterialPalette` owns deterministic procedural test content;
+it performs no file I/O and consumes no random state. The exact fixture is:
+
+```text
+layers                         2 (ground, rock)
+maps                           3 (albedo, normal, roughness)
+base dimensions               32 x 32 texels
+mips per layer                6 (32, 16, 8, 4, 2, 1)
+format                         RGBA8, 4 bytes/texel
+subresources per array        12
+subresources total            36
+meaningful bytes per layer     5,460
+meaningful bytes per array    10,920
+meaningful bytes total        32,760
+```
+
+Subresources are layer-major, then mip-minor. Albedo bytes are authored for
+sRGB decoding and mip-filtered in linear color before re-encoding. Normal mips
+decode, average, renormalize, and re-encode tangent-space vectors. Roughness
+mips average the linear channel. The albedo array is
+`DXGI_FORMAT_R8G8B8A8_UNORM_SRGB`; normal and roughness arrays are
+`DXGI_FORMAT_R8G8B8A8_UNORM`.
+
+The public renderer upload boundary accepts three matching
+`Texture2DArrayUploadView` records. Creation requires exactly two layers,
+matching dimensions/mip counts, a complete mip chain, the expected formats,
+and coherently described subresources; it rejects dimensions above `256x256`.
+The sandbox's project-owned fixture uses only `32x32`. The private D3D12
+backend creates three committed arrays and persistent `Texture2DArray` SRVs in
+slots 2-4, after checker slot 0 and retained cubemap slot 1.
+
+## Material blending and shading
+
+Terrain UVs tile in world space at `0.5` repeats per meter: `U` follows `+X`
+and `V` follows `-Z`. They are independent of mesh topology and camera motion.
+The shader derives its tangent frame from position/UV derivatives, so T-003
+does not add stored UVs or tangents to the canonical mesh.
+
+The normalized smooth render normal provides a deterministic macro slope.
+Rock weight increases on steeper faces and receives a smaller height-based
+contribution; ground weight is its complement. Both layers sample the same
+world-XZ coordinate. Tangent-space normals are blended and transformed into a
+world-space shading normal. Albedo is blended in linear space because the SRV
+performs sRGB decode; roughness is blended in squared space and clamped to a
+bounded minimum.
+
+The shaded view combines the existing hemisphere ambient with an unshadowed
+direct-sun dielectric GGX BRDF using a fixed `F0=0.04`. It remains deliberately
+LDR and has no environment reflections or image-based lighting; `S-003` owns
+that next step. Negative-Y sentinel normals still bypass all material sampling
+so the magenta bounds and cyan query pin retain their exact diagnostic colors.
+
+`F1` changes only raster fill between solid and wireframe. `F2` independently
+cycles:
+
+1. shaded albedo/normal/roughness;
+2. ground/rock material weights; and
+3. the mapped world-space shading normal.
 
 ## Frame graph and diagnostics
 
@@ -185,16 +254,19 @@ CubeVertexBuffer
 CubeIndexBuffer
 TerrainVertexBuffer
 TerrainIndexBuffer
+TerrainAlbedoLayers
+TerrainNormalLayers
+TerrainRoughnessLayers
 ```
 
 The exact per-frame graph contract remains:
 
 ```text
-imports                 7
+imports                10
 passes                  3
 dependencies            2
 emitted transitions     4
-elided transitions      16
+elided transitions      22
 ```
 
 The marker adds no resource, graph pass, dependency, barrier, PIX scope, or
@@ -224,11 +296,14 @@ Frame
 
 Hardware and normal packaged-WARP presentation smoke paths require 1,000
 successful presents; focused packaged WARP with GPU-based validation requires
-120. Every path switches from solid to wireframe halfway through its required
-successful-present count. After shutdown, smoke accounting requires one
-surface, bounds, marker, cube, and sky draw per frame; exact corresponding
-index totals; six marker vertices/indices in static storage; unchanged graph
-and timestamp counts; and one static upload producing four geometry buffers.
+120. Every path exercises both fill modes and all three material views. After
+shutdown, smoke accounting requires one surface, bounds, marker, cube, and sky
+draw per frame; exact corresponding index totals; six marker vertices/indices
+in static storage; `10/3/2/4/22` graph accounting; eight timestamps; two
+texture-table binds per frame; and one static upload producing four geometry
+buffers plus three material arrays. Startup proves two layers, six mips,
+36 subresources, 32,760 meaningful source bytes, one sRGB material resource,
+three material SRVs, and five persistent texture descriptors.
 The minimize interval proves the marker counter, like every other frame-owned
 counter, does not advance while no frame is submitted.
 
@@ -253,6 +328,7 @@ Focused CPU and contract coverage:
 ```powershell
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][query]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][material]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[render-graph]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[timestamps]"
 ```
@@ -269,24 +345,26 @@ small valid cells.
 For manual acceptance, run `SharkSandbox` without arguments. Confirm the cyan
 pin begins on the terrain and follows its exact triangle normal, while the
 magenta AABB still encloses the tile. Verify the pin remains depth-tested in
-both solid and `F1` wireframe modes and does not move with the camera. Move,
-rotate, resize, minimize, restore, and close; the daylight terrain, checker
-cube, sky, diagnostics, and Direct3D validation must remain clean.
+both solid and `F1` wireframe modes and does not move with the camera. Use `F2`
+to confirm the shaded ground/rock blend, complementary layer weights, and
+world-normal visualization. Move, rotate, resize, minimize, restore, and close;
+world-space material tiling, daylight terrain, checker cube, sky, diagnostics,
+and Direct3D validation must remain clean.
 
 ## Explicit non-goals and continuation
 
-T-002 adds no terrain collision response, rigid bodies, material/PBR textures,
-UVs, tangents, chunks, frustum culling, visual LOD, seams, spatial acceleration,
-streaming, virtual texturing, mesh shaders, weather interaction, erosion,
-water, editor, dynamic mouse picking, general debug-draw service, or general
-scene/mesh resource system. The fixed ray proof and static pin are diagnostics,
-not gameplay or an editor selection tool.
+T-003 adds no terrain collision response, rigid bodies, authored/file-backed
+material assets, stored mesh UVs/tangents, arbitrary layer counts, painting,
+chunks, frustum culling, visual LOD, seams, spatial acceleration, streaming,
+virtual texturing, mesh shaders, image-based lighting, shadows, weather
+interaction, erosion, water, editor, dynamic mouse picking, general debug-draw
+service, or general scene/mesh/material resource system. The fixed ray proof
+and static pin are diagnostics, not gameplay or an editor selection tool.
 
-REN-001 moves `TerrainRenderMode`, mesh upload configuration, statistics, the
-production frame composer, and the terrain D3D12 scene helper behind
-`shark::renderer::Renderer`. `HeightTileSurface` remains platform-independent
-and authoritative; there is no public D3D12 `Presentation` class. REN-001 was
-completed on July 18, 2026 without changing pixels, resources, the
-`7/3/2/4/16` graph contract, five draws, four geometry buffers, PIX/timestamps,
-or smoke accounting. The upcoming increment is `T-003`, layered PBR terrain
-materials.
+`HeightTileSurface` remains platform-independent and authoritative; material
+weights, sampled normals, and shading never feed its height, ray, or collision
+answers. T-003 was completed on July 18, 2026 with the exact
+`10/3/2/4/22` graph contract, five draws, four geometry buffers, three material
+arrays, five persistent SRVs, two per-frame texture-table binds, and the
+existing PIX/timestamp hierarchy. The upcoming increment is `S-003`, HDR
+environment lighting.

@@ -1,7 +1,7 @@
 # Camera, Reversed-Z Depth, Cube, and Skybox Contract
 
-- **Completed through:** `T-001`
-- **Last verified:** July 17, 2026
+- **Completed through:** `S-002A`
+- **Last verified:** July 18, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
 engine-owned free-fly camera drives a resource-bound cube pipeline, a finite
@@ -13,6 +13,10 @@ matrix and uses the same geometry, root signature, depth texture, and controls
 to render the static cubemap behind the cube.
 T-001 retains those contracts while changing the initial camera pose to frame
 the first terrain tile and drawing terrain before the cube.
+S-002A keeps that translation-free cube and far-depth technique but replaces
+the diagnostic cubemap's visible contribution with a continuous procedural
+daylight gradient, sun disk, and halo. The same fixed direction-to-sun now
+provides simple ambient-plus-Lambert terrain illumination.
 
 This remains a deliberately narrow proof. It establishes conventions and
 lifetime rules that later sky, terrain, rain, and water passes can reuse; it is
@@ -120,29 +124,34 @@ static upload exists.
 
 The cube/sky root signature contains:
 
-- one root constant-buffer view at `b0` for the current scene and sky matrices;
+- one vertex/pixel-visible root constant-buffer view at `b0` for the current
+  scene, sky, and daylight constants;
 - one descriptor table containing one pixel-shader SRV at `t0`; and
 - one point-filtered wrap static sampler at `s0`.
 
 Unused hull, domain, and geometry shader root access remains denied. One
 persistent shader-visible CBV/SRV/UAV heap holds the checker SRV at slot 0 and
-the cubemap SRV at slot 1. The one-entry root table points at slot 0 for
-`TexturedCube` and slot 1 for `Skybox`. This is not the stable-index persistent allocator or bindless
-heap planned for later renderer infrastructure.
+the retained cubemap SRV at slot 1. The one-entry root table points at slot 0
+for `TexturedCube`; the procedural `Skybox` binds no texture table. Slot 1
+remains only as part of the S-001 startup upload/descriptor proof. This is not
+the stable-index persistent allocator or bindless heap planned for later
+renderer infrastructure.
 
 Each frame writes one 256-byte-aligned record into the acquired frame context's
 existing upload arena. Its first 64 bytes are the engine-owned
-`view_projection`, its next 64 bytes are `sky_view_projection`, and the G-003
-frame probe begins at byte 128. The same fence checkpoint that protects the command
-allocator protects those constants until the draw retires. The vertex shader
-reads position and UV attributes, evaluates `mul(position, view_projection)`,
-and passes UVs to the pixel shader. The pixel shader samples the checker and
-writes the opaque color target. The sky vertex shader uses the translation-free
-matrix, forces reversed-Z clip depth to zero, and passes cube position as the
-texture-cube direction; its pixel shader samples cubemap slot 1.
-The current visual treatment retains 4% of that decoded sample and mixes 96%
-toward a fixed sky-blue shader-space color; it does not alter the camera,
-descriptor, or TextureCube sampling contracts.
+`view_projection`, its next 64 bytes are `sky_view_projection`, six
+float4-compatible daylight rows occupy bytes `128..223`, and the G-003 frame
+probe begins at byte `224`. The same fence checkpoint that protects the command
+allocator protects the complete record until the draw retires. The cube vertex
+shader reads position and UV attributes, evaluates
+`mul(position, view_projection)`, and passes UVs to the pixel shader. Its pixel
+shader samples the checker and writes the opaque color target. The sky vertex
+shader uses the translation-free matrix, forces reversed-Z clip depth to zero,
+and passes cube position as a world direction. Its pixel shader normalizes that
+direction and evaluates the daylight zenith/horizon/nadir gradient, warm sun
+disk, and restrained halo without reading the retained cubemap. Sky and terrain
+apply an explicit linear-to-sRGB transfer before writing the current UNORM back
+buffer; this is not HDR tone mapping.
 
 The shared cube/sky root signature and immutable cube/skybox PSOs are created
 synchronously from pinned build-time DXIL. They survive swap-chain resize and are released only
@@ -191,10 +200,10 @@ skips that already-covered interval.
 The permanent accounting contract requires:
 
 - one terrain draw, one bounds draw, one cube draw, one skybox draw, 36 indices
-  for each cube-based draw, two texture bindings, one camera upload, and one
-  depth clear per submitted frame;
-- one graph compilation/execution, three pass executions, eight imports, two
-  dependencies, four recorded transitions, and 18 elided transitions per frame;
+  for each cube-based draw, one checker binding, one frame-constant upload, and
+  one depth clear per submitted frame;
+- one graph compilation/execution, three pass executions, seven imports, two
+  dependencies, four recorded transitions, and 16 elided transitions per frame;
 - frame submissions equal successful plus occluded present attempts;
 - all three DXGI-selected frame contexts are acquired and reused;
 - every submission retires before shutdown;
@@ -204,8 +213,8 @@ The permanent accounting contract requires:
   bounded fence wait before the first frame;
 - depth-resource and read-only DSV-view creations each equal
   `resize_count + 1`;
-- the normal paths prove no draw, texture bind, camera upload, graph work, or
-  depth clear occurs while minimized;
+- the normal paths prove no draw, texture bind, frame-constant upload, graph
+  work, or depth clear occurs while minimized;
 - scene and sky matrix-change counts are each at least three, covering the
   initial matrix, aspect-changing resize, and scripted yaw at the
   three-quarter checkpoint (frame 750 normally or frame 90 under focused
@@ -220,14 +229,16 @@ The permanent accounting contract requires:
   messages, or live presentation children.
 
 The smoke does not read back or compare pixels. Manual acceptance requires a
-clearly textured cube, the temporary sky-blue treatment behind it, unchanged
-sample direction under translation, correct near/far occlusion, perspective
-that does not stretch after resize, and clean minimize/restore and shutdown.
-See [the source face-orientation procedure](SKYBOX.md#manual-visual-acceptance).
+clearly textured cube, a continuous procedural daylight background with a warm
+fixed-world sun, unchanged sky direction under translation, correct near/far
+occlusion, perspective that does not stretch after resize, and clean
+minimize/restore and shutdown. No cube face, edge, or corner may appear as a
+painted wall. See [the sky procedure](SKYBOX.md#manual-visual-acceptance).
 
 CPU coverage is discovered through the existing `unit.` CTest prefix from
 `math_tests.cpp`, `camera_tests.cpp`, `camera_controller_tests.cpp`,
-`d3d12_cube_scene_data_tests.cpp`, and `d3d12_skybox_scene_data_tests.cpp`.
+`d3d12_cube_scene_data_tests.cpp`, `d3d12_skybox_scene_data_tests.cpp`, and
+`d3d12_daylight_scene_data_tests.cpp`.
 Graphics coverage is registered as
 `integration.gpu.hardware_cube_present`,
 `integration.gpu.warp_cube_present`, and
@@ -235,10 +246,11 @@ Graphics coverage is registered as
 
 ## Explicit non-goals
 
-T-001 adds only the deterministic terrain tile and focused diagnostic modes
-beside the retained static sky treatment. It adds no general
+S-002A adds only fixed LDR procedural daylight and simple unshadowed terrain
+illumination beside the retained S-001 startup asset proof. It adds no general
 DDS/WIC/glTF importer, runtime mip generation, compression, texture streaming,
-HDR conversion, material/PBR system, lighting, terrain streaming/LOD, or
+HDR conversion, material/PBR system, shadow map, atmospheric scattering,
+cloud, exposure, time-of-day, image-based lighting, terrain streaming/LOD, or
 content database.
 
 It also adds no general mesh/resource/descriptor manager, typed GPU handles,
@@ -253,6 +265,6 @@ The graph remains frame-local and limited to imported whole resources, now
 with ordered `Terrain`, `TexturedCube`, and `Skybox` passes. See
 [the render-graph contract](RENDER_GRAPH.md) for its exact ordering/barriers,
 [the DDS cubemap contract](DDS_CUBEMAP.md) for the source texture, and
-[the skybox contract](SKYBOX.md) for the visible sampling and orientation rules.
+[the skybox contract](SKYBOX.md) for the visible procedural daylight rules.
 See [the terrain contract](TERRAIN.md) for its separate geometry and
-diagnostic rendering contract.
+diagnostic rendering contract. T-002 remains the next increment.

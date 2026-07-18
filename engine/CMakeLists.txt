@@ -29,6 +29,7 @@ add_library(SharkEngine STATIC
     render_graph/src/render_graph.cpp
     rhi/d3d12/include/shark/rhi/d3d12/device.hpp
     rhi/d3d12/include/shark/rhi/d3d12/presentation.hpp
+    rhi/d3d12/src/daylight_scene_data.hpp
     rhi/d3d12/src/device.cpp
     rhi/d3d12/src/device_access.hpp
     rhi/d3d12/src/frame_resource_state.cpp

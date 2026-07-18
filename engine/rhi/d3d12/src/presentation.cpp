@@ -1,5 +1,6 @@
 #include "device_access.hpp"
 #include "cube_scene_data.hpp"
+#include "daylight_scene_data.hpp"
 #include "frame_resource_state.hpp"
 #include "gpu_timestamp_state.hpp"
 #include "render_graph_executor.hpp"
@@ -56,7 +57,9 @@ constexpr std::size_t frame_probe_bytes =
     D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT;
 constexpr std::size_t camera_matrix_bytes = sizeof(math::Matrix4x4);
 constexpr std::size_t camera_constants_bytes = camera_matrix_bytes * 2U;
-constexpr std::size_t frame_probe_offset = camera_constants_bytes;
+constexpr std::size_t frame_constants_bytes =
+    camera_constants_bytes + detail::daylight_constant_bytes;
+constexpr std::size_t frame_probe_offset = frame_constants_bytes;
 constexpr UINT root_camera_constants = 0;
 constexpr UINT root_checker_texture = 1;
 constexpr std::uint32_t cubemap_face_count = 6;
@@ -64,15 +67,16 @@ constexpr std::size_t rgba8_bytes_per_pixel = 4;
 constexpr render_graph::ExternalResourceId graph_back_buffer_id{1};
 constexpr render_graph::ExternalResourceId graph_depth_buffer_id{2};
 constexpr render_graph::ExternalResourceId graph_checker_texture_id{3};
-constexpr render_graph::ExternalResourceId graph_cubemap_id{4};
-constexpr render_graph::ExternalResourceId graph_cube_vertex_buffer_id{5};
-constexpr render_graph::ExternalResourceId graph_cube_index_buffer_id{6};
-constexpr render_graph::ExternalResourceId graph_terrain_vertex_buffer_id{7};
-constexpr render_graph::ExternalResourceId graph_terrain_index_buffer_id{8};
+constexpr render_graph::ExternalResourceId graph_cube_vertex_buffer_id{4};
+constexpr render_graph::ExternalResourceId graph_cube_index_buffer_id{5};
+constexpr render_graph::ExternalResourceId graph_terrain_vertex_buffer_id{6};
+constexpr render_graph::ExternalResourceId graph_terrain_index_buffer_id{7};
 
 static_assert(back_buffer_count <= 32);
 static_assert(camera_matrix_bytes == 64);
 static_assert(camera_constants_bytes == 128);
+static_assert(frame_constants_bytes == 224);
+static_assert(frame_probe_offset == 224);
 static_assert(timestamp_query_count == 24);
 static_assert(timestamp_readback_bytes == 192);
 
@@ -353,6 +357,7 @@ static_assert(
 {
     return math::is_finite(frame_data.view_projection) &&
         math::is_finite(frame_data.sky_view_projection) &&
+        detail::valid_daylight_settings(frame_data.daylight) &&
         valid_terrain_mode(frame_data.terrain_mode);
 }
 
@@ -886,6 +891,10 @@ public:
             destination + camera_matrix_bytes,
             &frame_data.sky_view_projection,
             camera_matrix_bytes);
+        std::memcpy(
+            destination + camera_constants_bytes,
+            &frame_data.daylight,
+            detail::daylight_constant_bytes);
         const FrameProbe probe{
             statistics.frame_context_acquisitions,
             context.state.generation(),
@@ -1240,7 +1249,6 @@ public:
         const render_graph::PassContext& pass_context,
         const render_graph::ResourceHandle back_buffer_resource,
         const render_graph::ResourceHandle depth_buffer_resource,
-        const render_graph::ResourceHandle cubemap_resource,
         const render_graph::ResourceHandle cube_vertex_resource,
         const render_graph::ResourceHandle cube_index_resource,
         FrameContext& context,
@@ -1259,11 +1267,6 @@ public:
             return core::Result<void>::failure(
                 std::move(depth_buffer_access).error());
         }
-        auto cubemap_access = pass_context.read(cubemap_resource);
-        if (!cubemap_access) {
-            return core::Result<void>::failure(
-                std::move(cubemap_access).error());
-        }
         auto cube_vertex_access =
             pass_context.read(cube_vertex_resource);
         if (!cube_vertex_access) {
@@ -1278,7 +1281,6 @@ public:
         }
         if (back_buffer_access.value() != graph_back_buffer_id ||
             depth_buffer_access.value() != graph_depth_buffer_id ||
-            cubemap_access.value() != graph_cubemap_id ||
             cube_vertex_access.value() !=
                 graph_cube_vertex_buffer_id ||
             cube_index_access.value() !=
@@ -1330,26 +1332,11 @@ public:
         };
         command_list->SetPipelineState(skybox_pipeline.Get());
         command_list->SetGraphicsRootSignature(
-            cube_root_signature.Get());
-        ID3D12DescriptorHeap* descriptor_heaps[]{
-            checker_descriptor_heap.Get(),
-        };
-        command_list->SetDescriptorHeaps(
-            static_cast<UINT>(std::size(descriptor_heaps)),
-            descriptor_heaps);
+            terrain_root_signature.Get());
         command_list->SetGraphicsRootConstantBufferView(
             root_camera_constants,
             context.upload_buffer->GetGPUVirtualAddress() +
                 context.staged_probe_offset);
-        auto cubemap_descriptor =
-            checker_descriptor_heap->GetGPUDescriptorHandleForHeapStart();
-        cubemap_descriptor.ptr +=
-            static_cast<UINT64>(detail::skybox_texture_descriptor_slot) *
-            static_cast<UINT64>(persistent_descriptor_increment);
-        command_list->SetGraphicsRootDescriptorTable(
-            root_checker_texture,
-            cubemap_descriptor);
-        ++statistics.texture_bindings;
         command_list->RSSetViewports(1, &viewport);
         command_list->RSSetScissorRects(1, &scissor_rectangle);
         command_list->IASetPrimitiveTopology(
@@ -2798,7 +2785,7 @@ core::Result<Presentation> Presentation::create(
     root_parameters[root_camera_constants].Descriptor.ShaderRegister = 0;
     root_parameters[root_camera_constants].Descriptor.RegisterSpace = 0;
     root_parameters[root_camera_constants].ShaderVisibility =
-        D3D12_SHADER_VISIBILITY_VERTEX;
+        D3D12_SHADER_VISIBILITY_ALL;
     root_parameters[root_checker_texture].ParameterType =
         D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     root_parameters[root_checker_texture].DescriptorTable.NumDescriptorRanges =
@@ -2977,6 +2964,8 @@ core::Result<Presentation> Presentation::create(
         config.skybox_pixel_shader.data,
         config.skybox_pixel_shader.size,
     };
+    pipeline_description.pRootSignature =
+        implementation->terrain_root_signature.Get();
     pipeline_description.DepthStencilState = skybox_depth_description();
     pipeline_description.InputLayout.NumElements = 1;
     result = native.device->CreateGraphicsPipelineState(
@@ -2990,7 +2979,7 @@ core::Result<Presentation> Presentation::create(
                 result));
     }
     result = implementation->skybox_pipeline->SetName(
-        L"Shark Cubemap Skybox Pipeline");
+        L"Shark Procedural Daylight Sky Pipeline");
     if (FAILED(result)) {
         return core::Result<Presentation>::failure(
             detail::DeviceAccess::graphics_failure(
@@ -3336,7 +3325,8 @@ core::Result<PresentStatus> Presentation::present_frame(
         return core::Result<PresentStatus>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
             "Presentation frame view-projection matrices must be finite "
-            "and the terrain render mode must be valid"));
+            "and its daylight settings and terrain render mode must be "
+            "valid"));
     }
 
     const auto back_buffer_index =
@@ -3406,17 +3396,6 @@ core::Result<PresentStatus> Presentation::present_frame(
     }
     const auto checker_texture_resource =
         checker_texture_resource_result.value();
-
-    auto cubemap_resource_result = graph_builder.import_resource(
-        "StartupCubemap",
-        graph_cubemap_id,
-        render_graph::ResourceState::pixel_shader_read,
-        render_graph::ResourceState::pixel_shader_read);
-    if (!cubemap_resource_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(cubemap_resource_result).error());
-    }
-    const auto cubemap_resource = cubemap_resource_result.value();
 
     auto cube_vertex_resource_result = graph_builder.import_resource(
         "CubeVertexBuffer",
@@ -3606,7 +3585,6 @@ core::Result<PresentStatus> Presentation::present_frame(
          back_buffer_index,
          back_buffer_resource,
          depth_buffer_resource,
-         cubemap_resource,
          cube_vertex_resource,
          cube_index_resource,
          timestamp_query_base](
@@ -3615,7 +3593,6 @@ core::Result<PresentStatus> Presentation::present_frame(
                 pass_context,
                 back_buffer_resource,
                 depth_buffer_resource,
-                cubemap_resource,
                 cube_vertex_resource,
                 cube_index_resource,
                 *context,
@@ -3642,14 +3619,6 @@ core::Result<PresentStatus> Presentation::present_frame(
     if (!skybox_depth_result) {
         return core::Result<PresentStatus>::failure(
             std::move(skybox_depth_result).error());
-    }
-    auto cubemap_read_result = graph_builder.read(
-        skybox_pass,
-        cubemap_resource,
-        render_graph::ResourceState::pixel_shader_read);
-    if (!cubemap_read_result) {
-        return core::Result<PresentStatus>::failure(
-            std::move(cubemap_read_result).error());
     }
     auto skybox_vertex_read_result = graph_builder.read(
         skybox_pass,
@@ -3737,10 +3706,6 @@ core::Result<PresentStatus> Presentation::present_frame(
         detail::RenderGraphResourceBinding{
             graph_checker_texture_id,
             implementation_->checker_texture.Get(),
-        },
-        detail::RenderGraphResourceBinding{
-            graph_cubemap_id,
-            implementation_->startup_cubemap.Get(),
         },
         detail::RenderGraphResourceBinding{
             graph_cube_vertex_buffer_id,

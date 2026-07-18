@@ -687,7 +687,9 @@ void log_platform_event(const shark::platform::Event& event)
     core::log_message(
         core::LogLevel::info,
         "assets.cubemap",
-        std::string{"Loaded startup DDS cubemap: "} +
+        std::string{
+            "Loaded retained DDS orientation fixture for upload "
+            "validation (procedural sky does not sample it): "} +
             std::to_string(cubemap.width()) + "x" +
             std::to_string(cubemap.height()) + ", faces=6, mips=" +
             std::to_string(cubemap.mip_levels()) +
@@ -726,12 +728,13 @@ void log_platform_event(const shark::platform::Event& event)
                 (focused_gpu_validation
                     ? " with GPU-based validation"
                     : "")
-            : "Direct3D 12 terrain, cube, and sky presentation "
+            : "Direct3D 12 terrain, cube, and procedural daylight sky "
               "initialized; press F1 to toggle solid/wireframe terrain");
 
     world::Camera camera;
     camera.transform.position = {0.0F, 4.0F, 10.0F};
     camera.transform.pitch_radians = -0.35F;
+    const rhi::d3d12::DaylightSettings daylight{};
     sandbox::CameraController camera_controller;
     auto terrain_mode = rhi::d3d12::TerrainRenderMode::solid;
     auto previous_frame_time = std::chrono::steady_clock::now();
@@ -1118,6 +1121,7 @@ void log_platform_event(const shark::platform::Event& event)
                 matrices_result.value().view_projection,
             .sky_view_projection =
                 matrices_result.value().sky_view_projection,
+            .daylight = daylight,
             .terrain_mode = terrain_mode,
         };
         auto present_result = presentation.present_frame(frame_data);
@@ -1177,7 +1181,7 @@ void log_platform_event(const shark::platform::Event& event)
             stats.render_graph_executions !=
                 stats.frame_submissions ||
             stats.render_graph_resource_imports !=
-                stats.frame_submissions * 8 ||
+                stats.frame_submissions * 7 ||
             stats.render_graph_pass_executions !=
                 stats.frame_submissions * 3 ||
             stats.render_graph_dependencies !=
@@ -1185,7 +1189,7 @@ void log_platform_event(const shark::platform::Event& event)
             stats.render_graph_transition_barriers !=
                 stats.frame_submissions * 4 ||
             stats.render_graph_elided_transitions !=
-                stats.frame_submissions * 18 ||
+                stats.frame_submissions * 16 ||
             stats.pix_static_upload_events !=
                 stats.static_upload_submissions ||
             stats.pix_frame_events != stats.frame_submissions ||
@@ -1269,7 +1273,7 @@ void log_platform_event(const shark::platform::Event& event)
                 stats.resize_count + 1 ||
             stats.depth_read_view_creations !=
                 stats.resize_count + 1 ||
-            stats.texture_bindings != stats.frame_submissions * 2 ||
+            stats.texture_bindings != stats.frame_submissions ||
             stats.static_upload_submissions != 1 ||
             stats.geometry_buffer_creations != 4 ||
             stats.checker_texture_creations != 1 ||

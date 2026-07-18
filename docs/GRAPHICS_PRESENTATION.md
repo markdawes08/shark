@@ -1,7 +1,7 @@
 # Direct3D 12 Presentation and Frame-Resource Contract
 
-- **Completed through:** `T-001`
-- **Last verified:** July 17, 2026
+- **Completed through:** `S-002A`
+- **Last verified:** July 18, 2026
 
 G-002 produced Shark's first pixels through a resize-safe Direct3D 12
 flip-model swap chain. G-003 replaces its wait-after-every-present path with
@@ -18,7 +18,10 @@ and reserving its persistent SRV. S-002 renders that resource through a second
 named graph pass with rotation-only camera constants and read-only depth.
 T-001 adds a deterministic height tile as the first opaque pass, a dedicated
 terrain root signature, solid/wireframe pipelines, and a depth-tested
-diagnostic bounds draw while preserving the cube and sky paths.
+diagnostic bounds draw while preserving the cube and sky paths. S-002A changes
+that sky to a procedural daylight model, shares its finite sun data with
+terrain, and removes the dormant cubemap from the per-frame graph without
+removing its startup asset proof.
 
 ## Public boundary and ownership
 
@@ -27,8 +30,9 @@ an opaque native-window pointer and engine-owned extent, color,
 `PresentationFrameData`, status, and statistics records plus pointer/size
 shader and generic texture-cube upload views; it exposes no Win32, DXGI,
 D3D12, WRL, or COM types. `PresentationFrameData` contains finite engine-owned
-row-major `view_projection` and `sky_view_projection` matrices, which the
-per-frame call borrows while recording the terrain/cube/sky frame. It also
+row-major `view_projection` and `sky_view_projection` matrices plus finite
+daylight direction, disk, gradient, ambient, halo, and intensity values, which
+the per-frame call borrows while recording the terrain/cube/sky frame. It also
 selects the finite `TerrainRenderMode` (`solid` or `wireframe`).
 `TerrainMeshUploadView` lends interleaved position/normal vertices, triangle
 indices, and eight-vertex/24-index bounds lines only during synchronous
@@ -60,9 +64,9 @@ The presentation object owns:
 - one CPU-only DSV heap with writable and read-only descriptors plus one
   `DXGI_FORMAT_D32_FLOAT` depth texture matching the current physical extent;
 - one reusable graphics command list;
-- one resource-bound cube/sky root signature, one terrain-only root signature,
-  immutable cube and skybox PSOs, immutable solid and wireframe terrain PSOs,
-  and one terrain-bounds line PSO;
+- one resource-bound cube root signature, one b0-only terrain/sky root
+  signature, immutable cube and skybox PSOs, immutable solid and wireframe
+  terrain PSOs, and one terrain-bounds line PSO;
 - one committed default-heap cube vertex buffer containing 24 position/UV
   vertices and one committed default-heap index buffer containing 36
   `uint16_t` indices;
@@ -114,16 +118,16 @@ One frame performs the following work:
 3. consume its pending GPU timing sample only if the preceding completion
    fence is complete, then retire the submission and reset its allocator-facing
    upload, descriptor, and timestamp cursors;
-4. reserve one 256-byte frame record, write the 64-byte `view_projection` and
-   64-byte `sky_view_projection` followed by the retained diagnostic probe,
-   create one CBV in the
+4. reserve one 256-byte frame record, write the 64-byte `view_projection`,
+   64-byte `sky_view_projection`, and six 16-byte daylight rows through byte
+   223, write the retained diagnostic probe at byte 224, create one CBV in the
    context's CPU-only staging heap, and point the root CBV at the same GPU
    upload address;
 5. reserve the context's exact eight-query timestamp slice;
 6. build and compile one frame-local graph that imports back buffer, depth,
-   checker, cubemap, cube vertex/index buffers, and terrain vertex/index
-   buffers; declares their exact shader/input reads; and orders `Terrain`,
-   `TexturedCube`, then the depth-reading `Skybox`;
+   checker, cube vertex/index buffers, and terrain vertex/index buffers;
+   declares their exact shader/input reads; and orders `Terrain`,
+   `TexturedCube`, then the depth-reading procedural `Skybox`;
 7. reset that context's command allocator and the shared command list with the
    immutable solid-terrain PSO;
 8. begin the `Frame` PIX event, write the frame-begin timestamp, and copy the
@@ -132,22 +136,39 @@ One frame performs the following work:
 9. execute the graph, which records `PRESENT -> RENDER_TARGET`, invokes
    `Terrain` to clear and draw the selected surface plus bounds, invokes
    `TexturedCube` without clearing, transitions depth
-   `DEPTH_WRITE -> DEPTH_READ`, invokes `Skybox` with the read-only DSV, then
-   restores color/depth final states;
+   `DEPTH_WRITE -> DEPTH_READ`, invokes the b0-only procedural `Skybox` with the
+   read-only DSV, then restores color/depth final states;
 10. write the frame-end timestamp, resolve all eight query values to the
     context's readback slice, end `Frame`, then close and execute the command
     list;
 11. immediately signal the next monotonic fence value, store it on the
-   context; and
+    context; and
 12. mark that context's timing results pending and call `Present` without an
     unconditional post-frame fence wait.
 
-The root CBV makes upload-memory reuse genuinely GPU-fence-sensitive, and the
-copy retains the G-003 default-heap probe. Probe content is not read back. The
+The root-CBV record has this exact layout:
+
+```text
+0..63     view_projection
+64..127   sky_view_projection
+128..143  direction_to_sun.xyz, sun_disk_outer_cosine
+144..159  sun_color.xyz, sun_disk_inner_cosine
+160..175  zenith_color.xyz, sky_gradient_exponent
+176..191  horizon_color.xyz, ambient_strength
+192..207  nadir_color.xyz, sun_halo_outer_cosine
+208..223  sky_ambient_color.xyz, sun_intensity
+224..255  FrameProbe
+```
+
+The root CBV exposes 224 bytes of matrices and daylight data, makes
+upload-memory reuse genuinely GPU-fence-sensitive, and the copy retains the
+G-003 default-heap probe at byte 224. Probe content is not read back. The
 staged CBV continues to exercise bounded CPU descriptor addressing and
 exhaustion policy, but the shader binds the same record through the root CBV;
 the staged descriptor is not copied into the persistent texture heap. Its
-cursor follows the same conservative frame retirement boundary.
+cursor follows the same conservative frame retirement boundary. The historical
+`camera_constant_updates` counter now accounts for this complete frame-constant
+record.
 
 Each probe destination is created in `D3D12_RESOURCE_STATE_COMMON`.
 `CopyBufferRegion` uses Direct3D 12 buffer promotion to `COPY_DEST`, and the
@@ -303,12 +324,12 @@ deadline, and is registered with a 240-second CTest timeout. A successful run:
   `upload_allocations`, `descriptor_allocations`, and fence-tracked
   `frame_submissions` to successful plus occluded present attempts;
 - proves one terrain surface draw and one 24-index terrain-bounds draw, one
-  cube and one skybox draw with 36 indices each, one depth clear, and two
-  texture bindings per frame submission;
+  cube and one skybox draw with 36 indices each, one depth clear, and one
+  texture binding per frame submission;
 - proves both terrain modes execute at least once and their counts sum to the
   terrain surface draw count;
-- proves one graph compilation/execution, eight imports, three pass
-  executions, two dependencies, four recorded transitions, and 18 elided
+- proves one graph compilation/execution, seven imports, three pass
+  executions, two dependencies, four recorded transitions, and 16 elided
   transitions per frame submission;
 - proves one `StaticSceneUpload` PIX event, one `Frame` event per submission,
   plus one `Terrain`, one `TexturedCube`, and one `Skybox` event per submission;
@@ -363,14 +384,14 @@ unit tests.
 
 ## Explicit non-goals
 
-T-001 does not expose a public/general upload allocator, global upload ring,
+S-002A does not expose a public/general upload allocator, global upload ring,
 persistent descriptor allocator, generic deferred-destruction system, or
 readback/image validation. Its timestamp query heap and readback buffer are a
 fixed presentation diagnostic, not a general query allocator or asynchronous
 readback service. Its two-slot shader-visible heap, focused root signatures,
-static scene geometry, checker, visible cubemap SRV, and fixed PSOs remain
-deliberately specific to this proof, not a general mesh manager, material
-layout, pipeline cache, or hot-reload boundary.
+static scene geometry, checker, retained startup cubemap SRV, and fixed PSOs
+remain deliberately specific to this proof, not a general mesh manager,
+material layout, pipeline cache, or hot-reload boundary.
 
 The graph remains frame-local, direct-queue, serial, and limited to imported
 whole resources. It adds no graph-owned transients, lifetime/aliasing analysis,

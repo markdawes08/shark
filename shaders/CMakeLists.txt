@@ -2,6 +2,8 @@ set(cube_shader_source
     "${CMAKE_CURRENT_SOURCE_DIR}/cube/cube.hlsl")
 set(cube_shader_include
     "${CMAKE_CURRENT_SOURCE_DIR}/shared/camera_constants.hlsli")
+set(daylight_shader_include
+    "${CMAKE_CURRENT_SOURCE_DIR}/shared/daylight.hlsli")
 set(skybox_shader_source
     "${CMAKE_CURRENT_SOURCE_DIR}/sky/skybox.hlsl")
 set(terrain_shader_source
@@ -88,6 +90,7 @@ add_custom_target(SharkSkyboxShaders
     SOURCES
         "${skybox_shader_source}"
         "${cube_shader_include}"
+        "${daylight_shader_include}"
 )
 set_property(TARGET SharkSkyboxShaders PROPERTY FOLDER "Shark/Shaders")
 
@@ -130,6 +133,7 @@ add_custom_target(SharkTerrainShaders
     SOURCES
         "${terrain_shader_source}"
         "${cube_shader_include}"
+        "${daylight_shader_include}"
 )
 set_property(TARGET SharkTerrainShaders PROPERTY FOLDER "Shark/Shaders")
 

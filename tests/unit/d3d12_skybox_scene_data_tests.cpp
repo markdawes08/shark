@@ -8,7 +8,6 @@ TEST_CASE(
 {
     using namespace shark::rhi::d3d12::detail;
 
-    REQUIRE(skybox_texture_descriptor_slot == 1);
     REQUIRE(skybox_clip_depth == 0.0F);
     REQUIRE(skybox_clip_depth == cube_depth_clear_value);
     REQUIRE(skybox_depth_comparison ==

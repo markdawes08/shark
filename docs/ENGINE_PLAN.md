@@ -2,8 +2,8 @@
 
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
-- **Last updated:** July 17, 2026
-- **Completed through:** `T-001` - deterministic heightmapped terrain tile
+- **Last updated:** July 18, 2026
+- **Latest completed:** `S-002A` - procedural daylight baseline after `T-001`
 - **Next increment:** `T-002` - canonical terrain spatial queries
 
 ## 1. Project direction
@@ -18,7 +18,8 @@ into a physically meaningful surface-water simulation.
 The first vertical slice, **Environment Lab 0.1**, will contain:
 
 - a controllable free-fly camera;
-- a static cubemap skybox, followed by HDR image-based lighting;
+- a basic procedural daylight sky and sun, followed later by HDR
+  image-based lighting;
 - heightmapped terrain with physically based textures;
 - bounded, wind-driven GPU rain with splashes and visual wetness;
 - a visually convincing water surface;
@@ -236,7 +237,7 @@ flowchart TD
 | `Fluids` | water depth/momentum, solver, conservation accounting, coupling | presentation or material decisions |
 | `Diagnostics` | tests, scenario capture, debug HUD, timings, validation output | production simulation policy |
 
-Through T-001, the bootstrap `RHI/D3D12::Presentation` class still combines
+Through S-002A, the bootstrap `RHI/D3D12::Presentation` class still combines
 renderer pass orchestration with low-level D3D12 ownership inherited from the
 first-pixel increments. The canonical terrain module remains platform
 independent and lends only derived presentation data, so no simulation boundary
@@ -318,8 +319,9 @@ unstable circular solve; iterative two-way coupling is a later milestone.
   until every relevant queue fence in their retirement set completes. G-003
   verifies whole-context transient reuse. G-005 creates one persistent root
   signature/PSO, cube vertex/index buffers, checker texture/SRV, and resize-owned
-  depth target. S-002 adds a second immutable PSO that renders S-001's
-  persistent six-face cubemap. T-001 adds terrain vertex/index buffers plus
+  depth target. S-002 adds a second immutable far-depth sky PSO; S-002A changes
+  its visible content from the diagnostic cubemap to procedural daylight.
+  T-001 adds terrain vertex/index buffers plus
   solid, wireframe, and bounds PSOs in the same bounded static-upload and
   startup lifetime; shutdown releases every persistent object after the final
   drain. Generic fence-keyed deferred destruction remains later.
@@ -335,8 +337,9 @@ unstable circular solve; iterative two-way coupling is a later milestone.
   persistent indices; recycle slots only after their fences complete. Begin
   with conventional descriptor tables while keeping handles bindless-ready.
   G-005 proves the checker at shader-visible SRV slot 0 and one static sampler.
-  S-002 points the same one-entry root table at cubemap slot 1 for `Skybox`; the
-  stable-index allocator remains future work.
+  S-001 retains the uploaded orientation cubemap at slot 1 as an asset-path
+  proof. S-002A makes `Skybox` b0-only and removes that dormant texture from
+  the per-frame graph; the stable-index allocator remains future work.
 - Keep CPU-only RTV and DSV allocators separate.
 - Add upload and readback arenas, with a per-frame linear upload ring.
 - Expose descriptor use and DXGI video-memory budget in diagnostics before
@@ -354,10 +357,11 @@ unstable circular solve; iterative two-way coupling is a later milestone.
 - Begin with a small shared root-signature convention using descriptor tables and
   frame/pass constants. Direct heap indexing becomes a separate capability-gated
   increment only after Shader Model 6.6, Binding Tier 3, and a real scale need are
-  confirmed. S-002's narrow convention is one root CBV for the row-major scene
-  and translation-free sky matrices, one single-SRV descriptor table, and one
-  static sampler. This is not yet a versioned renderer-wide
-  layout.
+  confirmed. S-002A's bootstrap frame CBV contains the row-major scene and
+  translation-free sky matrices plus six packed daylight rows and is visible
+  to vertex and pixel stages. The checker cube separately retains one
+  single-SRV descriptor table and static sampler. This is not yet a versioned
+  renderer-wide layout.
 - Key shader artifacts by source/include hashes, entry point, target, defines,
   flags, compiler version, and root-signature version.
 - Cache immutable PSOs by structural hash; never compile a surprise PSO in the
@@ -582,6 +586,7 @@ the debug layer and readable in a PIX capture.
 | ID | Level | Increment and acceptance gate | Suggested commit |
 |---|---:|---|---|
 | `T-001` | V | Render one deterministic height tile in solid and wireframe modes with inspectable normals/bounds | `feat(terrain): render a heightmapped tile` |
+| `S-002A` | V | Replace the diagnostic cubemap's visible RGB with a continuous procedural LDR daylight gradient, soft sun disk/halo, and the same unshadowed ambient-plus-Lambert sun direction on terrain; retain the far-depth sky technique and return immediately to terrain queries | `feat(sky): add procedural daylight and sun` |
 | `T-002` | - | Add exact height, normal, bounds, and ray queries; a marker rests on the visible LOD0 triangle surface | `feat(terrain): add canonical terrain queries` |
 | `REN-001` | - | Move scene-pass configuration, statistics, and orchestration out of the bootstrap D3D12 presentation class and behind the `Renderer` boundary without changing pixels or smoke accounting | `refactor(render): separate renderer orchestration from D3D12 RHI` |
 | `T-003` | V | Blend PBR albedo/normal/roughness texture arrays by slope/height or weights with normal/material debug views | `feat(terrain): add layered PBR materials` |
@@ -713,7 +718,8 @@ entity scale or query patterns make it useful.
 
 ## 14. Immediate next increment
 
-After `T-001` is reviewed and committed by the owner, implement only `T-002`:
+After `S-002A` is reviewed and committed by the owner, return to the roadmap
+and implement only `T-002`:
 
 - add exact CPU height and normal sampling against the fixed LOD0 triangle
   split;
@@ -723,11 +729,13 @@ After `T-001` is reviewed and committed by the owner, implement only `T-002`:
   fluid coupling.
 
 `T-001` begins M3 with a deterministic `33x33` CPU-owned height tile, fixed
-cell triangulation, area-weighted presentation normals, normal-encoded solid
-and wireframe rendering, and an always-present, depth-tested bounds overlay. It
-deliberately does not yet expose the canonical spatial queries assigned to
-`T-002`; the renderer-boundary cleanup remains separately reviewable as
-`REN-001` before material work begins.
+cell triangulation, area-weighted presentation normals, solid and wireframe
+diagnostics, and an always-present, depth-tested bounds overlay. `S-002A`
+temporarily gives that surface simple green/rock daylight shading so the fixed
+sun reads as a scene light; it does not add materials or shadows. The terrain
+still deliberately lacks the canonical spatial queries assigned to `T-002`;
+the renderer-boundary cleanup remains separately reviewable as `REN-001`
+before material work begins.
 
 ## 15. Primary technical references
 

@@ -74,6 +74,37 @@ struct TerrainMeshUploadView final {
     std::size_t bounds_index_count{};
 };
 
+// Temporary LDR daylight controls for the bootstrap presentation boundary.
+// Six float4-compatible rows are copied directly after the two camera matrices
+// in b0. REN-001 will move this scene policy out of the D3D12 presentation API.
+struct alignas(16) DaylightSettings final {
+    // Unit vector from a shaded surface or sky sample toward the sun.
+    math::Float3 direction_to_sun{
+        0.30F,
+        0.08F,
+        -0.95057877F,
+    };
+    float sun_disk_outer_cosine{0.99965732F};
+
+    math::Float3 sun_color{1.0F, 0.90F, 0.68F};
+    float sun_disk_inner_cosine{0.99990252F};
+
+    math::Float3 zenith_color{0.055F, 0.20F, 0.52F};
+    float sky_gradient_exponent{0.65F};
+
+    math::Float3 horizon_color{0.52F, 0.72F, 0.92F};
+    float ambient_strength{1.0F};
+
+    math::Float3 nadir_color{0.08F, 0.10F, 0.12F};
+    float sun_halo_outer_cosine{0.97814760F};
+
+    math::Float3 sky_ambient_color{0.32F, 0.40F, 0.52F};
+    float sun_intensity{1.1F};
+};
+
+static_assert(sizeof(DaylightSettings) == 96);
+static_assert(alignof(DaylightSettings) == 16);
+
 enum class TerrainRenderMode : std::uint8_t {
     solid = 1,
     wireframe,
@@ -97,6 +128,7 @@ struct PresentationConfig final {
 struct PresentationFrameData final {
     math::Matrix4x4 view_projection{};
     math::Matrix4x4 sky_view_projection{};
+    DaylightSettings daylight{};
     TerrainRenderMode terrain_mode{TerrainRenderMode::solid};
 };
 

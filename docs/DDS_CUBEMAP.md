@@ -1,14 +1,17 @@
 # DDS Cubemap Asset and Upload Contract
 
-- **Completed through:** `T-001`
-- **Last verified:** July 17, 2026
+- **Completed through:** `S-002A`
+- **Last verified:** July 18, 2026
 
 S-001 establishes Shark's first file-backed texture asset. It loads one
 project-owned DDS cubemap into CPU-owned engine records, preserves explicit
 linear/sRGB semantics, uploads every face and mip through the existing startup
 submission, and creates a persistent texture-cube SRV. S-002 now declares that
 persistent resource as an exact pixel-shader read and renders it through the
-named `Skybox` pass.
+named `Skybox` pass. S-002A replaces that diagnostic image's visible use with
+a procedural daylight sky. The loader, app-local fixture, startup upload, GPU
+resource, and descriptor remain as the bounded S-001 proof, but the normal
+frame graph no longer imports, reads, or binds the cubemap.
 
 ## Tracked orientation fixture
 
@@ -128,10 +131,13 @@ Startup then:
 7. creates one `D3D12_SRV_DIMENSION_TEXTURECUBE` SRV at slot 1.
 
 The root signature still exposes one SRV table entry. `TexturedCube` points it
-at checker slot 0, while `Skybox` points it at cubemap slot 1. The frame graph
-imports both persistent textures in exact `pixel_shader_read` state and each
-pass declares its own read. S-002 adds no texture transition because both
-resources remain in `D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE`.
+at checker slot 0. S-002A's procedural `Skybox` does not point the table at
+slot 1 and does not sample a `TextureCube`; its color comes from the normalized
+world direction and the frame's daylight constants. The frame graph therefore
+imports only the checker as a persistent pixel-shader read. The cubemap remains
+in `D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE` after startup until orderly
+shutdown, without a normal-frame transition, declaration, descriptor-table
+bind, or draw dependency.
 
 ## Verification
 
@@ -158,9 +164,11 @@ cubemap_srgb_resources == 1
 
 The startup path remains exactly one static submission, one
 `StaticSceneUpload` PIX event, and one bounded initialization wait. The normal
-frame graph now has eight imports, ordered
-`Terrain`/`TexturedCube`/`Skybox` passes, four attachment transitions, 18
-elided same-state transitions, and eight timestamps per frame.
+frame graph now has seven imports, ordered
+`Terrain`/`TexturedCube`/`Skybox` passes, four attachment transitions, 16
+elided same-state transitions, one checker binding, and eight timestamps per
+frame. Cubemap creation/upload counters remain startup invariants, but there is
+no per-frame cubemap read or binding to count.
 Hardware and normal WARP execute 1,000 successful presents; focused WARP with
 GPU-based validation executes 120 presents, retaining resize and rotation while
 intentionally skipping the normal paths' minimize/restore interval, with a
@@ -168,7 +176,10 @@ intentionally skipping the normal paths' minimize/restore interval, with a
 
 ## Explicit non-goals
 
-S-002 does not generate mips, convert HDR images, build irradiance/specular
-maps, stream textures, compress content, load general 2D materials, create asset
-IDs or caches, or establish a general descriptor allocator. See
-[the skybox contract](SKYBOX.md) for the visible use of this asset.
+S-002A does not delete or generalize the S-001 loader, generate mips, convert
+HDR images, build irradiance/specular maps, stream textures, compress content,
+load general 2D materials, create asset IDs or caches, or establish a general
+descriptor allocator. The retained orientation resource is not a reflection
+environment, image-based light, or hidden color input to the procedural sky.
+See [the skybox contract](SKYBOX.md) for the current visible daylight path.
+T-002 remains the next increment.

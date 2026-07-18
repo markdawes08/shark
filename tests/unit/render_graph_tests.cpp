@@ -657,35 +657,29 @@ TEST_CASE(
         ExternalResourceId{3},
         ResourceState::pixel_shader_read,
         ResourceState::pixel_shader_read);
-    const auto cubemap = builder.import_resource(
-        "Cubemap",
-        ExternalResourceId{4},
-        ResourceState::pixel_shader_read,
-        ResourceState::pixel_shader_read);
     const auto cube_vertex_buffer = builder.import_resource(
         "CubeVertexBuffer",
-        ExternalResourceId{5},
+        ExternalResourceId{4},
         ResourceState::vertex_buffer,
         ResourceState::vertex_buffer);
     const auto cube_index_buffer = builder.import_resource(
         "CubeIndexBuffer",
-        ExternalResourceId{6},
+        ExternalResourceId{5},
         ResourceState::index_buffer,
         ResourceState::index_buffer);
     const auto terrain_vertex_buffer = builder.import_resource(
         "TerrainVertexBuffer",
-        ExternalResourceId{7},
+        ExternalResourceId{6},
         ResourceState::vertex_buffer,
         ResourceState::vertex_buffer);
     const auto terrain_index_buffer = builder.import_resource(
         "TerrainIndexBuffer",
-        ExternalResourceId{8},
+        ExternalResourceId{7},
         ResourceState::index_buffer,
         ResourceState::index_buffer);
     REQUIRE(back_buffer);
     REQUIRE(depth);
     REQUIRE(checker);
-    REQUIRE(cubemap);
     REQUIRE(cube_vertex_buffer);
     REQUIRE(cube_index_buffer);
     REQUIRE(terrain_vertex_buffer);
@@ -742,17 +736,14 @@ TEST_CASE(
         "Skybox",
         [back_buffer = back_buffer.value(),
          depth = depth.value(),
-         cubemap = cubemap.value(),
          cube_vertex_buffer = cube_vertex_buffer.value(),
          cube_index_buffer = cube_index_buffer.value(),
          &execution_order](const PassContext& context) {
             const auto color = context.write(back_buffer);
             const auto depth_target = context.read(depth);
-            const auto texture = context.read(cubemap);
             const auto vertices = context.read(cube_vertex_buffer);
             const auto indices = context.read(cube_index_buffer);
-            if (!color || !depth_target || !texture ||
-                !vertices || !indices) {
+            if (!color || !depth_target || !vertices || !indices) {
                 return core::Result<void>::failure(core::Error{
                     core::ErrorCategory::graphics,
                     core::ErrorCode::invalid_state,
@@ -811,10 +802,6 @@ TEST_CASE(
         ResourceState::depth_read));
     REQUIRE(builder.read(
         skybox.value(),
-        cubemap.value(),
-        ResourceState::pixel_shader_read));
-    REQUIRE(builder.read(
-        skybox.value(),
         cube_vertex_buffer.value(),
         ResourceState::vertex_buffer));
     REQUIRE(builder.read(
@@ -868,21 +855,21 @@ TEST_CASE(
         compiled_cube.accesses[4].state ==
         ResourceState::index_buffer);
     REQUIRE(compiled_cube.accesses[4].mode == AccessMode::read);
-    REQUIRE(compiled_skybox.accesses.size() == 5);
+    REQUIRE(compiled_skybox.accesses.size() == 4);
     REQUIRE(
-        compiled_skybox.accesses[3].resource ==
+        compiled_skybox.accesses[2].resource ==
         cube_vertex_buffer.value());
     REQUIRE(
-        compiled_skybox.accesses[3].state ==
+        compiled_skybox.accesses[2].state ==
         ResourceState::vertex_buffer);
-    REQUIRE(compiled_skybox.accesses[3].mode == AccessMode::read);
+    REQUIRE(compiled_skybox.accesses[2].mode == AccessMode::read);
     REQUIRE(
-        compiled_skybox.accesses[4].resource ==
+        compiled_skybox.accesses[3].resource ==
         cube_index_buffer.value());
     REQUIRE(
-        compiled_skybox.accesses[4].state ==
+        compiled_skybox.accesses[3].state ==
         ResourceState::index_buffer);
-    REQUIRE(compiled_skybox.accesses[4].mode == AccessMode::read);
+    REQUIRE(compiled_skybox.accesses[3].mode == AccessMode::read);
     REQUIRE(compiled_terrain.transitions.size() == 1);
     REQUIRE((compiled_terrain.transitions[0] == ResourceTransition{
         back_buffer.value(),
@@ -912,11 +899,11 @@ TEST_CASE(
         ResourceState::depth_write,
     }));
     REQUIRE((graph.stats() == CompiledGraphStats{
-        .imported_resource_count = 8,
+        .imported_resource_count = 7,
         .pass_count = 3,
         .dependency_count = 2,
         .transition_count = 4,
-        .elided_transition_count = 18,
+        .elided_transition_count = 16,
     }));
 
     RecordingTransitionRecorder recorder;

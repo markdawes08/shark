@@ -1,9 +1,9 @@
 # Deterministic Terrain-Tile Contract
 
-- **Completed through:** `T-001`
-- **Last verified:** July 17, 2026
+- **Completed through:** `S-002A`
+- **Last verified:** July 18, 2026
 
-Verification snapshot: Debug and Release each passed the full `94/94` CTest
+T-001 verification snapshot: Debug and Release each passed the full `94/94` CTest
 suite, including the 1,000-frame hardware and packaged-WARP runs plus the
 120-frame packaged-WARP GPU-validation run. A separate direct Debug NVIDIA
 1,000-frame smoke also passed exact accounting. The `94` count records this
@@ -14,6 +14,8 @@ streaming, collision, or simulation. One project-owned procedural height tile
 is built on the CPU, uploaded once with the other static scene resources, and
 rendered as the first opaque frame-graph pass. The checker cube and
 translation-invariant skybox remain visible as the established scene baseline.
+S-002A changes only their presentation treatment: the sky is now procedural
+daylight, and the terrain uses the same direction-to-sun for simple shading.
 
 ## Canonical height fixture
 
@@ -88,22 +90,25 @@ signature containing only the current frame constant-buffer view at `b0`.
 
 The main surface has two immutable raster pipelines:
 
-- **Solid** is the interactive default. Its pixel shader normalizes the smooth
-  presentation normal and maps `[-1, 1]` to `[0, 1]` RGB, making orientation
-  directly inspectable without claiming a lit material.
-- **Wireframe** uses the same vertices, indices, shader, camera, and reversed-Z
-  depth policy with a wireframe rasterizer. Press `F1` once to toggle between
-  solid and wireframe; key-repeat events do not trigger extra toggles.
+- **Solid** is the interactive default. S-002A normalizes the smooth
+  presentation normal, blends fixed green and rock colors by slope, and applies
+  a small hemispherical ambient term plus Lambert response to the shared
+  direction-to-sun. This makes orientation legible without claiming a terrain
+  material, PBR model, shadow solution, or physical atmosphere.
+- **Wireframe** uses the same vertices, indices, shader, camera, daylight, and
+  reversed-Z depth policy with a wireframe rasterizer. Press `F1` once to toggle
+  between solid and wireframe; key-repeat events do not trigger extra toggles.
 
 An eight-vertex, 24-index line box is derived from the exact mesh AABB and
 drawn after the main surface in both modes. The bounds lines depth-test against
-the scene but do not write depth. They are always present, rather than being a
-third user-controlled mode, so a capture or manual run can inspect the tile's
-extent alongside either surface view.
+the scene but do not write depth. A sentinel presentation normal keeps their
+output constant magenta, independent of daylight. They are always present,
+rather than being a third user-controlled mode, so a capture or manual run can
+inspect the tile's extent alongside either surface view.
 
 ## Frame graph and reversed-Z order
 
-T-001 executes this exact pass order:
+S-002A retains T-001's exact pass order:
 
 1. `Terrain` writes the back buffer and writable depth target, clears both once,
    reads the terrain vertex/index buffers, draws the selected surface mode, and
@@ -111,7 +116,7 @@ T-001 executes this exact pass order:
 2. `TexturedCube` writes the same color/depth targets, reads its vertex/index
    buffers and checker texture, and draws without clearing.
 3. `Skybox` writes color, reads depth through the read-only DSV, reads the same
-   cube vertex/index buffers and cubemap, and fills only the far background.
+   cube vertex/index buffers, and procedurally fills only the far background.
 
 The current graph imports:
 
@@ -119,7 +124,6 @@ The current graph imports:
 BackBuffer
 DepthBuffer
 CheckerTexture
-StartupCubemap
 CubeVertexBuffer
 CubeIndexBuffer
 TerrainVertexBuffer
@@ -127,8 +131,8 @@ TerrainIndexBuffer
 ```
 
 The color/depth hazards produce `Terrain -> TexturedCube -> Skybox`. One frame
-therefore compiles eight imports, three passes, two dependencies, four emitted
-attachment transitions, and 18 equal-state transition elisions. Input-assembler
+therefore compiles seven imports, three passes, two dependencies, four emitted
+attachment transitions, and 16 equal-state transition elisions. Input-assembler
 buffers remain in their declared read states and emit no barriers. The existing
 four attachment barriers remain:
 
@@ -167,10 +171,10 @@ After the shutdown drain, the smoke requires:
 - 6,144 terrain surface indices and 24 bounds indices per corresponding draw;
 - nonzero solid and wireframe counts whose sum equals the terrain surface draw
   count;
-- one depth clear in `Terrain`, two texture bindings, and one camera upload per
-  submission;
-- eight graph imports, three pass executions, two dependencies, four emitted
-  transitions, and 18 elisions per submission;
+- one depth clear in `Terrain`, one checker binding, and one frame-constant
+  upload per submission;
+- seven graph imports, three pass executions, two dependencies, four emitted
+  transitions, and 16 elisions per submission;
 - three named pass events, eight timestamp writes, and one timestamp resolve
   per submission; and
 - one static upload submission creating four geometry buffers total: cube
@@ -210,18 +214,20 @@ Focused CPU/contract coverage is available through:
 
 ```powershell
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[daylight]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[render-graph]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[timestamps]"
 ```
 
 For manual visual acceptance, run the Debug sandbox without arguments. Confirm
-that the terrain appears in front of the predominantly sky-blue background,
-the normal colors vary smoothly across its hills and basin, the depth-tested
-AABB overlay follows the tile bounds without showing through occluding
-surfaces, and `F1` switches cleanly between filled and wireframe terrain. Move
-and rotate the free-fly camera, resize through different aspect ratios, then
-minimize, restore, and close; no stale geometry, depth artifact, or Direct3D
-validation error is allowed.
+that the terrain appears in front of the continuous daylight sky, green and
+rock tones blend by slope, and the shared sun direction makes differently
+oriented slopes visibly brighter or darker without making back-facing terrain
+black. The magenta depth-tested AABB overlay must follow the tile bounds
+without showing through occluding surfaces, and `F1` must switch cleanly
+between filled and wireframe terrain. Move and rotate the free-fly camera,
+resize through different aspect ratios, then minimize, restore, and close; no
+stale geometry, depth artifact, or Direct3D validation error is allowed.
 
 ## Explicit non-goals
 
@@ -230,4 +236,8 @@ surface-hit marker, terrain collision, PBR texture or material, UVs, tangents,
 chunks, frustum culling, visual LOD, seam handling, streaming, virtual
 texturing, mesh shaders, weather interaction, erosion, water, editor, or
 general mesh/scene resource system. T-002 owns exact canonical CPU spatial
-queries; T-003 owns the first layered PBR terrain materials.
+queries; T-003 owns the first layered PBR terrain materials. S-002A's fixed
+green/rock albedo and unshadowed daylight are only a temporary presentation
+baseline: they add no material textures, shadow maps, atmospheric scattering,
+clouds, exposure, time-of-day controls, or image-based lighting. T-002 remains
+the immediate next increment.

@@ -1,17 +1,20 @@
 # Minimal Render-Graph Contract
 
-- **Completed through:** `T-001`
-- **Presentation integration verified through:** `T-001`
-- **Last updated:** July 17, 2026
+- **Completed through:** `S-002A`
+- **Presentation integration verified through:** `S-002A`
+- **Last updated:** July 18, 2026
 
 G-006 moves the existing textured-cube frame behind Shark's first render graph
 without changing the visible scene. S-002 extends it to ordered cube/sky
 passes, read-only depth, and exact persistent texture-read declarations. T-001
 adds the first `Terrain` pass and explicitly declares the cube and terrain
-input-assembler buffers. The graph remains a small, platform-independent
-planner plus a Direct3D 12 legacy-barrier executor. It proves declared resource
-access, deterministic dependency compilation, and centralized frame barriers
-before later work adds more passes or graph-owned resources.
+input-assembler buffers. S-002A replaces cubemap sampling with a procedural
+daylight sky and removes that now-unused texture from the per-frame graph while
+retaining its startup asset proof. The graph remains a small,
+platform-independent planner plus a Direct3D 12 legacy-barrier executor. It
+proves declared resource access, deterministic dependency compilation, and
+centralized frame barriers before later work adds more passes or graph-owned
+resources.
 
 ## Boundary and ownership
 
@@ -166,7 +169,6 @@ staging its frame context. It imports:
 | `BackBuffer` | `present` | `present` | DXGI's current swap-chain buffer |
 | `DepthBuffer` | `depth_write` | `depth_write` | the current extent-matched `D32_FLOAT` texture |
 | `CheckerTexture` | `pixel_shader_read` | `pixel_shader_read` | persistent checker texture |
-| `StartupCubemap` | `pixel_shader_read` | `pixel_shader_read` | persistent six-face cubemap |
 | `CubeVertexBuffer` | `vertex_buffer` | `vertex_buffer` | persistent 24-vertex cube buffer |
 | `CubeIndexBuffer` | `index_buffer` | `index_buffer` | persistent 36-index cube buffer |
 | `TerrainVertexBuffer` | `vertex_buffer` | `vertex_buffer` | persistent terrain and bounds vertices |
@@ -191,36 +193,39 @@ The graph contains three passes. `Terrain` declares:
 
 - write access to `BackBuffer` as `render_target`;
 - read access to `DepthBuffer` as `depth_read`; and
-- read access to `StartupCubemap` as `pixel_shader_read`;
 - read access to `CubeVertexBuffer` as `vertex_buffer`; and
 - read access to `CubeIndexBuffer` as `index_buffer`.
 
 The terrain callback resolves its four declared resources, clears color/depth,
 draws the selected 6,144-index surface PSO, and draws the always-present
-24-index bounds box. The cube and sky callbacks resolve all five of their
-declared resources; neither clears. Color/depth hazards produce
+24-index bounds box. The cube callback resolves its five declared resources;
+the procedural-sky callback resolves its four. Neither clears. Color/depth
+hazards produce
 `Terrain -> TexturedCube -> Skybox`, deduplicated to two dependencies. The
 compiled frame therefore has:
 
 ```text
-imports                 8
+imports                 7
 passes                  3
 dependencies            2
 emitted transitions     4
-elided transitions      18
+elided transitions      16
 ```
 
 The emitted barriers are `PRESENT -> RENDER_TARGET` before `Terrain`,
 `DEPTH_WRITE -> DEPTH_READ` before `Skybox`, and final
 `RENDER_TARGET -> PRESENT` plus `DEPTH_READ -> DEPTH_WRITE`. All matching
-attachment, texture, vertex-buffer, and index-buffer declarations/final states
-account for the 18 elisions.
+attachment, checker-texture, vertex-buffer, and index-buffer
+declarations/final states account for the 16 elisions.
 
 The retained 256-byte diagnostic `CopyBufferRegion` remains outside the graph
-and uses D3D12 buffer promotion/decay. The one-time vertex, index, and checker
-uploads remain in the startup upload path. The graph owns all four per-frame
-attachment barriers plus persistent texture and input-assembler declarations;
-it does not own startup copies or the diagnostic buffer copy.
+and uses D3D12 buffer promotion/decay. That record contains 224 bytes of
+matrix/daylight constants and the retained `FrameProbe` at byte 224. The
+one-time vertex, index, checker, and cubemap uploads remain in the startup
+upload path. The graph owns all four per-frame attachment barriers plus the
+checker-texture and input-assembler declarations; it does not own startup
+copies or the diagnostic buffer copy. The retained cubemap is not imported
+because the procedural sky neither binds nor samples it.
 
 T-001 extends the state vocabulary but retains planner/executor ownership.
 Presentation writes the
@@ -247,11 +252,11 @@ For a successful fixed presentation smoke:
 ```text
 render_graph_compilations       == frame_submissions
 render_graph_executions         == frame_submissions
-render_graph_resource_imports    == frame_submissions * 8
+render_graph_resource_imports    == frame_submissions * 7
 render_graph_pass_executions     == frame_submissions * 3
 render_graph_dependencies        == frame_submissions * 2
 render_graph_transition_barriers == frame_submissions * 4
-render_graph_elided_transitions  == frame_submissions * 18
+render_graph_elided_transitions  == frame_submissions * 16
 terrain_draw_calls + cube_draw_calls + skybox_draw_calls
     == render_graph_pass_executions
 ```
@@ -289,13 +294,14 @@ typed RHI resource handles, PSO cache, shader reflection, timing HUD, or
 automatic graph-owned PIX/timestamp instrumentation. Graph compilation is
 intentionally frame-local and serial. T-001's three named GPU intervals use the
 existing presentation and callback boundaries without broadening this graph
-contract.
+contract. S-002A changes only the sky's declared inputs and the exact import
+and elision counts; it adds no pass, transition, or scheduler behavior.
 
 See [the presentation and frame-resource contract](GRAPHICS_PRESENTATION.md)
 for submission and resize ownership, [the HLSL pipeline contract](GRAPHICS_PIPELINE.md)
 for the commands recorded by the graphics passes, and
 [the camera/cube contract](CAMERA_AND_CUBE.md) for shared conventions. See
-[the skybox contract](SKYBOX.md) for the visible background and
+[the skybox contract](SKYBOX.md) for the procedural daylight background and
 [the terrain contract](TERRAIN.md) for the first pass and input-assembler
 declarations, and
 [the GPU diagnostics contract](GPU_DIAGNOSTICS.md) for the presentation-owned

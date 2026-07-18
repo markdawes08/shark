@@ -1,5 +1,8 @@
 # Direct3D 12 Device Contract
 
+- **Completed through:** `S-002A`
+- **Last verified:** July 18, 2026
+
 G-001 establishes adapter discovery, diagnostics, capability reporting, and
 device ownership independently of frame submission. It intentionally creates
 no command queue, allocator, command list, fence, resource, swap chain, or
@@ -96,9 +99,11 @@ verification. `--present-smoke` accepts the normal GPU selectors and optional
 GPU-based validation, creates a real window, presents exactly 1,000 successful
 frames containing the indexed terrain, bounds, cube, and skybox, verifies
 camera/depth/resource/graph lifecycles, and exits. The default interactive path
-keeps the device alive while the free-fly camera, diagnostic terrain, textured
-cube, and cubemap sky run as the graph's `Terrain`, `TexturedCube`, and
-`Skybox` passes until the window is closed.
+keeps the device alive while the free-fly camera, daylight-lit diagnostic
+terrain, textured cube, and procedural daylight sky run as the graph's
+`Terrain`, `TexturedCube`, and `Skybox` passes until the window is closed. The
+startup cubemap remains allocated as an asset/upload proof but is not imported,
+bound, or sampled per frame.
 
 ## Required and optional capabilities
 
@@ -173,10 +178,9 @@ cycle/access/failure validation, transition elision, exact legacy state
 mapping/alias handling, and native binding rejection.
 The presentation smoke additionally verifies all three frame contexts are
 reused, every submission compiles and executes exactly three graph passes with
-eight imports, two dependencies, four emitted barriers, and 18 elided
-transitions,
-and every submission retires during explicit shutdown before frame resources
-are released.
+seven imports, two dependencies, four emitted barriers, and 16 elided
+transitions plus one checker-texture binding, and every submission retires
+during explicit shutdown before frame resources are released.
 
 Presentation shutdown explicitly drains and releases its command list,
 terrain/cube/skybox PSOs, both root signatures, descriptor heap,
@@ -193,4 +197,5 @@ the G-005 input, math, depth, static-resource, and acceptance rules. See
 [the minimal render-graph contract](RENDER_GRAPH.md) for the G-006
 platform-independent planner and D3D12 legacy-barrier executor.
 See [the terrain contract](TERRAIN.md) for the T-001 deterministic tile and
-diagnostic rendering modes.
+diagnostic rendering modes, and [the skybox contract](SKYBOX.md) for the
+S-002A procedural daylight background and shared terrain light.

@@ -98,14 +98,13 @@ local development and testing only and must never enter a packaged product.
 
 With no arguments, `SharkSandbox` initializes the highest-priority eligible
 hardware device, opens the native Win32 window, and continuously draws the
-deterministic height tile, procedural-checker cube, and static DDS skybox as
-named `Terrain`, `TexturedCube`, and `Skybox` graph passes. T-001 keeps the
+deterministic height tile, procedural-checker cube, and procedural daylight sky
+as named `Terrain`, `TexturedCube`, and `Skybox` graph passes. S-002A keeps the
 triple frame-resource lifecycle and resize-safe reversed-Z target, and reports
 separate PIX/timestamp intervals for all three passes. Press `F1` to toggle the
-terrain between solid normal visualization and wireframe. Use `W`/`S` along
-the camera forward axis, `A`/`D` to strafe, `Q`/`E` to move down/up, hold
-`Shift` to move faster, and hold the right mouse button while dragging to look
-around.
+terrain between solid daylight shading and wireframe. Use `W`/`S` along the
+camera forward axis, `A`/`D` to strafe, `Q`/`E` to move down/up, hold `Shift`
+to move faster, and hold the right mouse button while dragging to look around.
 `Control` and `Space` are down/up aliases. Resize or minimize/restore the
 window to exercise the projection, swap-chain, depth, frame-local graph
 imports, and fence-delayed timing reuse, then close the title bar or press
@@ -125,7 +124,9 @@ row-major layout, strict mode, and warnings as errors. DXIL, generated C++
 byte arrays, PDBs, and dependency files are configuration-specific and stay
 under ignored `out/build/windows-vs2026/generated/shaders/`. The dependency
 files make edits to the shared camera include rebuild every dependent cube,
-sky, and terrain stage.
+sky, and terrain stage. The S-002A sky and terrain stages also track the shared
+daylight include that owns the procedural sky, directional illumination, and
+linear-to-sRGB helpers.
 
 CTest adds three build checks: the shader depfiles must name the primary source
 and shared include, a build-tree include edit must actually regenerate the
@@ -141,15 +142,17 @@ Run only the normal shader target and focused build checks with:
 & $ctest --preset windows-debug -R '^build\.shader_'
 ```
 
-For the visual acceptance check, run `SharkSandbox` without arguments. A
-solid height tile must show its smooth area-weighted normal visualization,
-its depth-tested bounds overlay must enclose the tile, and `F1` must reveal
-the fixed triangle split in wireframe. The textured cube must retain correct
-hidden-surface occlusion and perspective while the temporarily treated
-sky-blue cubemap fills the background. Translation must not move the sky,
-right-drag rotation must change its sampled direction, and resizing from a wide
-to a non-wide aspect must not stretch the scene. The exact source-resource orientation check is
-documented in [the skybox contract](SKYBOX.md).
+For the visual acceptance check, run `SharkSandbox` without arguments. A solid
+height tile must show simple green-to-rock slope coloring under the shared
+ambient-plus-directional daylight, its magenta depth-tested bounds overlay must
+enclose the tile, and `F1` must reveal the fixed triangle split in wireframe.
+The textured cube must retain correct hidden-surface occlusion and perspective.
+The background must form one continuous blue zenith/horizon/nadir gradient
+with a warm sun disk and restrained halo, without visible cube-face seams or
+painted-wall bands. Translation must not move the sky, right-drag rotation must
+move the fixed-world sun and gradient consistently, and resizing from a wide
+to a non-wide aspect must not stretch the scene. The exact daylight contract
+is documented in [the skybox contract](SKYBOX.md).
 
 ## Graphics device checks
 
@@ -215,26 +218,29 @@ D3D12/DXGI messages plus live D3D12 device children. Submission or presentation
 removal failures also emit bounded DRED diagnostics.
 
 The run also exercises three contexts selected by DXGI's back-buffer index.
-Each attempt writes one 256-byte record containing scene and sky matrices,
-binds it through a root CBV,
-copies it to the existing GPU probe, and stages one descriptor in a CPU-only
-heap. A context waits only when its own allocator cannot yet be reused because
-its preceding submission fence has not completed; that checkpoint protects the
-allocator, camera bytes, and probe destination.
+Each attempt writes one 256-byte record containing the scene and sky matrices
+at bytes `0..127`, six float4-compatible daylight rows at bytes `128..223`, and
+the existing GPU probe beginning at byte `224`. It binds the record through a
+pixel-visible root CBV, copies the probe to its default-heap destination, and
+stages one descriptor in a CPU-only heap. A context waits only when its own
+allocator cannot yet be reused because its preceding submission fence has not
+completed; that checkpoint protects all frame constants and the probe
+destination.
 
 Creation records one `StaticSceneUpload` PIX event, one static direct-queue
 upload submission, and one bounded wait for the cube and terrain vertex/index
 buffers, deterministic `8x8` checker, and all six faces of the app-local `8x8`
-sRGB DDS cubemap. The startup list ends with six initialization barriers.
-Every submitted frame records one outer `Frame` event with nested `Terrain`,
-`TexturedCube`, and `Skybox` events. Its eight-import graph declares exact
-vertex/index and checker/cubemap reads, executes all three passes, two
-dependencies, four recorded transitions, and 18 elided transitions. It issues
-one terrain triangle draw, one terrain-bounds line draw, one 36-index
-textured-cube draw, one 36-index skybox draw, two texture bindings, and one
-reversed-Z depth clear. Terrain owns the
-clear, the cube preserves it, and the sky uses the read-only DSV and writes no
-depth.
+sRGB DDS cubemap. The retained cubemap remains a startup asset/upload proof;
+the procedural sky does not read or bind it per frame. The startup list ends
+with six initialization barriers. Every submitted frame records one outer
+`Frame` event with nested `Terrain`, `TexturedCube`, and `Skybox` events. Its
+seven-import graph declares exact vertex/index reads and the checker's one
+pixel-shader read, executes all three passes, two dependencies, four recorded
+transitions, and 16 elided transitions. It issues one terrain triangle draw,
+one terrain-bounds line draw, one 36-index textured-cube draw, one 36-index
+skybox draw, one texture binding, and one reversed-Z depth clear. Terrain owns
+the clear, the cube preserves it, and the sky uses the read-only DSV and writes
+no depth.
 
 The direct queue reports its timestamp frequency once. One 24-entry query heap
 and one 192-byte persistently mapped readback buffer are split into three
@@ -265,6 +271,7 @@ directly with:
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[render-graph]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[timestamps]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[skybox]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[daylight]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[assets][dds][cubemap]"
 ```
@@ -309,9 +316,12 @@ ordering, validation, barrier mapping, accounting, and non-goals.
 See [the GPU diagnostics contract](GPU_DIAGNOSTICS.md) for PIX names,
 timestamp boundaries, fence-delayed readback, smoke accounting, and manual
 capture acceptance. See [the DDS cubemap contract](DDS_CUBEMAP.md) for the
-tracked fixture, strict loader, app-local deployment, startup upload, and
-persistent texture-cube SRV. See [the terrain contract](TERRAIN.md) for the
-deterministic source, mesh, normal, bounds, and diagnostic-mode rules.
+tracked fixture, strict loader, app-local deployment, retained startup upload,
+and deliberately absent per-frame sky read. See
+[the terrain contract](TERRAIN.md) for the deterministic source, mesh, normal,
+bounds, and diagnostic-mode rules. After S-002A, the roadmap resumes at T-002
+with canonical terrain spatial queries; daylight adds no material, shadow, HDR,
+or time-of-day system.
 
 ## Visual Studio
 

@@ -1,7 +1,5 @@
 #include "shared/camera_constants.hlsli"
-
-TextureCube<float4> skybox_texture : register(t0);
-SamplerState skybox_sampler : register(s0);
+#include "shared/daylight.hlsli"
 
 struct VertexInput
 {
@@ -33,17 +31,7 @@ VertexOutput VSMain(const VertexInput input)
 
 float4 PSMain(const VertexOutput input) : SV_Target0
 {
-    const float4 diagnostic_sample = skybox_texture.Sample(
-        skybox_sampler,
+    const float3 sky_linear = evaluate_daylight_sky_linear(
         input.sample_direction);
-
-    // Temporary presentation treatment until Shark owns an HDR environment.
-    // Retain a small contribution from the orientation cubemap so this pass
-    // continues to exercise the real TextureCube sampling path.
-    const float3 sky_blue = float3(0.36F, 0.62F, 0.90F);
-    const float3 treated_color = lerp(
-        diagnostic_sample.rgb,
-        sky_blue,
-        0.96F);
-    return float4(treated_color, 1.0F);
+    return float4(linear_to_srgb(sky_linear), 1.0F);
 }

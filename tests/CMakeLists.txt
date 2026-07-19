@@ -25,6 +25,7 @@ add_executable(SharkTests
     unit/renderer_d3d12_gpu_timestamp_tests.cpp
     unit/renderer_d3d12_skybox_scene_data_tests.cpp
     unit/renderer_d3d12_terrain_scene_data_tests.cpp
+    unit/renderer_d3d12_water_scene_data_tests.cpp
     unit/renderer_frame_pipeline_tests.cpp
     unit/renderer_terrain_frustum_culling_tests.cpp
     unit/renderer_terrain_lod_selection_tests.cpp

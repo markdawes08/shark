@@ -21,6 +21,8 @@
 #include <skybox.vertex.hpp>
 #include <terrain.pixel.hpp>
 #include <terrain.vertex.hpp>
+#include <water.pixel.hpp>
+#include <water.vertex.hpp>
 #include <material_sphere.pixel.hpp>
 #include <material_sphere.vertex.hpp>
 #include <tone_map.pixel.hpp>
@@ -1189,6 +1191,14 @@ void log_platform_event(const shark::platform::Event& event)
         shark_terrain_pixel_shader,
         sizeof(shark_terrain_pixel_shader),
     };
+    renderer_config.water_vertex_shader = {
+        shark_water_vertex_shader,
+        sizeof(shark_water_vertex_shader),
+    };
+    renderer_config.water_pixel_shader = {
+        shark_water_pixel_shader,
+        sizeof(shark_water_pixel_shader),
+    };
     renderer_config.material_sphere_vertex_shader = {
         shark_material_sphere_vertex_shader,
         sizeof(shark_material_sphere_vertex_shader),
@@ -1279,6 +1289,28 @@ void log_platform_event(const shark::platform::Event& event)
             .subresources = brdf_lut_views.data(),
             .subresource_count = brdf_lut_views.size(),
         },
+    };
+    const auto& lake_footprint =
+        environment_scenario.lake_basin.footprint;
+    renderer_config.water_surface = {
+        .center = {
+            lake_footprint.center.x,
+            environment_scenario.lake_basin.future_waterline_y,
+            lake_footprint.center.z,
+        },
+        .semi_axis_x = lake_footprint.semi_axis_x,
+        .semi_axis_z = lake_footprint.semi_axis_z,
+        .x_warp_square_offset =
+            lake_footprint.x_warp_square_offset,
+        .x_warp_divisor = lake_footprint.x_warp_divisor,
+        .z_warp_square_offset =
+            lake_footprint.z_warp_square_offset,
+        .z_warp_divisor = lake_footprint.z_warp_divisor,
+        .core_depth = environment_scenario.lake_basin.core_depth,
+        .render_half_extent_x =
+            world::environment_lab_water_render_half_extent_x,
+        .render_half_extent_z =
+            world::environment_lab_water_render_half_extent_z,
     };
     renderer_config.synchronize_to_vertical_refresh = !smoke_mode;
     auto renderer_result = renderer::Renderer::create(
@@ -1417,7 +1449,8 @@ void log_platform_event(const shark::platform::Event& event)
             std::to_string(
                 world::
                     environment_lab_maximum_lod0_slope_degrees) +
-            " degrees; no water resource or pass exists");
+            " degrees; W-001 renders a bounded visual surface at the "
+            "published waterline without changing terrain");
 
     core::log_message(
         core::LogLevel::info,
@@ -1545,6 +1578,7 @@ void log_platform_event(const shark::platform::Event& event)
         renderer::EnvironmentLightingMode::image_based;
     auto terrain_diagnostics_enabled = false;
     auto previous_frame_time = std::chrono::steady_clock::now();
+    const auto visual_start_time = previous_frame_time;
     const auto smoke_deadline =
         std::chrono::steady_clock::now() + smoke_deadline_duration;
     bool resize_requested = false;
@@ -1857,6 +1891,12 @@ void log_platform_event(const shark::platform::Event& event)
             std::chrono::duration<float>(
                 frame_time - previous_frame_time).count();
         previous_frame_time = frame_time;
+        const auto visual_time_seconds = smoke_mode
+            ? static_cast<float>(
+                renderer_instance.stats().presented_frames) /
+                60.0F
+            : std::chrono::duration<float>(
+                frame_time - visual_start_time).count();
         if (!smoke_mode) {
             camera_controller.update(camera, elapsed_seconds);
         }
@@ -1932,6 +1972,7 @@ void log_platform_event(const shark::platform::Event& event)
             .terrain_material_view = terrain_material_view,
             .environment_lighting_mode =
                 environment_lighting_mode,
+            .visual_time_seconds = visual_time_seconds,
             .terrain_diagnostics_enabled =
                 terrain_diagnostics_enabled,
         };
@@ -1970,7 +2011,7 @@ void log_platform_event(const shark::platform::Event& event)
         constexpr std::uint32_t expected_context_mask =
             (std::uint32_t{1} << expected_context_count) - 1;
         constexpr std::uint64_t frame_probe_bytes = 256;
-        constexpr std::uint64_t timestamp_queries_per_frame = 10;
+        constexpr std::uint64_t timestamp_queries_per_frame = 12;
         constexpr std::uint64_t initial_window_lod0_chunks = 0;
         constexpr std::uint64_t initial_window_coarse_chunks = 93;
         constexpr std::uint64_t resized_window_lod0_chunks = 0;
@@ -2041,13 +2082,13 @@ void log_platform_event(const shark::platform::Event& event)
             stats.render_graph_resource_imports !=
                 stats.frame_submissions * 15 ||
             stats.render_graph_pass_executions !=
-                stats.frame_submissions * 4 ||
+                stats.frame_submissions * 5 ||
             stats.render_graph_dependencies !=
-                stats.frame_submissions * 3 ||
+                stats.frame_submissions * 5 ||
             stats.render_graph_transition_barriers !=
                 stats.frame_submissions * 6 ||
             stats.render_graph_elided_transitions !=
-                stats.frame_submissions * 31 ||
+                stats.frame_submissions * 34 ||
             stats.pix_static_upload_events !=
                 stats.static_upload_submissions ||
             stats.pix_frame_events != stats.frame_submissions ||
@@ -2056,6 +2097,8 @@ void log_platform_event(const shark::platform::Event& event)
             stats.pix_terrain_events !=
                 stats.frame_submissions ||
             stats.pix_textured_cube_events !=
+                stats.frame_submissions ||
+            stats.pix_water_events !=
                 stats.frame_submissions ||
             stats.pix_skybox_events !=
                 stats.frame_submissions ||
@@ -2076,17 +2119,21 @@ void log_platform_event(const shark::platform::Event& event)
             stats.gpu_frame_total_ticks <
                 stats.gpu_terrain_total_ticks +
                     stats.gpu_textured_cube_total_ticks +
+                    stats.gpu_water_total_ticks +
                     stats.gpu_skybox_total_ticks +
                     stats.gpu_tone_map_total_ticks ||
             stats.gpu_frame_last_ticks <
                 stats.gpu_terrain_last_ticks +
                     stats.gpu_textured_cube_last_ticks +
+                    stats.gpu_water_last_ticks +
                     stats.gpu_skybox_last_ticks +
                     stats.gpu_tone_map_last_ticks ||
             stats.gpu_frame_max_ticks <
                 stats.gpu_terrain_max_ticks ||
             stats.gpu_frame_max_ticks <
                 stats.gpu_textured_cube_max_ticks ||
+            stats.gpu_frame_max_ticks <
+                stats.gpu_water_max_ticks ||
             stats.gpu_frame_max_ticks <
                 stats.gpu_skybox_max_ticks ||
             stats.gpu_frame_max_ticks <
@@ -2097,11 +2144,16 @@ void log_platform_event(const shark::platform::Event& event)
                 stats.gpu_terrain_max_ticks ||
             stats.gpu_textured_cube_min_ticks >
                 stats.gpu_textured_cube_max_ticks ||
+            stats.gpu_water_min_ticks >
+                stats.gpu_water_max_ticks ||
             stats.gpu_skybox_min_ticks >
                 stats.gpu_skybox_max_ticks ||
             stats.gpu_tone_map_min_ticks >
                 stats.gpu_tone_map_max_ticks ||
             stats.cube_draw_calls != stats.frame_submissions ||
+            stats.water_draw_calls != stats.frame_submissions ||
+            stats.water_vertices !=
+                stats.water_draw_calls * 6 ||
             stats.skybox_draw_calls != stats.frame_submissions ||
             stats.material_sphere_draw_calls !=
                 stats.frame_submissions ||
@@ -2155,6 +2207,7 @@ void log_platform_event(const shark::platform::Event& event)
                 stats.terrain_draw_calls ||
             stats.pix_terrain_events +
                     stats.cube_draw_calls +
+                    stats.water_draw_calls +
                     stats.skybox_draw_calls +
                     stats.tone_map_draw_calls !=
                 stats.render_graph_pass_executions ||
@@ -2214,7 +2267,7 @@ void log_platform_event(const shark::platform::Event& event)
             stats.hdr_scene_color_srv_creations !=
                 stats.resize_count + 1 ||
             stats.texture_bindings !=
-                stats.frame_submissions * 4 ||
+                stats.frame_submissions * 5 ||
             stats.terrain_material_bindings !=
                 stats.frame_submissions ||
             stats.static_upload_submissions != 1 ||
@@ -2345,6 +2398,15 @@ void log_platform_event(const shark::platform::Event& event)
         summary.append(format_gpu_milliseconds(
             stats.gpu_textured_cube_max_ticks,
             stats.gpu_timestamp_frequency_hz));
+        summary.append(", gpu-Water-ms(avg/max)=");
+        summary.append(format_gpu_milliseconds(
+            stats.gpu_water_total_ticks,
+            stats.gpu_timestamp_frequency_hz,
+            stats.gpu_timing_samples));
+        summary.push_back('/');
+        summary.append(format_gpu_milliseconds(
+            stats.gpu_water_max_ticks,
+            stats.gpu_timestamp_frequency_hz));
         summary.append(", gpu-Skybox-ms(avg/max)=");
         summary.append(format_gpu_milliseconds(
             stats.gpu_skybox_total_ticks,
@@ -2438,8 +2500,10 @@ void log_platform_event(const shark::platform::Event& event)
         summary.push_back('/');
         summary.append(std::to_string(
             stats.terrain_shading_normal_draw_calls));
-        summary.append(", cube/sky-draws=");
+        summary.append(", cube/water/sky-draws=");
         summary.append(std::to_string(stats.cube_draw_calls));
+        summary.push_back('/');
+        summary.append(std::to_string(stats.water_draw_calls));
         summary.push_back('/');
         summary.append(std::to_string(stats.skybox_draw_calls));
         summary.append(", material-sphere/tone-map-draws=");

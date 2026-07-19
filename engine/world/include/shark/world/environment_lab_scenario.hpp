@@ -24,6 +24,10 @@ inline constexpr float
 inline constexpr double
     environment_lab_maximum_lod0_slope_degrees =
         18.6815981793;
+inline constexpr float
+    environment_lab_water_render_half_extent_x = 64.0F;
+inline constexpr float
+    environment_lab_water_render_half_extent_z = 56.0F;
 
 struct EnvironmentLabScenario final {
     terrain::HeightTile terrain;

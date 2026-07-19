@@ -14,11 +14,11 @@ struct HorizontalPoint final {
         const HorizontalPoint&) = default;
 };
 
-// Defines a complete analytic upper bound for the future water surface.
-// Points whose normalized squared radius is at most one are inside that
-// bounded support. The visible shoreline is where a water surface at the
-// published waterline passes the canonical terrain depth test, so bank
-// triangles may occlude a narrow part of the support near its edge.
+// Defines the analytic warped radial field evaluated over the containing
+// terrain tile. Points in that tile whose normalized squared radius is at
+// most one form the shaped basin. The polynomial warp can also have remote
+// mathematical solutions outside the tile; consumers that render the local
+// basin therefore provide an explicit clip domain.
 struct LakeBasinFootprint final {
     HorizontalPoint center;
     float semi_axis_x{};

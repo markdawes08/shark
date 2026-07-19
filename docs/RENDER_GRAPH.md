@@ -1,15 +1,14 @@
 # Minimal Render-Graph Contract
 
-- **Completed through:** `T-008`
-- **Renderer integration verified through:** `T-008` Debug and Release
-  `150/150` runs
+- **Completed through:** `W-001`
+- **Renderer integration verified through:** `W-001`
 - **Last updated:** July 19, 2026
 
 Shark's render graph is a small platform-independent planner with a Direct3D
-12 legacy-barrier executor. T-008 keeps the existing frame-local,
-whole-resource HDR composer introduced by S-003:
-`Terrain -> TexturedCube -> Skybox -> ToneMap`. It does not add graph-owned
-resources, subresource tracking, multi-queue scheduling, or a water pass.
+12 legacy-barrier executor. W-001 keeps the frame-local, whole-resource HDR
+composer while extending it to:
+`Terrain -> TexturedCube -> Skybox -> Water -> ToneMap`. It adds no
+graph-owned resource, subresource tracking, or multi-queue scheduling.
 
 ## Boundary and ownership
 
@@ -107,7 +106,7 @@ null native bindings fail even for an import whose transitions were elided.
 The renderer cross-checks compiled, executed, and recorded counts before
 submission.
 
-## T-008 frame graph
+## W-001 frame graph
 
 Every non-minimized frame imports:
 
@@ -133,22 +132,25 @@ Every non-minimized frame imports:
 material arrays, irradiance, prefiltered specular, and BRDF LUT.
 `TexturedCube` writes the same scene/depth attachments and reads checker plus
 cube buffers. `Skybox` writes scene color, reads depth and cube buffers, and
-reads radiance. `ToneMap` writes `BackBuffer` and reads `SceneColor`.
+reads radiance. `Water` then writes scene color with premultiplied transparency
+and reads depth plus the existing environment radiance; its procedural quad
+imports no geometry.
+`ToneMap` writes `BackBuffer` and reads `SceneColor`.
 
 Color/depth hazards produce the exact chain:
 
 ```text
-Terrain -> TexturedCube -> Skybox -> ToneMap
+Terrain -> TexturedCube -> Skybox -> Water -> ToneMap
 ```
 
 The compiled accounting contract is:
 
 ```text
 imports                15
-passes                  4
-dependencies            3
+passes                  5
+dependencies            5
 emitted transitions     6
-elided transitions      31
+elided transitions      34
 ```
 
 The six transitions are:
@@ -169,12 +171,15 @@ The graph pass callbacks own commands, not graph policy:
   visible chunk plus the material sphere; default-off `F4` diagnostics add one
   magenta-bounds draw per visible chunk and the query marker;
 - `TexturedCube` issues one checker-cube indexed draw;
-- `Skybox` binds read-only depth and issues one far-depth indexed draw; and
+- `Skybox` binds read-only depth and issues one far-depth indexed draw;
+- `Water` issues one premultiplied six-vertex procedural draw with read-only
+  depth; and
 - `ToneMap` issues one non-indexed fullscreen-triangle draw.
 
 If `V` of the 225 chunks are visible, normal `Terrain` contains `V + 1`
-indexed draws and the frame contains `V + 3` indexed draws plus one tone-map
-draw. `F4` adds `V + 1` diagnostic draws without changing the graph. The
+indexed draws and the frame contains `V + 3` indexed draws plus the water and
+tone-map non-indexed draws. `F4` adds `V + 1` diagnostic draws without
+changing the graph. The
 initial/resized and scripted-overview smoke poses expose 93 and 72 chunks;
 their `0/93` and `0/72` LOD0/coarse splits submit 80,352 and 62,208
 terrain-surface indices. The final smoke-only near pose exposes 61 chunks at
@@ -191,12 +196,12 @@ occur before graph execution and likewise add no graph declaration.
 render_graph_compilations       == frame_submissions
 render_graph_executions         == frame_submissions
 render_graph_resource_imports    == frame_submissions * 15
-render_graph_pass_executions     == frame_submissions * 4
-render_graph_dependencies        == frame_submissions * 3
+render_graph_pass_executions     == frame_submissions * 5
+render_graph_dependencies        == frame_submissions * 5
 render_graph_transition_barriers == frame_submissions * 6
-render_graph_elided_transitions  == frame_submissions * 31
+render_graph_elided_transitions  == frame_submissions * 34
 
-pix_terrain_events + cube_draw_calls + skybox_draw_calls
+pix_terrain_events + cube_draw_calls + skybox_draw_calls + water_draw_calls
     + tone_map_draw_calls == render_graph_pass_executions
 ```
 
@@ -206,19 +211,19 @@ graph-pass proxy.
 
 The production composer test locks all 15 IDs, each pass's exact access set,
 the dependency chain, transition order, final transitions, callback order,
-and `15/4/3/6/31` statistics. Generic unit tests retain declaration rejection,
+and `15/5/5/6/34` statistics. Generic unit tests retain declaration rejection,
 single-use/move-safe ownership, RAW/WAR/WAW ordering, read-only independence,
 cycle rejection, transition elision, callback validation, fail-fast execution,
 legacy state mapping, and invalid native binding coverage.
 
 PIX/timestamp policy remains renderer-owned. The outer `Frame` interval wraps
-the complete graph, while `Terrain`, `TexturedCube`, `Skybox`, and `ToneMap`
-callbacks own nested markers and timestamp pairs. Ten timestamps are allocated
-per frame context.
+the complete graph, while `Terrain`, `TexturedCube`, `Skybox`, `Water`, and
+`ToneMap` callbacks own nested markers and timestamp pairs. Twelve timestamps
+are allocated per frame context.
 
 ## Explicit non-goals
 
-T-008 adds no graph-owned/transient resource creation, placed-resource pool,
+W-001 adds no graph-owned/transient resource creation, placed-resource pool,
 lifetime/aliasing analysis, resource pooling, subresource tracking, UAV state,
 automatic RTV/DSV binding, render-pass load/store policy, pass
 culling/merging, parallel recording, queue preference, copy/compute queue,
@@ -237,14 +242,11 @@ declaration or callback structure. Its then-active four-phase schedule changed
 draw ranges within `Terrain`, not graph topology. Hardware Debug/Release, normal
 WARP, and focused GBV graph/Direct3D validation passed as historical evidence.
 
-`T-008` changes CPU terrain values, the active geometric-error constant, and
-scenario-owned spawn/basin metadata only. It adds no import, access set,
-dependency, transition, pass, PIX scope, timestamp pair, or water resource;
-`15/4/3/6/31` remains the exact active graph contract. The full Debug test run
-and Release test run each passed `150/150`, in 195.60 and 157.45 seconds
-respectively, including registered graphics gates with exact smoke accounting.
-Rain remains deferred under the San Andreas-class ceiling. The next increment
-is `W-001`: clip a static water plane to T-008's immutable analytic upper
-support at the published waterline; canonical-terrain depth testing determines
-the visible shoreline, and the increment must explicitly document and measure
-any graph extension.
+W-001 adds transparent `Water` between `Skybox` and `ToneMap`. Its access set
+writes `SceneColor` and reads depth plus the already-imported radiance cubemap.
+The procedural `SV_VertexID` quad therefore adds no import or GPU resource.
+Color and depth hazards produce five dependencies, while the six physical
+transitions stay unchanged and three additional accesses elide, yielding the
+exact active `15/5/5/6/34` contract. Rain remains deferred under the San
+Andreas-class ceiling. The next increment is `PHY-001` deterministic fixed-step
+motion and does not require another graph pass.

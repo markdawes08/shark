@@ -56,6 +56,11 @@ valid_no_op_callbacks()
             const TexturedCubePassResources&) {
             return core::Result<void>::success();
         },
+        .water = [](
+            const render_graph::PassContext&,
+            const WaterPassResources&) {
+            return core::Result<void>::success();
+        },
         .skybox = [](
             const render_graph::PassContext&,
             const SkyboxPassResources&) {
@@ -179,6 +184,26 @@ TEST_CASE(
             execution_order.emplace_back("TexturedCube");
             return core::Result<void>::success();
         },
+        .water = [&execution_order](
+            const PassContext& context,
+            const WaterPassResources& resources) {
+            const auto color = context.write(resources.scene_color);
+            const auto depth = context.read(resources.depth_buffer);
+            const auto radiance =
+                context.read(resources.environment_radiance);
+            if (context.pass_name() != "Water" ||
+                !color || color.value() !=
+                    frame_scene_color_external_id ||
+                !depth || depth.value() !=
+                    frame_depth_buffer_external_id ||
+                !radiance || radiance.value() !=
+                    frame_environment_radiance_external_id) {
+                return core::Result<void>::failure(
+                    callback_error("Water"));
+            }
+            execution_order.emplace_back("Water");
+            return core::Result<void>::success();
+        },
         .skybox = [&execution_order](
             const PassContext& context,
             const SkyboxPassResources& resources) {
@@ -229,25 +254,31 @@ TEST_CASE(
 
     REQUIRE((graph.stats() == CompiledGraphStats{
         .imported_resource_count = 15,
-        .pass_count = 4,
-        .dependency_count = 3,
+        .pass_count = 5,
+        .dependency_count = 5,
         .transition_count = 6,
-        .elided_transition_count = 31,
+        .elided_transition_count = 34,
     }));
 
     const auto passes = graph.passes();
-    REQUIRE(passes.size() == 4);
+    REQUIRE(passes.size() == 5);
     REQUIRE(passes[0].name == "Terrain");
     REQUIRE(passes[1].name == "TexturedCube");
     REQUIRE(passes[2].name == "Skybox");
-    REQUIRE(passes[3].name == "ToneMap");
+    REQUIRE(passes[3].name == "Water");
+    REQUIRE(passes[4].name == "ToneMap");
     REQUIRE(passes[0].dependencies.empty());
     REQUIRE((passes[1].dependencies ==
         std::vector<PassHandle>{passes[0].handle}));
     REQUIRE((passes[2].dependencies ==
         std::vector<PassHandle>{passes[1].handle}));
     REQUIRE((passes[3].dependencies ==
-        std::vector<PassHandle>{passes[2].handle}));
+        std::vector<PassHandle>{
+            passes[1].handle,
+            passes[2].handle,
+        }));
+    REQUIRE((passes[4].dependencies ==
+        std::vector<PassHandle>{passes[3].handle}));
 
     REQUIRE(passes[0].accesses.size() == 10);
     require_access(
@@ -355,14 +386,31 @@ TEST_CASE(
         ResourceState::pixel_shader_read,
         AccessMode::read);
 
-    REQUIRE(passes[3].accesses.size() == 2);
+    REQUIRE(passes[3].accesses.size() == 3);
     require_access(
         passes[3].accesses[0],
-        frame_back_buffer_external_id,
+        frame_scene_color_external_id,
         ResourceState::render_target,
         AccessMode::write);
     require_access(
         passes[3].accesses[1],
+        frame_depth_buffer_external_id,
+        ResourceState::depth_read,
+        AccessMode::read);
+    require_access(
+        passes[3].accesses[2],
+        frame_environment_radiance_external_id,
+        ResourceState::pixel_shader_read,
+        AccessMode::read);
+
+    REQUIRE(passes[4].accesses.size() == 2);
+    require_access(
+        passes[4].accesses[0],
+        frame_back_buffer_external_id,
+        ResourceState::render_target,
+        AccessMode::write);
+    require_access(
+        passes[4].accesses[1],
         frame_scene_color_external_id,
         ResourceState::pixel_shader_read,
         AccessMode::read);
@@ -382,15 +430,16 @@ TEST_CASE(
         ResourceState::depth_write,
         ResourceState::depth_read,
     }));
-    REQUIRE(passes[3].transitions.size() == 2);
-    REQUIRE((passes[3].transitions[0] == ResourceTransition{
-        passes[3].accesses[0].resource,
+    REQUIRE(passes[3].transitions.empty());
+    REQUIRE(passes[4].transitions.size() == 2);
+    REQUIRE((passes[4].transitions[0] == ResourceTransition{
+        passes[4].accesses[0].resource,
         frame_back_buffer_external_id,
         ResourceState::present,
         ResourceState::render_target,
     }));
-    REQUIRE((passes[3].transitions[1] == ResourceTransition{
-        passes[3].accesses[1].resource,
+    REQUIRE((passes[4].transitions[1] == ResourceTransition{
+        passes[4].accesses[1].resource,
         frame_scene_color_external_id,
         ResourceState::render_target,
         ResourceState::pixel_shader_read,
@@ -399,7 +448,7 @@ TEST_CASE(
     const auto final_transitions = graph.final_transitions();
     REQUIRE(final_transitions.size() == 2);
     REQUIRE((final_transitions[0] == ResourceTransition{
-        passes[3].accesses[0].resource,
+        passes[4].accesses[0].resource,
         frame_back_buffer_external_id,
         ResourceState::render_target,
         ResourceState::present,
@@ -415,20 +464,21 @@ TEST_CASE(
     const auto execution_result = graph.execute(recorder);
     REQUIRE(execution_result);
     REQUIRE((execution_result.value() == ExecutionStats{
-        .passes_executed = 4,
+        .passes_executed = 5,
         .transitions_recorded = 6,
     }));
     REQUIRE((execution_order == std::vector<std::string>{
         "Terrain",
         "TexturedCube",
         "Skybox",
+        "Water",
         "ToneMap",
     }));
     REQUIRE(recorder.transitions.size() == 6);
     REQUIRE(recorder.transitions[0] == passes[0].transitions[0]);
     REQUIRE(recorder.transitions[1] == passes[2].transitions[0]);
-    REQUIRE(recorder.transitions[2] == passes[3].transitions[0]);
-    REQUIRE(recorder.transitions[3] == passes[3].transitions[1]);
+    REQUIRE(recorder.transitions[2] == passes[4].transitions[0]);
+    REQUIRE(recorder.transitions[3] == passes[4].transitions[1]);
     REQUIRE(recorder.transitions[4] == final_transitions[0]);
     REQUIRE(recorder.transitions[5] == final_transitions[1]);
 }
@@ -462,6 +512,18 @@ TEST_CASE(
     REQUIRE(cube_result.error().code() ==
         core::ErrorCode::invalid_argument);
     REQUIRE(cube_result.error().message().find("TexturedCube") !=
+        std::string_view::npos);
+
+    auto missing_water = valid_no_op_callbacks();
+    missing_water.water = {};
+    const auto water_result =
+        compose_frame_pipeline(std::move(missing_water));
+    REQUIRE_FALSE(water_result);
+    REQUIRE(water_result.error().category() ==
+        core::ErrorCategory::graphics);
+    REQUIRE(water_result.error().code() ==
+        core::ErrorCode::invalid_argument);
+    REQUIRE(water_result.error().message().find("Water") !=
         std::string_view::npos);
 
     auto missing_skybox = valid_no_op_callbacks();

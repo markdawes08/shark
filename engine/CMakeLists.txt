@@ -38,6 +38,7 @@ add_library(SharkEngine STATIC
     renderer/src/d3d12/renderer.cpp
     renderer/src/d3d12/skybox_scene_data.hpp
     renderer/src/d3d12/terrain_scene_data.hpp
+    renderer/src/d3d12/water_scene_data.hpp
     renderer/src/frame_pipeline.cpp
     renderer/src/frame_pipeline.hpp
     renderer/src/terrain_frustum_culling.cpp

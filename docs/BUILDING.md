@@ -1,6 +1,6 @@
 # Building Shark
 
-- **Completed through:** `T-008`
+- **Completed through:** `W-001`
 - **Last verified:** July 19, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
@@ -116,10 +116,10 @@ hardware device, creates the validated canonical `HeightTileSurface`, and
 continuously draws its deterministic terrain with bounded distance-selected
 LOD, material sphere, procedural-checker cube, and HDR environment through
 named
-`Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` graph passes. The first
-three render into a resize-owned `R16G16B16A16_FLOAT` scene target; `ToneMap`
-writes the final back buffer. The triple frame-resource lifecycle reports
-separate PIX/timestamp intervals for all four passes. REN-001 routes this through the
+`Terrain`, `TexturedCube`, `Skybox`, `Water`, and `ToneMap` graph passes. The
+first four render into a resize-owned `R16G16B16A16_FLOAT` scene target;
+`ToneMap` writes the final back buffer. The triple frame-resource lifecycle
+reports separate PIX/timestamp intervals for all five passes. REN-001 routes this through the
 public `shark::renderer::Renderer`; the sandbox creates the D3D12 `Device` and
 passes it to `Renderer::create` only at the composition root. Press `F1` to
 toggle terrain fill between solid and wireframe. Press `F2` to cycle shaded,
@@ -143,7 +143,7 @@ neither required nor accepted. The compiler's sidecar `dxcompiler.dll` and
 `dxil.dll` remain beside that host tool; Shark does not link them or copy them
 beside `SharkSandbox.exe`.
 
-The build compiles the cube, skybox, terrain, material-sphere, and tone-map
+The build compiles the cube, skybox, terrain, water, material-sphere, and tone-map
 `VSMain` entry points as `vs_6_0` and their `PSMain` entry points as `ps_6_0`,
 using HLSL 2021, row-major layout, strict mode, and warnings as errors. DXIL,
 generated C++ byte arrays, PDBs, and dependency files are
@@ -164,7 +164,7 @@ missing tool or broken build target.
 Run only the normal shader target and focused build checks with:
 
 ```powershell
-& $cmake --build --preset windows-debug --target SharkCubeShaders SharkSkyboxShaders SharkTerrainShaders SharkMaterialSphereShaders SharkToneMapShaders
+& $cmake --build --preset windows-debug --target SharkCubeShaders SharkSkyboxShaders SharkTerrainShaders SharkWaterShaders SharkMaterialSphereShaders SharkToneMapShaders
 & $ctest --preset windows-debug -R '^build\.shader_'
 ```
 
@@ -172,10 +172,13 @@ For the visual acceptance check, run `SharkSandbox` without arguments. A solid
 height tile must show tiled ground and rock materials blended by slope and
 height, mapped surface detail, and direct-sun plus environment response. The
 glossy neutral material sphere must reflect the same environment used by the
-terrain. The interactive camera now starts at scenario-owned eye
-`(-128,3.34375,-20)` with pitch `-0.1`, overlooking a dry, smoothly irregular
-approximately `112x96`-meter lake indentation. No water plane, tint,
-reflection, animated surface, water resource, or water pass may exist.
+terrain. The interactive camera starts at scenario-owned eye
+`(-128,3.34375,-20)` with pitch `-0.1`, overlooking a smoothly irregular
+approximately `112x96`-meter lake. The surface must stay bounded to the basin,
+meet the terrain naturally at its depth-tested shoreline, transmit and tint
+the underlying terrain, reflect the active environment more strongly at
+grazing angles, and show subtle animated normal waves and sun glint. It
+remains a visual surface with no fluid behavior.
 Diagnostics start off; press `F4` and confirm the magenta depth-tested chunk
 AABBs match the currently logged visible count and that the cyan query pin
 appears. Surface chunks and matching bounds must disappear together when the
@@ -256,15 +259,15 @@ ownership, and runtime rules.
 
 ## Presentation checks
 
-Run the fixed terrain/cube/sky presentation contract on hardware and packaged
-WARP with:
+Run the fixed terrain/cube/sky/water presentation contract on hardware and
+packaged WARP with:
 
 ```powershell
 & .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe --present-smoke
 & .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe --present-smoke --warp
 ```
 
-The hardware command presents exactly 1,000 successful four-pass frames. The
+The hardware command presents exactly 1,000 successful five-pass frames. The
 normal packaged-WARP command presents 600; the focused packaged-WARP
 GPU-validation command below presents 120:
 
@@ -325,9 +328,10 @@ at or below 12 degrees, and the maximum slope is 11.251308698 degrees. T-008
 keeps that generator as a base oracle and applies a bounded Q8 basin
 post-process. The active composite checksum is `0x4890DE3E1AA063A9`, maximum
 slope is `18.681598` degrees, and maximum adjacent X/Z steps are
-`1.16015625/1.33203125` meters. Its analytic upper-support footprint is centered at
-`(-128,-128)`, spans approximately `112x96` meters, and publishes a `-4`-meter
-future waterline plus dry spawn ground `(-128,1.34375,-20)`.
+`1.16015625/1.33203125` meters. Its validated spawn-side support component is centered at
+`(-128,-128)`, spans approximately `112x96` meters, and publishes the
+`-4`-meter waterline consumed by W-001 plus dry spawn ground
+`(-128,1.34375,-20)`.
 
 The meaningful terrain surface payload is 1,393,944 vertex bytes plus 1,080,000
 index bytes, or 2,473,944 bytes. Bounds and marker diagnostics add 54,156
@@ -343,11 +347,12 @@ promoted as an acceptance threshold; the active suite and presentation-gate
 timings are recorded below.
 
 Every submitted frame records one outer `Frame` event with nested `Terrain`,
-`TexturedCube`, `Skybox`, and `ToneMap` events. Its exact graph has 15 imports,
-four passes, three dependencies, six recorded transitions, and 31 elided
+`TexturedCube`, `Skybox`, `Water`, and `ToneMap` events. Its exact graph has
+15 imports, five passes, five dependencies, six recorded transitions, and 34 elided
 transitions. With `V0` visible LOD0 chunks, `Vc` visible coarse chunks, and
 `V=V0+Vc`, it issues `V0` 1,536-index terrain surfaces, `Vc` 864-index terrain
-surfaces, the material sphere, 36-index textured cube, and 36-index skybox.
+surfaces, the material sphere, 36-index textured cube, one non-indexed
+36-index skybox, and one non-indexed six-vertex water quad.
 `F4` additionally enables `V` matching 24-index chunk bounds and the six-index
 query marker; those diagnostics are off by default. One non-indexed
 fullscreen-triangle tone-map draw follows. The initial and resized smoke poses
@@ -355,16 +360,18 @@ show 93 chunks at `V0/Vc=0/93`; the turned overview shows 72 at `0/72` from
 three quarters through seven eighths; and the final eighth moves only the smoke
 camera to `(16, -1, 0)` with the same yaw/pitch, exposing 61 chunks at `1/60`.
 Those smoke-only poses do not replace T-008's scenario-owned interactive
-spawn. The frame retains four
+spawn. The frame retains five
 texture-table bindings and one reversed-Z depth clear. Terrain owns the clear,
-cube preserves it, sky uses the read-only DSV, and `ToneMap` reads the HDR
-scene target while writing the swap-chain back buffer.
+cube preserves it, sky first uses the read-only DSV, water then composites
+transparently with the same view, and `ToneMap` reads the HDR scene target while
+writing the swap-chain back buffer.
 
-The direct queue reports its timestamp frequency once. One 30-entry query heap
-and one 240-byte persistently mapped readback buffer are split into three
-ten-query frame-context slices: frame begin, terrain begin/end, cube
-begin/end, sky begin/end, tone-map begin/end, and frame end. The frame interval
-includes the diagnostic probe copy, six graph barriers, and all four passes but
+The direct queue reports its timestamp frequency once. One 36-entry query heap
+and one 288-byte persistently mapped readback buffer are split into three
+12-query frame-context slices: frame begin, terrain begin/end, cube
+begin/end, sky begin/end, water begin/end, tone-map begin/end, and frame end.
+The frame interval
+includes the diagnostic probe copy, six graph barriers, and all five passes but
 excludes its own query resolve. Each pass interval
 covers only its callback commands and excludes graph barriers. Results are read
 only after the owning context fence completes, using an existing reuse wait or
@@ -372,16 +379,16 @@ resize/shutdown drain; timing adds no normal-frame drain.
 
 The summary reports graph pass/barrier counts, PIX event counts, query
 high-water/capacity, timing sample count, average/maximum frame,
-`Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` milliseconds, terrain
+`Terrain`, `TexturedCube`, `Skybox`, `Water`, and `ToneMap` milliseconds, terrain
 solid/wireframe/bounds/query-marker counts, chunk last/min/max/total,
 LOD0/coarse last/draw/index counts, measured maximum geometric error,
 tested/visible/culled counts, all draw/index counts,
 scene/sky matrix changes, `depth_clear_count`, depth-resource/read-only-view
 creation counts, other resource creation counts,
 context reuse, blocking reuse waits, queue drains, and upload/descriptor
-high-water marks. The fixed diagnostics invariants require ten queries and one
+high-water marks. The fixed diagnostics invariants require 12 queries and one
 resolve per frame, one completed timing sample per retired submission, and a
-ten-query per-context high-water. Duration magnitude is deliberately not a
+12-query per-context high-water. Duration magnitude is deliberately not a
 performance gate because adapter speed and timestamp resolution vary.
 
 Historical T-006 presentation evidence is:
@@ -534,13 +541,23 @@ while retaining T-006's topology, resource budgets, canonical queries, and
 global `R16_UINT` indices. Its historical construction timings and graphics
 evidence are recorded above.
 
-`T-008` composes that unchanged base with an analytic, closed dry basin and
-scenario-owned spawn/upper-support/waterline metadata. It retains the approved
-San Andreas-class feature ceiling, and rain remains deferred. The next
-increment is `W-001`: clip a static water plane to the immutable analytic
-`rho <= 1` upper support at the published waterline. The visible shoreline
-comes from canonical-terrain depth testing; terrain remains unchanged and no
-fluid-simulation claim is made.
+W-001 consumes that scenario-owned waterline in a dedicated transparent pass
+after `Skybox`. The vertex shader expands a six-vertex quad from `SV_VertexID`
+over the local domain centered at `(-128,-4,-128)` with X/Z half-extents
+`64/56`. The pixel shader intersects that domain with warped `rho <= 1`, thereby
+selecting the intended spawn-side component; canonical reversed-Z depth testing
+forms the visible shoreline. No water buffer, texture, descriptor, or static
+upload was added, so the four geometry buffers and ten persistent descriptors
+remain fixed.
+
+For renderer increments, iterate with affected targets and focused tests,
+then run the full unit suite once after the implementation stabilizes. Use
+Debug hardware/WARP/GBV presentation gates plus a Release hardware smoke for
+ordinary pass/shader work; reserve the full Debug/Release graphics matrix for
+RHI, synchronization, lifetime, or milestone changes.
+
+The next increment is `PHY-001`: add deterministic fixed-step ballistic
+motion without collision or water coupling. Rain remains deferred.
 
 ## Visual Studio
 

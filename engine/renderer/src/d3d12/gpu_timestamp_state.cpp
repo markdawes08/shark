@@ -35,7 +35,7 @@ core::Result<GpuTimingSample> GpuTimingAccumulator::consume(
     if (raw_timestamps.size() != gpu_timestamp_queries_per_frame) {
         return core::Result<GpuTimingSample>::failure(timestamp_error(
             core::ErrorCode::invalid_argument,
-            "A GPU timing sample requires exactly ten timestamps"));
+            "A GPU timing sample requires exactly twelve timestamps"));
     }
 
     const auto frame_begin =
@@ -52,6 +52,10 @@ core::Result<GpuTimingSample> GpuTimingAccumulator::consume(
         raw_timestamps[index_of(GpuTimestampQuery::skybox_begin)];
     const auto skybox_end =
         raw_timestamps[index_of(GpuTimestampQuery::skybox_end)];
+    const auto water_begin =
+        raw_timestamps[index_of(GpuTimestampQuery::water_begin)];
+    const auto water_end =
+        raw_timestamps[index_of(GpuTimestampQuery::water_end)];
     const auto tone_map_begin =
         raw_timestamps[index_of(GpuTimestampQuery::tone_map_begin)];
     const auto tone_map_end =
@@ -64,19 +68,23 @@ core::Result<GpuTimingSample> GpuTimingAccumulator::consume(
         textured_cube_begin > textured_cube_end ||
         textured_cube_end > skybox_begin ||
         skybox_begin > skybox_end ||
-        skybox_end > tone_map_begin ||
+        skybox_end > water_begin ||
+        water_begin > water_end ||
+        water_end > tone_map_begin ||
         tone_map_begin > tone_map_end ||
         tone_map_end > frame_end) {
         return core::Result<GpuTimingSample>::failure(timestamp_error(
             core::ErrorCode::invalid_state,
             "GPU timestamps must contain ordered terrain, textured-cube, "
-            "skybox, and tone-map intervals inside the frame interval"));
+            "skybox, water, and tone-map intervals inside the frame "
+            "interval"));
     }
 
     const GpuTimingSample sample{
         frame_end - frame_begin,
         terrain_end - terrain_begin,
         textured_cube_end - textured_cube_begin,
+        water_end - water_begin,
         skybox_end - skybox_begin,
         tone_map_end - tone_map_begin,
     };
@@ -86,6 +94,7 @@ core::Result<GpuTimingSample> GpuTimingAccumulator::consume(
         sample.terrain_ticks > maximum - terrain_total_ticks_ ||
         sample.textured_cube_ticks >
             maximum - textured_cube_total_ticks_ ||
+        sample.water_ticks > maximum - water_total_ticks_ ||
         sample.skybox_ticks > maximum - skybox_total_ticks_ ||
         sample.tone_map_ticks > maximum - tone_map_total_ticks_) {
         return core::Result<GpuTimingSample>::failure(timestamp_error(
@@ -97,6 +106,7 @@ core::Result<GpuTimingSample> GpuTimingAccumulator::consume(
         frame_min_ticks_ = sample.frame_ticks;
         terrain_min_ticks_ = sample.terrain_ticks;
         textured_cube_min_ticks_ = sample.textured_cube_ticks;
+        water_min_ticks_ = sample.water_ticks;
         skybox_min_ticks_ = sample.skybox_ticks;
         tone_map_min_ticks_ = sample.tone_map_ticks;
     } else {
@@ -109,6 +119,9 @@ core::Result<GpuTimingSample> GpuTimingAccumulator::consume(
         textured_cube_min_ticks_ = std::min(
             textured_cube_min_ticks_,
             sample.textured_cube_ticks);
+        water_min_ticks_ = std::min(
+            water_min_ticks_,
+            sample.water_ticks);
         skybox_min_ticks_ = std::min(
             skybox_min_ticks_,
             sample.skybox_ticks);
@@ -125,6 +138,9 @@ core::Result<GpuTimingSample> GpuTimingAccumulator::consume(
     textured_cube_max_ticks_ = std::max(
         textured_cube_max_ticks_,
         sample.textured_cube_ticks);
+    water_max_ticks_ = std::max(
+        water_max_ticks_,
+        sample.water_ticks);
     skybox_max_ticks_ = std::max(
         skybox_max_ticks_,
         sample.skybox_ticks);
@@ -134,11 +150,13 @@ core::Result<GpuTimingSample> GpuTimingAccumulator::consume(
     frame_last_ticks_ = sample.frame_ticks;
     terrain_last_ticks_ = sample.terrain_ticks;
     textured_cube_last_ticks_ = sample.textured_cube_ticks;
+    water_last_ticks_ = sample.water_ticks;
     skybox_last_ticks_ = sample.skybox_ticks;
     tone_map_last_ticks_ = sample.tone_map_ticks;
     frame_total_ticks_ += sample.frame_ticks;
     terrain_total_ticks_ += sample.terrain_ticks;
     textured_cube_total_ticks_ += sample.textured_cube_ticks;
+    water_total_ticks_ += sample.water_ticks;
     skybox_total_ticks_ += sample.skybox_ticks;
     tone_map_total_ticks_ += sample.tone_map_ticks;
     ++sample_count_;
@@ -212,6 +230,26 @@ std::uint64_t
 GpuTimingAccumulator::textured_cube_last_ticks() const noexcept
 {
     return textured_cube_last_ticks_;
+}
+
+std::uint64_t GpuTimingAccumulator::water_total_ticks() const noexcept
+{
+    return water_total_ticks_;
+}
+
+std::uint64_t GpuTimingAccumulator::water_min_ticks() const noexcept
+{
+    return water_min_ticks_;
+}
+
+std::uint64_t GpuTimingAccumulator::water_max_ticks() const noexcept
+{
+    return water_max_ticks_;
+}
+
+std::uint64_t GpuTimingAccumulator::water_last_ticks() const noexcept
+{
+    return water_last_ticks_;
 }
 
 std::uint64_t GpuTimingAccumulator::skybox_total_ticks() const noexcept

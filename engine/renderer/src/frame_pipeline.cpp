@@ -40,6 +40,11 @@ core::Result<render_graph::CompiledGraph> compose_frame_pipeline(
             pipeline_error(
                 "Renderer frame pipeline requires a TexturedCube callback"));
     }
+    if (!callbacks.water) {
+        return core::Result<render_graph::CompiledGraph>::failure(
+            pipeline_error(
+                "Renderer frame pipeline requires a Water callback"));
+    }
     if (!callbacks.skybox) {
         return core::Result<render_graph::CompiledGraph>::failure(
             pipeline_error(
@@ -420,6 +425,45 @@ core::Result<render_graph::CompiledGraph> compose_frame_pipeline(
         render_graph::ResourceState::pixel_shader_read);
     if (!skybox_radiance_result) {
         return pipeline_failure(std::move(skybox_radiance_result));
+    }
+
+    const WaterPassResources water_resources{
+        scene_color,
+        depth_buffer,
+        environment_radiance,
+    };
+    auto water_pass_result = builder.add_pass(
+        "Water",
+        [callback = std::move(callbacks.water),
+         water_resources](
+            const render_graph::PassContext& context) {
+            return callback(context, water_resources);
+        });
+    if (!water_pass_result) {
+        return pipeline_failure(std::move(water_pass_result));
+    }
+    const auto water_pass = water_pass_result.value();
+
+    auto water_color_result = builder.write(
+        water_pass,
+        scene_color,
+        render_graph::ResourceState::render_target);
+    if (!water_color_result) {
+        return pipeline_failure(std::move(water_color_result));
+    }
+    auto water_depth_result = builder.read(
+        water_pass,
+        depth_buffer,
+        render_graph::ResourceState::depth_read);
+    if (!water_depth_result) {
+        return pipeline_failure(std::move(water_depth_result));
+    }
+    auto water_radiance_result = builder.read(
+        water_pass,
+        environment_radiance,
+        render_graph::ResourceState::pixel_shader_read);
+    if (!water_radiance_result) {
+        return pipeline_failure(std::move(water_radiance_result));
     }
 
     const ToneMapPassResources tone_map_resources{

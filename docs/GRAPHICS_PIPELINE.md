@@ -1,13 +1,12 @@
 # HLSL Graphics Pipeline Contract
 
-- **Completed through:** `T-008`
+- **Completed through:** `W-001`
 - **Last verified:** July 19, 2026
 
 Shark compiles all production HLSL at build time with a pinned retail DXC and
-creates immutable Direct3D 12 pipeline state during renderer startup. T-008
-retains T-006's cube, terrain, sky, material-sphere, and tone-map programs while
-composing only the CPU-generated heights and scenario metadata in the bounded
-225-chunk fixture. The
+creates immutable Direct3D 12 pipeline state during renderer startup. W-001
+adds one bounded visual-water program and immutable PSO to the existing cube,
+terrain, sky, material-sphere, and tone-map programs. The
 pipeline still includes S-003's shared image-based-lighting helpers,
 material-sphere proof, linear-HDR scene target, and final tone-map program.
 This remains a focused scene contract, not a general shader asset,
@@ -27,6 +26,7 @@ The tracked production sources are:
 shaders/cube/cube.hlsl
 shaders/sky/skybox.hlsl
 shaders/terrain/terrain.hlsl
+shaders/water/water.hlsl
 shaders/material_sphere/material_sphere.hlsl
 shaders/tone_map/tone_map.hlsl
 shaders/shared/camera_constants.hlsli
@@ -55,7 +55,7 @@ generated C++ byte-array header, a PDB, and a depfile under:
 out/build/windows-vs2026/generated/shaders/<Config>/
 ```
 
-The executable embeds all ten generated stage arrays and opens no runtime DXIL
+The executable embeds all twelve generated stage arrays and opens no runtime DXIL
 file. Depfiles track the primary HLSL and shared includes. Permanent build
 checks prove a shared-include edit rebuilds its consumers, malformed HLSL
 fails, and a warning fails under `-WX`.
@@ -63,7 +63,7 @@ fails, and a warning fails under `-WX`.
 Run the normal shader targets and build checks with:
 
 ```powershell
-& $cmake --build --preset windows-debug --target SharkCubeShaders SharkSkyboxShaders SharkTerrainShaders SharkMaterialSphereShaders SharkToneMapShaders
+& $cmake --build --preset windows-debug --target SharkCubeShaders SharkSkyboxShaders SharkTerrainShaders SharkWaterShaders SharkMaterialSphereShaders SharkToneMapShaders
 & $ctest --preset windows-debug -R '^build\.shader_'
 ```
 
@@ -71,7 +71,7 @@ Run the normal shader targets and build checks with:
 
 `shark::renderer::RendererConfig` accepts COM-free `ShaderBytecodeView`
 records, each containing a pointer and byte count. It carries the cube, sky,
-terrain, material-sphere, and tone-map vertex/pixel arrays. The private D3D12
+terrain, water, material-sphere, and tone-map vertex/pixel arrays. The private D3D12
 backend checks the DXIL container signature and borrows each array only during
 synchronous root-signature/PSO creation. `Renderer` retains no caller pointer.
 
@@ -159,12 +159,14 @@ descriptor allocator or bindless convention.
 - The terrain signature contains the frame CBV, material/environment root
   constants, one six-SRV table spanning slots 2-7, and an anisotropic-wrap
   static sampler. The material sphere reuses it.
+- The water signature contains the frame CBV, 20 surface root constants, one
+  radiance SRV table, and a linear-clamp static sampler.
 - The sky signature contains the frame CBV, environment-mode constants, one
   radiance SRV table, and a linear-clamp static sampler.
 - The tone-map signature contains one scene-color SRV table.
 
-Per submitted frame those focused tables produce exactly four texture-table
-binds: terrain/IBL, checker, sky radiance, and HDR scene color.
+Per submitted frame those focused tables produce exactly five texture-table
+binds: terrain/IBL, checker, sky radiance, water radiance, and HDR scene color.
 
 ## Pipeline-state contract
 
@@ -173,14 +175,30 @@ Renderer startup creates:
 - one textured-cube PSO;
 - one skybox PSO;
 - terrain solid, terrain wireframe, and terrain diagnostic-line PSOs;
-- one material-sphere PSO; and
+- one material-sphere PSO;
+- one visual-water PSO; and
 - one tone-map PSO.
 
 Cube, terrain, material-sphere, and sky color output is
 `DXGI_FORMAT_R16G16B16A16_FLOAT`. Scene geometry uses the established
 `D32_FLOAT` reversed-Z depth target and `GREATER_EQUAL`. Terrain and cube write
-depth; bounds/query lines and sky do not. Sky binds the read-only DSV after the
-graph transitions depth to `DEPTH_READ`.
+depth; bounds/query lines, sky, and water do not. Sky first binds the read-only
+DSV after the graph transitions depth to `DEPTH_READ`; water reuses that state
+after sky and composites with premultiplied transparency.
+
+The water shader has no input layout or geometry resource. `VSMain` expands a
+flat six-vertex quad from `SV_VertexID` over the local domain centered at
+`(-128,-4,-128)` with X/Z half-extents `64/56`. `PSMain` intersects that
+domain with warped `rho <= 1` using semi-axes `56/48`, warp offsets `1152/1568`,
+and divisors `512/1024`; this selects the intended spawn-side component without
+assuming the inequality is one globally bounded lobe. It emits premultiplied
+linear-HDR color using
+straight-through terrain transmission, depth-proxy absorption/tint, Schlick
+Fresnel, environment reflection/refraction approximations, two animated
+normal-only wave bands, and analytic sun glint. The PSO uses
+`ONE/INV_SRC_ALPHA` blending, read-only reversed-Z depth, and no depth writes.
+Before upload, visual time wraps at the waves' shared `40*pi`-second phase
+period, preventing long-session float overflow and a discontinuity at wrap.
 
 The tone-map PSO uses no vertex buffer, input layout, or depth target. It writes
 one opaque `DXGI_FORMAT_R8G8B8A8_UNORM` render target from
@@ -205,15 +223,16 @@ Each non-minimized frame then:
 1. extracts the current Direct3D frustum, selects visible terrain chunks, and
    chooses each visible chunk's LOD from camera-to-AABB distance;
 2. stages one 256-byte constants/probe record;
-3. composes the exact 15-import/four-pass HDR frame graph;
+3. composes the exact 15-import/five-pass HDR frame graph;
 4. executes `Terrain`, including one selected LOD0/coarse surface per visible
    chunk plus the sphere; default-off `F4` diagnostics additionally draw each
    visible chunk's magenta bounds and the query marker;
 5. executes `TexturedCube`;
 6. executes the far-depth `Skybox`;
-7. executes `ToneMap` to the current back buffer;
-8. restores declared graph final states; and
-9. submits, signals the context fence, and presents without an unconditional
+7. composites the local-domain `Water` pass;
+8. executes `ToneMap` to the current back buffer;
+9. restores declared graph final states; and
+10. submits, signals the context fence, and presents without an unconditional
    post-frame drain.
 
 For `V0` visible LOD0 chunks, `Vc` visible coarse chunks, and `V=V0+Vc`, the
@@ -226,6 +245,7 @@ material sphere          DrawIndexedInstanced(1,584, ...)
 visible chunk AABBs      F4 ? V * DrawIndexedInstanced(24, ...) : 0
 terrain query marker     F4 ? DrawIndexedInstanced(6, ...) : 0
 textured cube            DrawIndexedInstanced(36, ...)
+visual water             DrawInstanced(6, 1, 0, 0)
 skybox                   DrawIndexedInstanced(36, ...)
 tone map                 DrawInstanced(3, 1, 0, 0)
 ```
@@ -239,10 +259,10 @@ in those terrain buffers, so the normal `V + 3` indexed draws and optional
 `F4` diagnostic draws still use four geometry buffers. Initial/resized smoke
 poses select `V0/Vc=0/93`; the turned overview selects `0/72`; and the final
 smoke-only `(16, -1, 0)` near pose selects `1/60` with unchanged yaw/pitch.
-Both packed terrain index ranges are therefore live. Exact per-frame graph accounting remains
-15 imports, four passes, three dependencies, six transitions, and 31 elisions.
-Diagnostics retain ten timestamps per context: frame begin/end plus begin/end
-for each pass.
+Both packed terrain index ranges are therefore live. Exact per-frame graph
+accounting is 15 imports, five passes, five dependencies, six transitions,
+and 34 elisions. Diagnostics reserve 12 timestamps per context: frame
+begin/end plus begin/end for each pass.
 
 ## Acceptance and non-goals
 
@@ -260,12 +280,12 @@ alone uses
 aspect changes. The smoke validates resources, commands, counts, and lifetime;
 it does not compare pixels.
 
-Manual acceptance requires coherent environment response on terrain and the
-glossy sphere, a translation-invariant HDR sky, clean `F3` switching to the
-procedural fallback, stable reversed-Z occlusion, and a finite tone-mapped
-back-buffer result through resize/minimize/restore. T-008's dry basin must use
-the existing terrain material pipeline, and no water shader, PSO, draw, or pixel
-may exist.
+Manual acceptance requires coherent environment response on terrain, water,
+and the glossy sphere; a translation-invariant HDR sky; clean `F3` switching
+to the procedural fallback; stable reversed-Z shoreline occlusion; subtle
+normal-wave motion; and a finite tone-mapped result through
+resize/minimize/restore. The lake must stay inside the local quad-domain and
+`rho <= 1` intersection while canonical terrain remains unchanged.
 
 S-003 adds no shader reflection, artifact database, root-signature versioning,
 PSO hash/cache, runtime compilation, hot reload, general material graph,
@@ -281,14 +301,10 @@ changed none of those pipeline objects. Hardware Debug/Release, normal WARP,
 and focused GBV passed its four-phase graphics-validation contract; that
 evidence remains historical.
 
-`T-008` adds no HLSL source, compiled shader, root-signature parameter, PSO,
-input element, texture binding, water draw, or water pixel. The composite
-terrain retains the exact `0/93 -> 0/72 -> 1/60` smoke schedule. The full Debug
-build and all `150/150` tests passed in 195.60 seconds; the Release build and
-all `150/150` passed in 157.45 seconds. Registered shader and graphics gates
-retained exact smoke accounting in both active configurations. Rain remains
-deferred and the San Andreas-class ceiling is unchanged. The next increment is
-`W-001`: clip a static water plane to T-008's immutable analytic upper support
-at the published waterline; canonical-terrain depth testing determines the
-visible shoreline, terrain remains unchanged, and no fluid simulation is
-claimed.
+W-001 adds the water HLSL pair, root signature, premultiplied-alpha PSO, one
+environment-radiance binding, six-vertex procedural draw, named PIX scope,
+and timestamp pair. It deliberately adds no input element, geometry buffer,
+water texture, persistent descriptor, or simulated state. Terrain retains the
+exact `0/93 -> 0/72 -> 1/60` smoke schedule. Rain remains deferred and the San
+Andreas-class ceiling is unchanged. The next increment is `PHY-001`
+deterministic fixed-step motion.

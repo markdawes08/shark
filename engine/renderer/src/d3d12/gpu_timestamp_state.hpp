@@ -8,7 +8,7 @@
 
 namespace shark::renderer::d3d12::detail {
 
-inline constexpr std::size_t gpu_timestamp_queries_per_frame = 10;
+inline constexpr std::size_t gpu_timestamp_queries_per_frame = 12;
 inline constexpr std::size_t gpu_timestamp_result_bytes_per_frame =
     gpu_timestamp_queries_per_frame * sizeof(std::uint64_t);
 
@@ -20,6 +20,8 @@ enum class GpuTimestampQuery : std::size_t {
     textured_cube_end,
     skybox_begin,
     skybox_end,
+    water_begin,
+    water_end,
     tone_map_begin,
     tone_map_end,
     frame_end,
@@ -48,6 +50,7 @@ struct GpuTimingSample final {
     std::uint64_t frame_ticks{};
     std::uint64_t terrain_ticks{};
     std::uint64_t textured_cube_ticks{};
+    std::uint64_t water_ticks{};
     std::uint64_t skybox_ticks{};
     std::uint64_t tone_map_ticks{};
 };
@@ -70,6 +73,10 @@ public:
     [[nodiscard]] std::uint64_t textured_cube_min_ticks() const noexcept;
     [[nodiscard]] std::uint64_t textured_cube_max_ticks() const noexcept;
     [[nodiscard]] std::uint64_t textured_cube_last_ticks() const noexcept;
+    [[nodiscard]] std::uint64_t water_total_ticks() const noexcept;
+    [[nodiscard]] std::uint64_t water_min_ticks() const noexcept;
+    [[nodiscard]] std::uint64_t water_max_ticks() const noexcept;
+    [[nodiscard]] std::uint64_t water_last_ticks() const noexcept;
     [[nodiscard]] std::uint64_t skybox_total_ticks() const noexcept;
     [[nodiscard]] std::uint64_t skybox_min_ticks() const noexcept;
     [[nodiscard]] std::uint64_t skybox_max_ticks() const noexcept;
@@ -93,6 +100,10 @@ private:
     std::uint64_t textured_cube_min_ticks_{};
     std::uint64_t textured_cube_max_ticks_{};
     std::uint64_t textured_cube_last_ticks_{};
+    std::uint64_t water_total_ticks_{};
+    std::uint64_t water_min_ticks_{};
+    std::uint64_t water_max_ticks_{};
+    std::uint64_t water_last_ticks_{};
     std::uint64_t skybox_total_ticks_{};
     std::uint64_t skybox_min_ticks_{};
     std::uint64_t skybox_max_ticks_{};

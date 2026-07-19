@@ -1,6 +1,6 @@
 # Canonical Terrain-Tile Contract
 
-- **Completed through:** `T-008`
+- **Completed through:** `W-001`
 - **Last verified:** July 19, 2026
 
 T-008 composes the untouched T-007 rolling-height oracle with a bounded
@@ -8,10 +8,10 @@ deterministic Q8 lake-basin post-process. The active composite checksum is
 `0x4890DE3E1AA063A9`; extrema and world AABB remain unchanged, while maximum
 LOD0 slope becomes `18.681598` degrees, maximum adjacent X/Z steps become
 `1.16015625`/`1.33203125` meters, and maximum coarse deviation becomes
-`0.603515625` meter. The analytic upper-support footprint is centered at
+`0.603515625` meter. The validated spawn-side support component is centered at
 `(-128,-128)` with `56/48`-meter nominal semi-axes and dense-sampled continuous
-spans of approximately `111.998421x95.998672` meters. Its future waterline is
-`-4` meters. The
+spans of approximately `111.998421x95.998672` meters. Its waterline is `-4`
+meters. The
 sampled core at `(-124,-10.47265625,-128)` is `6.47265625` meters below that
 line; 260 canonical rim samples are fixed at `-2.5` meters, and the footprint
 contains 530 canonical samples.
@@ -19,8 +19,8 @@ contains 530 canonical samples.
 The scenario publishes dry spawn ground at `(-128,1.34375,-20)` and a camera eye
 at `(-128,3.34375,-20)` with pitch `-0.1`; sampled support-boundary distance is
 about 58.496138 meters. Cube and material sphere remain outside the shaping
-support, above the future waterline, and unburied. T-008 creates no water
-resource, shader, PSO, descriptor, graph pass, or pixel.
+support, above the waterline, and unburied. W-001 consumes this metadata without
+changing any canonical terrain sample, query, topology, resource, or descriptor.
 
 Focused Debug verification passes 56,792 lake-basin assertions across three
 cases, 4,732 scenario assertions across three cases, 23 culling assertions
@@ -136,12 +136,12 @@ support remain byte-identical to the T-007 base.
 `+X`. `HeightTileSurface` takes ownership of one validated tile and caches its
 world-space AABB.
 
-### Active T-008 Environment Lab scenario
+### Active W-001 Environment Lab scenario
 
 `world::make_environment_lab_scenario()` is the composition root for the active
 sandbox terrain. It creates the unchanged T-007 base, applies
 `terrain::shape_closed_lake_basin`, validates core and spawn queries, and
-publishes the authoritative metadata W-001 must later consume:
+publishes the authoritative metadata consumed by W-001:
 
 ```text
 composite height checksum      0x4890DE3E1AA063A9
@@ -152,7 +152,7 @@ Z warp                         dz + (dx^2 - 1,568) / 1,024
 approx. continuous X extrema   -181.753764 / -69.755343 m
 approx. continuous Z extrema   -174.473083 / -78.474411 m
 approx. continuous X/Z spans   111.998421 / 95.998672 m
-future waterline               -4.0 m
+waterline                      -4.0 m
 profile core depth             6.5 m
 rise / rim-end / blend radii   1.15 / 1.35 / 2.0
 sampled core                   (-124, -10.47265625, -128) m
@@ -169,14 +169,16 @@ maximum LOD0 slope             18.681598 degrees
 maximum coarse deviation       0.603515625 m
 ```
 
-The footprint is an analytic smoothly warped ellipse defining normalized
-squared radius `rho`. `rho <= 1` is the complete bounded upper support W-001 may
-use for its water plane; it is not itself the final visible shoreline. That
-shoreline will be the intersection of the `-4`-meter water plane with canonical
-terrain under the depth test, so canonical bank triangles may occlude a narrow
-part of the support near its edge. Terrain rises from the support boundary to a
-fixed rim, holds the rim, then smoothly returns to the T-007 base; samples
-beyond normalized radius `2.0` remain byte-identical.
+The warp defines normalized squared radius `rho`, but the global
+`rho <= 1` inequality is not treated as one bounded lobe. W-001's authoritative
+water support is its intersection with the local quad domain centered at
+`(-128,-128)` with X/Z half-extents `64/56`; this selects the intended
+spawn-side component. That support is not itself the final visible shoreline.
+The shoreline is the depth-tested intersection of the `-4`-meter water plane
+with canonical terrain, so canonical bank triangles can occlude a narrow part
+near its edge. Terrain rises from the shaping boundary to a fixed rim, holds the
+rim, then smoothly returns to the T-007 base; samples beyond normalized radius
+`2.0` remain byte-identical.
 
 The shaper rejects any input tile containing a non-Q8 height sample, plus
 malformed/nonfinite, non-Q8-representable, unsafe-extreme, or unordered shape
@@ -415,7 +417,7 @@ requires positive chunk dimensions, supports partial chunks at the maximum
 appears exactly once. Its two triangles retain the fixed LOD0 winding and
 diagonal.
 
-The active T-008 fixture retains `16x16` cells per chunk. Its
+The active W-001 scenario retains T-008's `16x16` cells per chunk. Its
 `240x240` cells divide exactly into 225 complete chunks in a row-major
 `15x15` grid. Each chunk owns:
 
@@ -654,7 +656,7 @@ cycles:
 
 ## Frame graph and diagnostics
 
-The renderer-owned production declaration remains four passes:
+The renderer-owned production declaration now contains five passes:
 
 1. `Terrain` clears color/depth, draws each visible chunk's selected LOD0 or
    coarse range in the selected solid or wireframe mode, and draws the material
@@ -663,7 +665,9 @@ The renderer-owned production declaration remains four passes:
 2. `TexturedCube` preserves the attachments and draws the checker cube.
 3. `Skybox` reads depth and fills only the far background with procedural
    daylight or HDR radiance.
-4. `ToneMap` reads the HDR scene color and writes the swap-chain back buffer.
+4. `Water` preserves HDR color, reads canonical terrain depth, and composites
+   one procedural six-vertex quad over the local-domain/`rho <= 1` intersection.
+5. `ToneMap` reads the HDR scene color and writes the swap-chain back buffer.
 
 The graph still imports:
 
@@ -689,18 +693,19 @@ The exact per-frame graph contract remains:
 
 ```text
 imports                15
-passes                  4
-dependencies            3
+passes                  5
+dependencies            5
 emitted transitions     6
-elided transitions      31
+elided transitions      34
 ```
 
 Chunk culling and LOD selection are CPU work before graph execution. All
-surface ranges and bounds share the existing two terrain-buffer imports, so
-T-008 adds no graph pass, dependency, barrier, PIX scope, shader, PSO, or
-timestamp. Let `V0` and `Vc` be the visible LOD0 and coarse chunks,
-`V = V0 + Vc`, and `D` be one when diagnostics are enabled and zero otherwise.
-The `Terrain` timing interval contains all of these commands:
+surface ranges and bounds share the existing two terrain-buffer imports. W-001
+adds one pass, two dependencies, three elisions, a PIX scope, and one timestamp
+pair without adding an import, emitted transition, descriptor, or water GPU
+resource. Let `V0` and `Vc` be the visible LOD0 and coarse chunks, `V = V0 + Vc`,
+and `D` be one when diagnostics are enabled and zero otherwise. The `Terrain`
+timing interval contains all of these commands:
 
 ```text
 Terrain indexed draws       V + 1 + D * (V + 1)
@@ -714,11 +719,11 @@ textured-cube indices        36
 skybox indices               36
 ```
 
-`ToneMap` then issues one non-indexed fullscreen-triangle draw. With diagnostics
-off, the initial/resized `V0=0`, `Vc=93` poses submit 80,352 terrain-surface
-indices; the turned `V0=0`, `Vc=72` overview submits 62,208; and the final
-smoke-only `V0=1`, `Vc=60` near pose submits 53,376, exercising both packed
-surface ranges.
+`Water` issues one non-indexed six-vertex draw generated from `SV_VertexID`, and
+`ToneMap` issues one non-indexed fullscreen-triangle draw. With diagnostics off,
+the initial/resized `V0=0`, `Vc=93` poses submit 80,352 terrain-surface indices;
+the turned `V0=0`, `Vc=72` overview submits 62,208; and the final smoke-only
+`V0=1`, `Vc=60` near pose submits 53,376, exercising both packed surface ranges.
 
 The stable PIX hierarchy and timestamp allocation remain:
 
@@ -727,10 +732,11 @@ Frame
   Terrain
   TexturedCube
   Skybox
+  Water
   ToneMap
 
-10 timestamps per frame-context slice
-30 timestamps across 3 frame contexts
+12 timestamps per frame-context slice
+36 timestamps across 3 frame contexts
 ```
 
 Hardware presentation requires 1,000 successful presents. Normal
@@ -777,14 +783,16 @@ scene_matrix_changes == 4
 sky_matrix_changes == 3
 
 material_sphere_draw_calls == F
-cube_draw_calls == skybox_draw_calls == tone_map_draw_calls == F
+cube_draw_calls == skybox_draw_calls == water_draw_calls
+    == tone_map_draw_calls == F
+water_vertices == 6 * F
 ```
 
 The one-per-pass identity uses `pix_terrain_events`, not variable surface draw
 count:
 
 ```text
-pix_terrain_events + cube_draw_calls + skybox_draw_calls
+pix_terrain_events + cube_draw_calls + skybox_draw_calls + water_draw_calls
     + tone_map_draw_calls == render_graph_pass_executions
 ```
 
@@ -812,11 +820,11 @@ configurations.
 Static accounting requires 58,081 shared surface vertices, 345,600 LOD0
 indices, 194,400 coarse indices, 1,800 chunk-bounds vertices, 5,400
 chunk-bounds indices, and six marker vertices/indices. `terrain_index_count`
-is 540,000 and `terrain_maximum_geometric_error` is `0.603515625`. T-008 retains
-`15/4/3/6/31` graph accounting, ten timestamps, four texture-table binds per
-frame, and one static upload producing four geometry buffers, three material
-arrays, and four HDR environment textures. Shader, PSO, graph, texture, and
-resource counts are unchanged.
+is 540,000 and `terrain_maximum_geometric_error` is `0.603515625`. W-001 retains
+one static upload producing four geometry buffers, three material arrays, and
+four HDR environment textures. Its procedural water draw adds no buffer,
+texture, resource, descriptor, or upload; active accounting is
+`15/5/5/6/34`, 12 timestamps, and five texture-table binds per frame.
 
 Startup still proves two layers, six mips, 36 material subresources, 32,760
 meaningful material bytes, 79 environment subresources, 284,608 meaningful
@@ -880,11 +888,12 @@ nine sample anchors, row-major T-007 FNV-1a checksum, Q8 quantization, exact
 extrema and bounds, 25.82421875-meter relief, 115,200 base-triangle slopes below
 12 degrees, 11.251308698-degree base maximum slope, nonmatching opposite edges,
 and 0.79296875/0.6875-meter base maximum adjacent X/Z steps. The T-008 scenario
-coverage separately locks composite checksum `0x4890DE3E1AA063A9`, the analytic
-upper support, rejection of non-Q8 tile height samples or shape/grid inputs,
-unsafe-extreme, malformed, and open-rim inputs, 530 footprint and 260 rim
-samples, and byte identity outside the bounded support. A successful shape
-proves one connected lattice footprint inside a closed canonical-triangle rim.
+coverage separately locks composite checksum `0x4890DE3E1AA063A9`, the
+validated spawn-side support component, rejection of non-Q8 tile height samples
+or shape/grid inputs, unsafe-extreme, malformed, and open-rim inputs, 530
+footprint and 260 rim samples, and byte identity outside the bounded shaping
+domain. A successful shape proves one connected lattice footprint inside a
+closed canonical-triangle rim.
 The same coverage locks the dry
 spawn/core/prop gates, 18.681598-degree composite maximum slope,
 1.16015625/1.33203125-meter adjacent steps, and 0.603515625-meter measured
@@ -912,15 +921,18 @@ finite-input rejection, and all three active smoke splits.
 
 For manual acceptance, run `SharkSandbox` without arguments. The active
 960-meter landscape must read as broad, mostly flat rolling terrain with a
-smoothly irregular dry basin visible from the scenario spawn. The basin must
-not resemble a perfect circle, sharp crater, repeated procedural stamp, or
-stepped terrace, and no water plane, tint, reflection, or animated water surface
-may exist. The numeric tests, not visual estimation, own the exact footprint,
-depth, rim, and spawn-distance gates. Capture the initial interactive view plus
-the resized and turned deterministic smoke views for comparison. Interactive
-terrain diagnostics start off; press `F4` and confirm the cyan pin begins on the
-terrain and follows its exact triangle normal while the visible magenta AABBs
-match the currently logged visible count, partition, and enclose their chunks.
+smoothly irregular lake near the scenario spawn. The basin must not resemble a
+perfect circle, sharp crater, repeated procedural stamp, or stepped terrace.
+Its depth-tested shoreline must follow the canonical terrain, while Fresnel,
+depth tint and absorption, bounded environment reflection/refraction, animated
+normal-only waves, and sun glint make the surface readable without implying a
+fluid simulation. The numeric tests, not visual estimation, own the exact
+footprint, depth, rim, and spawn-distance gates. Capture the initial interactive
+view plus the resized and turned deterministic smoke views for comparison.
+Interactive terrain diagnostics start off; press `F4` and confirm the cyan pin
+begins on the terrain and follows its exact triangle normal while the visible
+magenta AABBs match the currently logged visible count, partition, and enclose
+their chunks.
 Rotate away and confirm surface pieces and their matching bounds
 disappear together without popping an intersecting chunk. Press `F4` again and
 confirm both diagnostic classes disappear without changing surfaces or LOD.
@@ -983,10 +995,16 @@ with the counts recorded above, and both complete active test runs pass
 `150/150`. It changes no San Andreas-class feature ceiling, and the visual-rain
 track remains deferred.
 
-The upcoming increment is `W-001`: clip a `-4`-meter water plane to T-008's
-immutable analytic `rho <= 1` upper support. Its visible shoreline must emerge
-from the depth-tested intersection with canonical terrain, including any narrow
-bank-triangle occlusion near the support edge. Add Fresnel response, depth
-tint/absorption, bounded reflection/refraction approximation,
-and animated normal waves. W-001 must not change canonical terrain or scenario
-metadata and must not claim a fluid simulation.
+W-001 consumes that immutable metadata with one procedural six-vertex flat quad
+centered at `(-128,-4,-128)` and conservative `64/56`-meter half extents. The
+shader intersects that local domain with exact `rho <= 1` using T-008's
+`56/48`-meter nominal semi-axes and the X/Z warp offsets and divisors
+`1152/512` and `1568/1024`, selecting the intended spawn-side component rather
+than treating the inequality as globally bounded. Reversed-Z terrain depth
+produces the visible shoreline. After sky rendering, premultiplied HDR
+transmission/tint, analytic depth-proxy absorption, Fresnel, bounded environment
+reflection/refraction, animated normal-only waves, and sun glint provide a
+visual surface without canonical terrain mutation or simulated fluid state.
+
+The next increment is `PHY-001`: add deterministic fixed-step motion while
+leaving this terrain and visual-water contract unchanged.

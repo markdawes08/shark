@@ -1,13 +1,13 @@
 # Renderer and Direct3D 12 Presentation/Frame-Resource Contract
 
-- **Completed through:** `T-008`
+- **Completed through:** `W-001`
 - **Last verified:** July 19, 2026
 
 `shark::renderer::Renderer` owns Shark's focused D3D12 scene/presentation
-backend. T-008 preserves T-006's triple-buffered fence-gated HDR lifecycle,
-225-chunk capacity, and default-off `F4` diagnostics while composing only the
-CPU-generated height values and scenario metadata. Normal frames still submit and present without an
-unconditional post-frame queue drain.
+backend. W-001 preserves the triple-buffered fence-gated HDR lifecycle,
+225-chunk capacity, and default-off `F4` diagnostics while adding one
+procedural visual-water draw. Normal frames still submit and present without
+an unconditional post-frame queue drain.
 
 ## Public boundary and ownership
 
@@ -57,7 +57,7 @@ The private backend owns:
 - one `D32_FLOAT` depth texture and writable/read-only DSVs;
 - one resize-owned `R16G16B16A16_FLOAT` scene-color texture with RTV/SRV;
 - one reusable graphics command list;
-- cube, sky, terrain solid/wireframe/line, material-sphere, and tone-map PSOs
+- cube, sky, terrain solid/wireframe/line, water, material-sphere, and tone-map PSOs
   plus their focused root signatures;
 - four committed geometry buffers: cube vertex/index and packed shared
   terrain-LOD/chunk-bounds/query-marker/material-sphere vertex/index;
@@ -67,13 +67,13 @@ The private backend owns:
   GGX-prefiltered specular cube, and `32x32` split-sum BRDF LUT;
 - one fixed ten-slot shader-visible SRV heap containing checker, retained DDS,
   three materials, four environment/IBL SRVs, and HDR scene color;
-- one 30-entry timestamp heap and persistently mapped 240-byte readback buffer;
+- one 36-entry timestamp heap and persistently mapped 288-byte readback buffer;
 - three frame contexts; and
 - the swap-chain frame-latency/lifetime state.
 
 Each frame context owns one direct allocator, persistently mapped 64 KiB upload
 buffer, one 256-byte default-heap probe destination, one 64-slot CPU-only
-descriptor staging heap, bounded upload/descriptor/ten-query cursors,
+descriptor staging heap, bounded upload/descriptor/12-query cursors,
 generation and fence completion state, and pending timing metadata.
 
 DXGI's current back-buffer index selects the context. CPU frame count is never
@@ -140,17 +140,17 @@ One frame:
    changed visible/total/LOD split;
 2. obtains DXGI's current back-buffer index and selects that context;
 3. waits only if that context's preceding submission is still in flight;
-4. consumes its completed ten-timestamp sample, retires the submission, and
+4. consumes its completed 12-timestamp sample, retires the submission, and
    resets bounded cursors;
 5. reserves one 256-byte frame record and one CPU staging descriptor;
-6. reserves the exact ten-query timestamp slice;
-7. composes the 15-import/four-pass frame graph;
+6. reserves the exact 12-query timestamp slice;
+7. composes the 15-import/five-pass frame graph;
 8. resets the allocator and shared command list;
 9. begins `Frame`, writes `frame_begin`, and copies the 256-byte diagnostic
    record to the context probe outside the graph;
-10. executes `Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` with graph-owned
-   transitions between them;
-11. writes `frame_end`, resolves ten queries to the context readback slice, and
+10. executes `Terrain`, `TexturedCube`, `Skybox`, `Water`, and `ToneMap` with
+    graph-owned transitions between them;
+11. writes `frame_end`, resolves 12 queries to the context readback slice, and
     ends `Frame`;
 12. closes/executes, signals the next fence value, and marks the timing sample
     pending; and
@@ -160,20 +160,20 @@ The exact frame graph is:
 
 ```text
 imports                15
-passes                  4
-dependencies            3
+passes                  5
+dependencies            5
 emitted transitions     6
-elided transitions      31
+elided transitions      34
 ```
 
-`Terrain`, `TexturedCube`, and `Skybox` render linear color into scene color.
-`ToneMap` reads scene color and writes the current swap-chain buffer. The six
-transitions cover scene-color render/read state, depth write/read state, and
-back-buffer present/render state.
+`Terrain`, `TexturedCube`, `Skybox`, and `Water` render linear color into scene
+color. `ToneMap` reads scene color and writes the current swap-chain buffer. The
+six transitions cover scene-color render/read state, depth write/read state,
+and back-buffer present/render state.
 
 For `V0` visible LOD0 chunks, `Vc` visible coarse chunks, and `V=V0+Vc`, normal
-submitted commands contain `V + 3` indexed scene draws. `F4` adds `V + 1`
-diagnostic draws:
+submitted commands contain `V + 3` indexed scene draws plus one non-indexed
+six-vertex water draw. `F4` adds `V + 1` diagnostic draws:
 
 ```text
 LOD0 terrain chunks       1,536 * V0 indices
@@ -183,11 +183,13 @@ visible chunk AABBs       F4 ? 24 * V indices : 0
 terrain query marker      F4 ? 6 indices : 0
 textured cube                 36 indices
 skybox                        36 indices
+visual water                  6 vertices
 ```
 
 `ToneMap` adds `DrawInstanced(3, 1, 0, 0)`. Per frame there is one depth clear
-and four texture-table binds: terrain/IBL, checker, sky radiance, and HDR scene
-color. The fixed smoke poses produce `V0/Vc=0/93`, then `0/72`, then `1/60`,
+and five texture-table binds: terrain/IBL, checker, sky radiance, water
+radiance, and HDR scene color. The fixed smoke poses produce
+`V0/Vc=0/93`, then `0/72`, then `1/60`,
 for 80,352, 62,208, and 53,376 terrain-surface indices. The final split occurs
 only in the smoke-only near phase and keeps both packed terrain index ranges
 live. Bounds/query diagnostics are off by default.
@@ -225,6 +227,7 @@ Frame
   Terrain
   TexturedCube
   Skybox
+  Water
   ToneMap
 ```
 
@@ -232,12 +235,12 @@ One direct-queue timestamp heap/readback allocation is divided:
 
 ```text
 context index       0        1         2
-query base          0       10        20
-readback offset     0       80       160
-slice bytes        80       80        80
+query base          0       12        24
+readback offset     0       96       192
+slice bytes        96       96        96
 ```
 
-Each ten-query slice stores frame begin/end and begin/end for each of the four
+Each 12-query slice stores frame begin/end and begin/end for each of the five
 passes. The frame interval includes the probe copy, all six graph transitions,
 and all passes, but excludes its own query resolve. Readback is inspected only
 after the normal context fence completes. Resize/shutdown drains consume
@@ -302,7 +305,7 @@ focused GPU-validated WARP requires 120. The paths:
   HDR environment textures, ten persistent descriptors, and 79/284,608
   environment upload accounting;
 - prove HDR scene texture/RTV/SRV creation counts equal `resize_count + 1`;
-- prove ten timestamps and one resolve per submission, with 30 global slots;
+- prove 12 timestamps and one resolve per submission, with 36 global slots;
 - retire every submission before final validation; and
 - report zero D3D12/DXGI corruption/errors and no live children.
 
@@ -351,12 +354,14 @@ unchanged topology, resources, and canonical queries. Its final near-pose phase
 kept both terrain index ranges live; hardware Debug/Release, normal WARP, and
 focused GBV validation passed as historical evidence.
 
-`T-008` publishes the dry spawn, basin footprint, core, and future waterline
-while retaining four geometry buffers, 15 imports, four passes, and every
-frame-resource/lifetime rule. It creates no water resource or pass. The full
-Debug and Release builds and their active `150/150` test runs pass with exact
-smoke accounting and the timings recorded above. Rain remains deferred under
-the San Andreas-class ceiling. The next increment is `W-001`: clip a static
-water plane to the immutable T-008 analytic upper support at the published
-waterline. Canonical-terrain depth testing determines the visible shoreline;
-terrain remains unchanged and no fluid simulation is claimed.
+W-001 consumes the dry spawn, basin core, and waterline while retaining four
+geometry buffers and every frame-resource/lifetime rule. Its six-vertex
+`SV_VertexID` draw defines the authoritative water as the intersection of the
+local `64/56` X/Z half-extent quad domain with warped `rho <= 1`, selecting the
+spawn-side component. It adds no water buffer, texture, resource, descriptor,
+or static upload. The frame now has 15 imports, five passes, five dependencies,
+six transitions, 34 elisions, and five texture bindings. Sky renders before
+premultiplied transparent water; canonical-terrain depth testing determines the
+visible shoreline. Terrain remains unchanged and no fluid simulation is
+claimed. Rain remains deferred under the San Andreas-class ceiling. The next
+increment is `PHY-001` deterministic fixed-step motion.

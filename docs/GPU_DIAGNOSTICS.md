@@ -1,17 +1,15 @@
 # Direct3D 12 GPU Diagnostics Contract
 
-- **Completed through:** `T-008`
+- **Completed through:** `W-001`
 - **Last verified:** July 19, 2026
 
 Shark's GPU diagnostics use fixed-capacity PIX events and direct-queue
 timestamps whose readback is delayed until the owning frame-context fence
-completes. T-004 retains the exact four-pass, 15-import, six-transition,
-31-elision, four-texture-bind, ten-timestamp frame contract while making
-terrain surface and bounds draw counts proportional to visible chunks. It adds
-no normal-frame queue drain. T-008 preserves T-006's 225-chunk counters,
-payload/resource budgets, and default-off `F4` diagnostics while updating the
-composite terrain error to `0.603515625`. Its final smoke-only near
-pose keeps both packed terrain index ranges active.
+completes. W-001 extends the frame contract to five passes, 15 imports, six
+transitions, 34 elisions, five texture binds, and 12 timestamps while adding
+no normal-frame queue drain or water resource. T-008's 225-chunk counters,
+payload/resource budgets, default-off `F4` diagnostics, and
+`0.603515625`-meter composite terrain error remain unchanged.
 
 ## PIX marker contract
 
@@ -26,9 +24,10 @@ development prerequisite; Shark neither installs nor launches it.
 | `Terrain` | 4 | per frame | HDR/depth clear, material/IBL binding, selected LOD0/coarse chunk surfaces, sphere, matching visible chunk bounds, and marker draws |
 | `TexturedCube` | 2 | per frame | HDR/depth binding, checker binding, and cube draw |
 | `Skybox` | 3 | per frame | HDR/read-only-depth binding, radiance/fallback state, and sky draw |
+| `Water` | 6 | per frame | HDR/read-only-depth binding after sky, radiance/fallback state, local-support constants, and six-vertex premultiplied draw |
 | `ToneMap` | 5 | per frame | back-buffer binding, HDR scene-color binding, and fullscreen draw |
 
-The four pass events are nested sequentially inside `Frame`. Graph barriers
+The five pass events are nested sequentially inside `Frame`. Graph barriers
 occur outside pass callbacks but inside `Frame`. RAII event scopes close any
 event already begun when a result-returning command fails.
 
@@ -38,26 +37,26 @@ its normal completion-fence checkpoint.
 
 ## Fixed query/readback storage
 
-One direct-queue timestamp query heap contains 30 slots. One persistently
-mapped 240-byte readback buffer is split across the three swap-chain frame
+One direct-queue timestamp query heap contains 36 slots. One persistently
+mapped 288-byte readback buffer is split across the three swap-chain frame
 contexts:
 
 | Context | Queries | Base | Readback bytes | Offset |
 |---:|---|---:|---|---:|
-| 0 | `0..9` | 0 | `0..79` | 0 |
-| 1 | `10..19` | 10 | `80..159` | 80 |
-| 2 | `20..29` | 20 | `160..239` | 160 |
+| 0 | `0..11` | 0 | `0..95` | 0 |
+| 1 | `12..23` | 12 | `96..191` | 96 |
+| 2 | `24..35` | 24 | `192..287` | 192 |
 
-Each result is one 64-bit timestamp. A frame reserves its complete ten-query
-local slice. An eleventh local query fails rather than growing or overwriting
+Each result is one 64-bit timestamp. A frame reserves its complete 12-query
+local slice. A thirteenth local query fails rather than growing or overwriting
 storage. Successful smoke accounting therefore reports:
 
 ```text
-timestamp_query_capacity   == 30
-timestamp_query_high_water == 10
+timestamp_query_capacity   == 36
+timestamp_query_high_water == 12
 ```
 
-## Ten-query frame layout
+## Twelve-query frame layout
 
 Each submitted frame writes:
 
@@ -70,9 +69,11 @@ Each submitted frame writes:
 | 4 | `textured_cube_end` |
 | 5 | `skybox_begin` |
 | 6 | `skybox_end` |
-| 7 | `tone_map_begin` |
-| 8 | `tone_map_end` |
-| 9 | `frame_end` |
+| 7 | `water_begin` |
+| 8 | `water_end` |
+| 9 | `tone_map_begin` |
+| 10 | `tone_map_end` |
+| 11 | `frame_end` |
 
 The command-list sequence is:
 
@@ -85,11 +86,12 @@ begin PIX "Frame"
   PIX/timestamps "TexturedCube"
   graph: depth -> DEPTH_READ
   PIX/timestamps "Skybox"
+  PIX/timestamps "Water"
   graph: BackBuffer -> RENDER_TARGET, SceneColor -> PIXEL_SHADER_RESOURCE
   PIX/timestamps "ToneMap"
   graph finals: BackBuffer -> PRESENT, depth -> DEPTH_WRITE
   frame_end
-  resolve ten timestamps to this context's readback slice
+  resolve 12 timestamps to this context's readback slice
 end PIX "Frame"
 close, execute, signal context fence, present
 ```
@@ -100,6 +102,7 @@ CPU decoding requires:
 frame_begin <= terrain_begin <= terrain_end
             <= textured_cube_begin <= textured_cube_end
             <= skybox_begin <= skybox_end
+            <= water_begin <= water_end
             <= tone_map_begin <= tone_map_end
             <= frame_end
 ```
@@ -114,7 +117,7 @@ and marks timestamp results pending. Before that context can be reused, Shark:
 
 1. checks the direct queue's completed fence;
 2. performs the existing bounded reuse wait only if necessary;
-3. consumes the ten mapped results only after completion;
+3. consumes the 12 mapped results only after completion;
 4. clears the pending flag; and
 5. retires the submission and resets the bounded timestamp arena.
 
@@ -135,12 +138,12 @@ average milliseconds = total ticks * 1000 / frequency / sample count
 ```
 
 `frame_end - frame_begin` includes the probe copy, all six graph transitions,
-and all four passes. It excludes query resolution, command-list close, CPU
+and all five passes. It excludes query resolution, command-list close, CPU
 recording, queue submission, fence signal, `Present`, display latency, and the
 static upload.
 
-Pass durations are end minus begin for `Terrain`, `TexturedCube`, `Skybox`, and
-`ToneMap`. They include commands inside each callback and exclude graph
+Pass durations are end minus begin for `Terrain`, `TexturedCube`, `Skybox`,
+`Water`, and `ToneMap`. They include commands inside each callback and exclude graph
 barriers, CPU-side access validation, terrain frustum/AABB tests, distance
 measurement, and LOD selection completed before command recording. These are
 stable measurement boundaries, not performance thresholds.
@@ -156,21 +159,22 @@ pix_pass_events == render_graph_pass_executions
 pix_terrain_events == frame_submissions
 pix_textured_cube_events == frame_submissions
 pix_skybox_events == frame_submissions
+pix_water_events == frame_submissions
 pix_tone_map_events == frame_submissions
 
 gpu_timestamp_frequency_hz > 0
-timestamp_query_capacity == 30
-timestamp_query_high_water == 10
-timestamp_queries_written == frame_submissions * 10
+timestamp_query_capacity == 36
+timestamp_query_high_water == 12
+timestamp_queries_written == frame_submissions * 12
 timestamp_resolve_batches == frame_submissions
 gpu_timing_samples == frame_submissions
 
 render_graph_resource_imports == frame_submissions * 15
-render_graph_pass_executions == frame_submissions * 4
-render_graph_dependencies == frame_submissions * 3
+render_graph_pass_executions == frame_submissions * 5
+render_graph_dependencies == frame_submissions * 5
 render_graph_transition_barriers == frame_submissions * 6
-render_graph_elided_transitions == frame_submissions * 31
-texture_bindings == frame_submissions * 4
+render_graph_elided_transitions == frame_submissions * 34
+texture_bindings == frame_submissions * 5
 terrain_material_bindings == frame_submissions
 ```
 
@@ -205,6 +209,8 @@ terrain_query_marker_draw_calls == 30
 terrain_query_marker_indices == 180
 cube_draw_calls == frame_submissions
 skybox_draw_calls == frame_submissions
+water_draw_calls == frame_submissions
+water_vertices == water_draw_calls * 6
 tone_map_draw_calls == frame_submissions
 
 terrain_vertex_count == 58081
@@ -254,7 +260,7 @@ producing 2,790 and 30 draws.
 The one-per-pass identity therefore uses `pix_terrain_events`:
 
 ```text
-pix_terrain_events + cube_draw_calls + skybox_draw_calls
+pix_terrain_events + cube_draw_calls + skybox_draw_calls + water_draw_calls
     + tone_map_draw_calls == render_graph_pass_executions
 ```
 
@@ -336,7 +342,7 @@ image_based_lighting_frames + procedural_daylight_frames
     == frame_submissions
 ```
 
-For every aggregate, frame total/last must cover the sum of the four pass
+For every aggregate, frame total/last must cover the sum of the five pass
 intervals; frame maximum must be at least each pass maximum; and every
 minimum must be no greater than its maximum. Duration magnitude is not gated.
 
@@ -347,18 +353,19 @@ PIX events, timestamp writes/resolves/consumption, and HDR resource accounting.
 The final log reports:
 
 ```text
-timestamp-queries(high/capacity)=10/30
+timestamp-queries(high/capacity)=12/36
 gpu-frame-ms(avg/max)=.../...
 gpu-Terrain-ms(avg/max)=.../...
 gpu-TexturedCube-ms(avg/max)=.../...
 gpu-Skybox-ms(avg/max)=.../...
+gpu-Water-ms(avg/max)=.../...
 gpu-ToneMap-ms(avg/max)=.../...
 ```
 
 ## Verification and manual PIX acceptance
 
 Focused tests cover the exact three-context partition, complete nested
-four-pass order, zero-length intervals, malformed/reversed samples, overflow
+five-pass order, zero-length intervals, malformed/reversed samples, overflow
 without partial mutation, fixed-capacity allocation, fence retirement, and
 high-water accounting. Terrain-frustum tests separately lock Direct3D clip
 half-spaces, conservative tangent/intersection behavior,
@@ -370,13 +377,12 @@ lock shortest 3D camera-to-closed-AABB distance, the inclusive
 assertions across three focused Debug cases, 4,732 scenario assertions across
 three cases, 23 culling assertions across two cases, and 367 LOD assertions
 across two cases. The production frame-pipeline test locks 15
-imports, four access sets, three dependencies, six transitions, 31 elisions,
+imports, five access sets, five dependencies, six transitions, 34 elisions,
 and exact callback order.
 
-Active T-008 validation passed the Debug build and all `150/150` tests in
-195.60 seconds; hardware, WARP, and WARP+GBV presentation took 8.61, 83.60,
-and 66.85 seconds. The Release build and all `150/150` tests passed in 157.45
-seconds; the same gates took 2.06, 78.66, and 60.14 seconds.
+W-001 validation is risk-tiered: run its focused water, frame-pipeline, and
+timestamp tests while iterating; run the complete unit suite once when stable;
+then use Debug hardware/WARP/GBV plus a Release hardware presentation smoke.
 
 Run the runtime paths with:
 
@@ -401,29 +407,29 @@ not renderer-owned live-child failures.
 For manual PIX acceptance:
 
 1. Capture a hardware frame and confirm one `Frame` with sequential nested
-   `Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` scopes.
+   `Terrain`, `TexturedCube`, `Skybox`, `Water`, and `ToneMap` scopes.
 2. At the initial pose, confirm `Terrain` contains 93 864-index coarse draws
    and one sphere, with no LOD0 draw. Toggle `F4` and confirm 93 matching
    24-index bounds draws plus one marker; they are absent when the toggle is
    off. At the scripted overview, confirm 72 coarse and zero LOD0 draws. In the
    final smoke-only near phase, confirm one 1,536-index LOD0 draw and 60
-   864-index coarse draws. Cube and sky each retain one indexed draw; `ToneMap`
-   retains one fullscreen non-indexed draw.
+   864-index coarse draws. Cube and sky each retain one indexed draw; `Water`
+   retains one six-vertex non-indexed draw and `ToneMap` one fullscreen draw.
 3. Confirm all six graph transitions occur inside `Frame` but outside the
    applicable pass intervals.
 4. Confirm material/environment resources remain in pixel-shader-read state.
 5. In a startup-inclusive capture, confirm one `StaticSceneUpload` containing
    the packed 345,600-index LOD0 prefix, 194,400-index coarse suffix, 225 chunk
    bounds, environment copies, and 13 initialization barriers.
-6. Confirm the log reports `10/30`, one timing sample per retired frame, and
-   finite frame plus four-pass aggregates.
+6. Confirm the log reports `12/36`, one timing sample per retired frame, and
+   finite frame plus five-pass aggregates.
 7. Confirm no D3D12/DXGI error or corruption message.
-8. Confirm T-008 has no `Water` PIX scope, water draw, water resource, water
-   descriptor, or added timestamp pair.
+8. Confirm `Water` has its own PIX scope, draw, and timestamp pair but no
+   water buffer, texture, persistent descriptor, or static upload.
 
 ## Explicit non-goals
 
-T-008 adds no live HUD, Dear ImGui, automated PIX capture, capture-file
+W-001 adds no live HUD, Dear ImGui, automated PIX capture, capture-file
 management, CPU profiler, pipeline-statistics or occlusion queries, static
 upload timing, dynamic pass profiler, query-heap growth, graph-wide automatic
 instrumentation, cross-queue clock calibration, stable-power-state control,
@@ -437,12 +443,10 @@ runs. `T-007` completed its deterministic natural-height contract on July 19,
 fine-plus-coarse smoke phase. Its Debug/Release hardware, normal WARP, and
 focused GBV evidence remains historical.
 
-`T-008` adds the composite checksum, basin/core/rim/spawn assertions, and a
-`0.603515625`-meter active coarse-error gate without adding a diagnostic GPU
-resource or water pass. The active Debug and Release builds and their complete
-`150/150` test runs pass with exact smoke accounting; the timings are recorded
-above. Rain remains deferred and the approved San Andreas-class ceiling is
-unchanged. The next increment is `W-001`: clip a static water plane to T-008's
-immutable analytic `rho <= 1` upper support at the published waterline;
-canonical-terrain depth testing determines the visible shoreline, terrain
-remains unchanged, and no fluid simulation is claimed.
+W-001 adds a named `Water` pass, six-vertex draw, PIX event, and timestamp
+pair. It reuses the radiance descriptor and creates no water GPU resource, so
+the static upload, four geometry buffers, and ten persistent descriptors stay
+unchanged. The active diagnostics contract is `15/5/5/6/34`, five texture
+bindings, and 12 timestamps per submitted frame. Rain remains deferred and
+the approved San Andreas-class ceiling is unchanged. The next increment is
+`PHY-001` deterministic fixed-step motion.

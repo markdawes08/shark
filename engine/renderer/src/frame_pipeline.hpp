@@ -59,6 +59,12 @@ struct TexturedCubePassResources final {
     render_graph::ResourceHandle index_buffer;
 };
 
+struct WaterPassResources final {
+    render_graph::ResourceHandle scene_color;
+    render_graph::ResourceHandle depth_buffer;
+    render_graph::ResourceHandle environment_radiance;
+};
+
 struct SkyboxPassResources final {
     render_graph::ResourceHandle scene_color;
     render_graph::ResourceHandle depth_buffer;
@@ -78,6 +84,9 @@ using TerrainPassCallback = std::function<core::Result<void>(
 using TexturedCubePassCallback = std::function<core::Result<void>(
     const render_graph::PassContext&,
     const TexturedCubePassResources&)>;
+using WaterPassCallback = std::function<core::Result<void>(
+    const render_graph::PassContext&,
+    const WaterPassResources&)>;
 using SkyboxPassCallback = std::function<core::Result<void>(
     const render_graph::PassContext&,
     const SkyboxPassResources&)>;
@@ -88,6 +97,7 @@ using ToneMapPassCallback = std::function<core::Result<void>(
 struct FramePipelineCallbacks final {
     TerrainPassCallback terrain;
     TexturedCubePassCallback textured_cube;
+    WaterPassCallback water;
     SkyboxPassCallback skybox;
     ToneMapPassCallback tone_map;
 };

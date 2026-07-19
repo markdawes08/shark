@@ -3,6 +3,7 @@
 #include "environment_scene_data.hpp"
 #include "skybox_scene_data.hpp"
 #include "terrain_scene_data.hpp"
+#include "water_scene_data.hpp"
 #include "../frame_pipeline.hpp"
 #include "device_access.hpp"
 #include "frame_resource_state.hpp"
@@ -103,8 +104,8 @@ static_assert(camera_matrix_bytes == 64);
 static_assert(camera_constants_bytes == 128);
 static_assert(frame_constants_bytes == 224);
 static_assert(frame_probe_offset == 224);
-static_assert(timestamp_query_count == 30);
-static_assert(timestamp_readback_bytes == 240);
+static_assert(timestamp_query_count == 36);
+static_assert(timestamp_readback_bytes == 288);
 static_assert(
     persistent_cubemap_descriptor ==
     persistent_checker_descriptor + 1U);
@@ -907,7 +908,9 @@ static_assert(
         backend_detail::valid_terrain_material_view(
             frame_data.terrain_material_view) &&
         valid_environment_lighting_mode(
-            frame_data.environment_lighting_mode);
+            frame_data.environment_lighting_mode) &&
+        std::isfinite(frame_data.visual_time_seconds) &&
+        frame_data.visual_time_seconds >= 0.0F;
 }
 
 [[nodiscard]] D3D12_BLEND_DESC opaque_blend_description() noexcept
@@ -928,6 +931,21 @@ static_assert(
         target.RenderTargetWriteMask = static_cast<UINT8>(
             D3D12_COLOR_WRITE_ENABLE_ALL);
     }
+    return description;
+}
+
+[[nodiscard]] D3D12_BLEND_DESC
+premultiplied_alpha_blend_description() noexcept
+{
+    auto description = opaque_blend_description();
+    auto& target = description.RenderTarget[0];
+    target.BlendEnable = TRUE;
+    target.SrcBlend = D3D12_BLEND_ONE;
+    target.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+    target.BlendOp = D3D12_BLEND_OP_ADD;
+    target.SrcBlendAlpha = D3D12_BLEND_ONE;
+    target.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+    target.BlendOpAlpha = D3D12_BLEND_OP_ADD;
     return description;
 }
 
@@ -986,6 +1004,15 @@ static_assert(
     auto description = reversed_depth_description();
     description.DepthWriteMask = backend_detail::skybox_depth_write_mask;
     description.DepthFunc = backend_detail::skybox_depth_comparison;
+    return description;
+}
+
+[[nodiscard]] D3D12_DEPTH_STENCIL_DESC water_depth_description()
+    noexcept
+{
+    auto description = reversed_depth_description();
+    description.DepthWriteMask = backend_detail::water_depth_write_mask;
+    description.DepthFunc = backend_detail::water_depth_comparison;
     return description;
 }
 
@@ -1309,6 +1336,14 @@ public:
             gpu_timing.textured_cube_max_ticks();
         statistics.gpu_textured_cube_last_ticks =
             gpu_timing.textured_cube_last_ticks();
+        statistics.gpu_water_total_ticks =
+            gpu_timing.water_total_ticks();
+        statistics.gpu_water_min_ticks =
+            gpu_timing.water_min_ticks();
+        statistics.gpu_water_max_ticks =
+            gpu_timing.water_max_ticks();
+        statistics.gpu_water_last_ticks =
+            gpu_timing.water_last_ticks();
         statistics.gpu_skybox_total_ticks =
             gpu_timing.skybox_total_ticks();
         statistics.gpu_skybox_min_ticks =
@@ -2034,6 +2069,143 @@ public:
         return core::Result<void>::success();
     }
 
+    [[nodiscard]] core::Result<void> record_water_pass(
+        const render_graph::PassContext& pass_context,
+        const render_graph::ResourceHandle scene_color_resource,
+        const render_graph::ResourceHandle depth_buffer_resource,
+        const render_graph::ResourceHandle environment_radiance_resource,
+        FrameContext& context,
+        const UINT timestamp_query_base,
+        const math::Float3 camera_world_position,
+        const float visual_time_seconds,
+        const EnvironmentLightingMode environment_mode)
+    {
+        auto scene_color_access =
+            pass_context.write(scene_color_resource);
+        if (!scene_color_access) {
+            return core::Result<void>::failure(
+                std::move(scene_color_access).error());
+        }
+        auto depth_buffer_access =
+            pass_context.read(depth_buffer_resource);
+        if (!depth_buffer_access) {
+            return core::Result<void>::failure(
+                std::move(depth_buffer_access).error());
+        }
+        auto environment_radiance_access =
+            pass_context.read(environment_radiance_resource);
+        if (!environment_radiance_access) {
+            return core::Result<void>::failure(
+                std::move(environment_radiance_access).error());
+        }
+        if (scene_color_access.value() !=
+                detail::frame_scene_color_external_id ||
+            depth_buffer_access.value() !=
+                detail::frame_depth_buffer_external_id ||
+            environment_radiance_access.value() !=
+                detail::frame_environment_radiance_external_id) {
+            return core::Result<void>::failure(graphics_error(
+                core::ErrorCode::invalid_state,
+                "The water pass resolved unexpected graph resource "
+                "bindings"));
+        }
+
+        PixCommandListEvent pass_event{
+            command_list.Get(),
+            5,
+            "Water"};
+        command_list->EndQuery(
+            timestamp_query_heap.Get(),
+            D3D12_QUERY_TYPE_TIMESTAMP,
+            timestamp_query_index(
+                timestamp_query_base,
+                backend_detail::GpuTimestampQuery::water_begin));
+
+        auto render_target =
+            rtv_heap->GetCPUDescriptorHandleForHeapStart();
+        render_target.ptr += static_cast<SIZE_T>(back_buffer_count) *
+            static_cast<SIZE_T>(rtv_descriptor_increment);
+        auto read_only_depth =
+            dsv_heap->GetCPUDescriptorHandleForHeapStart();
+        read_only_depth.ptr += static_cast<SIZE_T>(
+            dsv_descriptor_increment);
+        command_list->OMSetRenderTargets(
+            1,
+            &render_target,
+            FALSE,
+            &read_only_depth);
+
+        const D3D12_VIEWPORT viewport{
+            0.0F,
+            0.0F,
+            static_cast<float>(current_extent.width),
+            static_cast<float>(current_extent.height),
+            0.0F,
+            1.0F,
+        };
+        const D3D12_RECT scissor_rectangle{
+            0,
+            0,
+            static_cast<LONG>(current_extent.width),
+            static_cast<LONG>(current_extent.height),
+        };
+        command_list->SetPipelineState(water_pipeline.Get());
+        command_list->SetGraphicsRootSignature(
+            water_root_signature.Get());
+        command_list->SetGraphicsRootConstantBufferView(
+            backend_detail::water_camera_root_parameter,
+            context.upload_buffer->GetGPUVirtualAddress() +
+                context.staged_probe_offset);
+        const auto water_constants =
+            backend_detail::make_water_surface_root_constants(
+                water_surface,
+                camera_world_position,
+                visual_time_seconds,
+                environment_mode);
+        command_list->SetGraphicsRoot32BitConstants(
+            backend_detail::water_surface_root_parameter,
+            backend_detail::water_surface_root_constant_count,
+            &water_constants,
+            0);
+        ID3D12DescriptorHeap* descriptor_heaps[]{
+            persistent_texture_descriptor_heap.Get(),
+        };
+        command_list->SetDescriptorHeaps(
+            static_cast<UINT>(std::size(descriptor_heaps)),
+            descriptor_heaps);
+        auto environment_table =
+            persistent_texture_descriptor_heap->
+                GetGPUDescriptorHandleForHeapStart();
+        environment_table.ptr +=
+            static_cast<UINT64>(
+                persistent_environment_radiance_descriptor *
+                persistent_descriptor_increment);
+        command_list->SetGraphicsRootDescriptorTable(
+            backend_detail::water_environment_root_parameter,
+            environment_table);
+        ++statistics.texture_bindings;
+        command_list->RSSetViewports(1, &viewport);
+        command_list->RSSetScissorRects(1, &scissor_rectangle);
+        command_list->IASetPrimitiveTopology(
+            backend_detail::water_topology);
+        command_list->IASetVertexBuffers(0, 0, nullptr);
+        command_list->IASetIndexBuffer(nullptr);
+        command_list->DrawInstanced(
+            backend_detail::water_render_vertex_count,
+            1,
+            0,
+            0);
+        command_list->EndQuery(
+            timestamp_query_heap.Get(),
+            D3D12_QUERY_TYPE_TIMESTAMP,
+            timestamp_query_index(
+                timestamp_query_base,
+                backend_detail::GpuTimestampQuery::water_end));
+        pass_event.end();
+
+        return core::Result<void>::success();
+    }
+
     [[nodiscard]] core::Result<void> record_skybox_pass(
         const render_graph::PassContext& pass_context,
         const render_graph::ResourceHandle scene_color_resource,
@@ -2296,9 +2468,10 @@ public:
         }
         context.timestamp_results_pending = true;
         ++statistics.pix_frame_events;
-        statistics.pix_pass_events += 4;
+        statistics.pix_pass_events += 5;
         ++statistics.pix_terrain_events;
         ++statistics.pix_textured_cube_events;
+        ++statistics.pix_water_events;
         ++statistics.pix_skybox_events;
         ++statistics.pix_tone_map_events;
         statistics.timestamp_queries_written +=
@@ -4120,6 +4293,7 @@ public:
         swap_chain.Reset();
         command_list.Reset();
         tone_map_pipeline.Reset();
+        water_pipeline.Reset();
         material_sphere_pipeline.Reset();
         terrain_bounds_pipeline.Reset();
         terrain_wireframe_pipeline.Reset();
@@ -4127,6 +4301,7 @@ public:
         skybox_pipeline.Reset();
         cube_pipeline.Reset();
         tone_map_root_signature.Reset();
+        water_root_signature.Reset();
         terrain_root_signature.Reset();
         skybox_root_signature.Reset();
         cube_root_signature.Reset();
@@ -4232,10 +4407,12 @@ public:
     ComPtr<ID3D12PipelineState> terrain_wireframe_pipeline;
     ComPtr<ID3D12PipelineState> terrain_bounds_pipeline;
     ComPtr<ID3D12PipelineState> material_sphere_pipeline;
+    ComPtr<ID3D12PipelineState> water_pipeline;
     ComPtr<ID3D12PipelineState> tone_map_pipeline;
     ComPtr<ID3D12RootSignature> cube_root_signature;
     ComPtr<ID3D12RootSignature> skybox_root_signature;
     ComPtr<ID3D12RootSignature> terrain_root_signature;
+    ComPtr<ID3D12RootSignature> water_root_signature;
     ComPtr<ID3D12RootSignature> tone_map_root_signature;
     ComPtr<ID3D12Resource> vertex_buffer;
     ComPtr<ID3D12Resource> index_buffer;
@@ -4269,6 +4446,7 @@ public:
     UINT terrain_bounds_index_count{};
     UINT terrain_query_marker_index_count{};
     UINT material_sphere_index_count{};
+    WaterSurfaceSettings water_surface{};
     std::vector<TerrainChunkUploadView> terrain_chunks;
     std::vector<SelectedTerrainChunk> visible_terrain_chunks;
     std::uint64_t current_visible_terrain_index_count{};
@@ -4356,6 +4534,13 @@ core::Result<Renderer> Renderer::create(
             "Renderer terrain pixel shader bytecode is missing a "
             "DXIL container signature"));
     }
+    if (!valid_shader_bytecode(config.water_vertex_shader) ||
+        !valid_shader_bytecode(config.water_pixel_shader)) {
+        return core::Result<Renderer>::failure(graphics_error(
+            core::ErrorCode::invalid_argument,
+            "Renderer water shaders are missing DXIL container "
+            "signatures"));
+    }
     if (!valid_shader_bytecode(
             config.material_sphere_vertex_shader) ||
         !valid_shader_bytecode(
@@ -4395,6 +4580,13 @@ core::Result<Renderer> Renderer::create(
         return core::Result<Renderer>::failure(
             std::move(environment_result).error());
     }
+    if (!backend_detail::valid_water_surface_settings(
+            config.water_surface)) {
+        return core::Result<Renderer>::failure(graphics_error(
+            core::ErrorCode::invalid_argument,
+            "Renderer water surface must provide finite positive axes, "
+            "warp divisors, depth, and shader-safe clip extents"));
+    }
 
     const auto native_window = static_cast<HWND>(config.native_window);
     if (IsWindow(native_window) == FALSE) {
@@ -4427,6 +4619,7 @@ core::Result<Renderer> Renderer::create(
     implementation->clear_color = config.clear_color;
     implementation->synchronize_to_vertical_refresh =
         config.synchronize_to_vertical_refresh;
+    implementation->water_surface = config.water_surface;
     implementation->shutdown_complete = false;
 
     D3D12_COMMAND_QUEUE_DESC queue_description{};
@@ -4862,6 +5055,76 @@ core::Result<Renderer> Renderer::create(
                 result));
     }
 
+    std::array<D3D12_ROOT_PARAMETER, 3> water_root_parameters{};
+    water_root_parameters[
+        backend_detail::water_camera_root_parameter] =
+            root_parameters[root_camera_constants];
+    auto& water_constants_parameter =
+        water_root_parameters[
+            backend_detail::water_surface_root_parameter];
+    water_constants_parameter.ParameterType =
+        D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    water_constants_parameter.Constants.ShaderRegister = 1;
+    water_constants_parameter.Constants.RegisterSpace = 0;
+    water_constants_parameter.Constants.Num32BitValues =
+        backend_detail::water_surface_root_constant_count;
+    water_constants_parameter.ShaderVisibility =
+        D3D12_SHADER_VISIBILITY_ALL;
+    auto& water_environment_parameter =
+        water_root_parameters[
+            backend_detail::water_environment_root_parameter];
+    water_environment_parameter.ParameterType =
+        D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    water_environment_parameter.DescriptorTable.NumDescriptorRanges = 1;
+    water_environment_parameter.DescriptorTable.pDescriptorRanges =
+        &checker_range;
+    water_environment_parameter.ShaderVisibility =
+        D3D12_SHADER_VISIBILITY_PIXEL;
+
+    root_signature_description.NumParameters =
+        static_cast<UINT>(water_root_parameters.size());
+    root_signature_description.pParameters =
+        water_root_parameters.data();
+    root_signature_description.NumStaticSamplers = 1;
+    root_signature_description.pStaticSamplers = &sky_sampler;
+    serialized_root_signature.Reset();
+    root_signature_diagnostics.Reset();
+    result = D3D12SerializeRootSignature(
+        &root_signature_description,
+        D3D_ROOT_SIGNATURE_VERSION_1,
+        &serialized_root_signature,
+        &root_signature_diagnostics);
+    if (FAILED(result)) {
+        const auto operation = root_signature_operation(
+            root_signature_diagnostics.Get());
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
+                device,
+                operation,
+                result));
+    }
+    result = native.device->CreateRootSignature(
+        0,
+        serialized_root_signature->GetBufferPointer(),
+        serialized_root_signature->GetBufferSize(),
+        IID_PPV_ARGS(&implementation->water_root_signature));
+    if (FAILED(result)) {
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Device::CreateRootSignature(water)",
+                result));
+    }
+    result = implementation->water_root_signature->SetName(
+        L"Shark Visual Water Root Signature");
+    if (FAILED(result)) {
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Object::SetName(water root signature)",
+                result));
+    }
+
     D3D12_DESCRIPTOR_RANGE terrain_material_range{};
     terrain_material_range.RangeType =
         D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -5089,6 +5352,45 @@ core::Result<Renderer> Renderer::create(
     }
 
     pipeline_description.pRootSignature =
+        implementation->water_root_signature.Get();
+    pipeline_description.VS = D3D12_SHADER_BYTECODE{
+        config.water_vertex_shader.data,
+        config.water_vertex_shader.size,
+    };
+    pipeline_description.PS = D3D12_SHADER_BYTECODE{
+        config.water_pixel_shader.data,
+        config.water_pixel_shader.size,
+    };
+    pipeline_description.BlendState =
+        premultiplied_alpha_blend_description();
+    pipeline_description.RasterizerState =
+        cube_rasterizer_description();
+    pipeline_description.DepthStencilState =
+        water_depth_description();
+    pipeline_description.InputLayout = D3D12_INPUT_LAYOUT_DESC{};
+    pipeline_description.PrimitiveTopologyType =
+        D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    result = native.device->CreateGraphicsPipelineState(
+        &pipeline_description,
+        IID_PPV_ARGS(&implementation->water_pipeline));
+    if (FAILED(result)) {
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Device::CreateGraphicsPipelineState(water)",
+                result));
+    }
+    result = implementation->water_pipeline->SetName(
+        L"Shark Visual Water Pipeline");
+    if (FAILED(result)) {
+        return core::Result<Renderer>::failure(
+            rhi_detail::DeviceAccess::graphics_failure(
+                device,
+                "ID3D12Object::SetName(water pipeline)",
+                result));
+    }
+
+    pipeline_description.pRootSignature =
         implementation->terrain_root_signature.Get();
     pipeline_description.VS = D3D12_SHADER_BYTECODE{
         config.terrain_vertex_shader.data,
@@ -5098,6 +5400,7 @@ core::Result<Renderer> Renderer::create(
         config.terrain_pixel_shader.data,
         config.terrain_pixel_shader.size,
     };
+    pipeline_description.BlendState = opaque_blend_description();
     pipeline_description.RasterizerState =
         terrain_rasterizer_description(
             backend_detail::terrain_solid_fill_mode);
@@ -5491,7 +5794,7 @@ core::Result<Renderer> Renderer::create(
             std::to_string(config.extent.height) +
             " with three fence-gated frame contexts, reversed-Z depth, "
             "linear HDR scene color, and named "
-            "Terrain/TexturedCube/Skybox/ToneMap pipelines");
+            "Terrain/TexturedCube/Skybox/Water/ToneMap pipelines");
     return core::Result<Renderer>::success(
         Renderer{std::move(implementation)});
 }
@@ -5609,6 +5912,29 @@ core::Result<RenderStatus> Renderer::render_frame(
                         resources.index_buffer,
                         *context,
                         timestamp_query_base);
+                },
+            .water =
+                [implementation = implementation_.get(),
+                 context,
+                 timestamp_query_base,
+                 camera_world_position =
+                    frame_data.camera_world_position,
+                 visual_time_seconds =
+                    frame_data.visual_time_seconds,
+                 environment_mode =
+                    frame_data.environment_lighting_mode](
+                    const render_graph::PassContext& pass_context,
+                    const detail::WaterPassResources& resources) {
+                    return implementation->record_water_pass(
+                        pass_context,
+                        resources.scene_color,
+                        resources.depth_buffer,
+                        resources.environment_radiance,
+                        *context,
+                        timestamp_query_base,
+                        camera_world_position,
+                        visual_time_seconds,
+                        environment_mode);
                 },
             .skybox =
                 [implementation = implementation_.get(),
@@ -5836,6 +6162,9 @@ core::Result<RenderStatus> Renderer::render_frame(
     ++implementation_->statistics.cube_draw_calls;
     implementation_->statistics.cube_indices +=
         backend_detail::cube_indices.size();
+    ++implementation_->statistics.water_draw_calls;
+    implementation_->statistics.water_vertices +=
+        backend_detail::water_render_vertex_count;
     ++implementation_->statistics.skybox_draw_calls;
     implementation_->statistics.skybox_indices +=
         backend_detail::skybox_index_count;

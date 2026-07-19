@@ -18,6 +18,7 @@ TEST_CASE(
     STATIC_REQUIRE(std::is_standard_layout_v<RenderExtent>);
     STATIC_REQUIRE(std::is_standard_layout_v<RenderFrameData>);
     STATIC_REQUIRE(std::is_standard_layout_v<RendererStats>);
+    STATIC_REQUIRE(std::is_standard_layout_v<WaterSurfaceSettings>);
     STATIC_REQUIRE(std::is_standard_layout_v<Texture2DArrayUploadView>);
     STATIC_REQUIRE(std::is_standard_layout_v<Texture2DUploadView>);
     STATIC_REQUIRE(std::is_standard_layout_v<TerrainMaterialUploadView>);
@@ -38,6 +39,11 @@ TEST_CASE(
         config.environment_lighting.radiance.subresources == nullptr);
     REQUIRE(
         config.environment_lighting.brdf_lut.subresources == nullptr);
+    REQUIRE(config.water_vertex_shader.data == nullptr);
+    REQUIRE(config.water_vertex_shader.size == 0);
+    REQUIRE(config.water_pixel_shader.data == nullptr);
+    REQUIRE(config.water_pixel_shader.size == 0);
+    REQUIRE(config.water_surface == WaterSurfaceSettings{});
 
     const TerrainChunkUploadView chunk;
     REQUIRE(chunk.first_index == 0);
@@ -57,6 +63,7 @@ TEST_CASE(
     REQUIRE(
         frame.environment_lighting_mode ==
         EnvironmentLightingMode::image_based);
+    REQUIRE(frame.visual_time_seconds == 0.0F);
     REQUIRE_FALSE(frame.terrain_diagnostics_enabled);
 
     STATIC_REQUIRE(
@@ -117,5 +124,26 @@ TEST_CASE(
     REQUIRE(changed != baseline);
     changed = baseline;
     changed.terrain_geometry_committed_bytes = 65'536;
+    REQUIRE(changed != baseline);
+    changed = baseline;
+    changed.pix_water_events = 1;
+    REQUIRE(changed != baseline);
+    changed = baseline;
+    changed.gpu_water_total_ticks = 1;
+    REQUIRE(changed != baseline);
+    changed = baseline;
+    changed.gpu_water_min_ticks = 1;
+    REQUIRE(changed != baseline);
+    changed = baseline;
+    changed.gpu_water_max_ticks = 1;
+    REQUIRE(changed != baseline);
+    changed = baseline;
+    changed.gpu_water_last_ticks = 1;
+    REQUIRE(changed != baseline);
+    changed = baseline;
+    changed.water_draw_calls = 1;
+    REQUIRE(changed != baseline);
+    changed = baseline;
+    changed.water_vertices = 6;
     REQUIRE(changed != baseline);
 }

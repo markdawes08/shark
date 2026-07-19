@@ -10,6 +10,8 @@ set(skybox_shader_source
     "${CMAKE_CURRENT_SOURCE_DIR}/sky/skybox.hlsl")
 set(terrain_shader_source
     "${CMAKE_CURRENT_SOURCE_DIR}/terrain/terrain.hlsl")
+set(water_shader_source
+    "${CMAKE_CURRENT_SOURCE_DIR}/water/water.hlsl")
 set(material_sphere_shader_source
     "${CMAKE_CURRENT_SOURCE_DIR}/material_sphere/material_sphere.hlsl")
 set(tone_map_shader_source
@@ -142,6 +144,49 @@ add_custom_target(SharkTerrainShaders
         "${pbr_ibl_shader_include}"
 )
 set_property(TARGET SharkTerrainShaders PROPERTY FOLDER "Shark/Shaders")
+
+shark_compile_hlsl(
+    SOURCE "${water_shader_source}"
+    ENTRY_POINT VSMain
+    PROFILE vs_6_0
+    OUTPUT_NAME water.vertex
+    SYMBOL shark_water_vertex_shader
+    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+set(water_vertex_binary "${SHARK_SHADER_BINARY}")
+set(water_vertex_header "${SHARK_SHADER_HEADER}")
+set(water_vertex_pdb "${SHARK_SHADER_PDB}")
+set(water_vertex_depfile "${SHARK_SHADER_DEPFILE}")
+
+shark_compile_hlsl(
+    SOURCE "${water_shader_source}"
+    ENTRY_POINT PSMain
+    PROFILE ps_6_0
+    OUTPUT_NAME water.pixel
+    SYMBOL shark_water_pixel_shader
+    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+set(water_pixel_binary "${SHARK_SHADER_BINARY}")
+set(water_pixel_header "${SHARK_SHADER_HEADER}")
+set(water_pixel_pdb "${SHARK_SHADER_PDB}")
+set(water_pixel_depfile "${SHARK_SHADER_DEPFILE}")
+
+add_custom_target(SharkWaterShaders
+    DEPENDS
+        "${water_vertex_binary}"
+        "${water_vertex_depfile}"
+        "${water_vertex_header}"
+        "${water_vertex_pdb}"
+        "${water_pixel_binary}"
+        "${water_pixel_depfile}"
+        "${water_pixel_header}"
+        "${water_pixel_pdb}"
+    SOURCES
+        "${water_shader_source}"
+        "${cube_shader_include}"
+        "${daylight_shader_include}"
+)
+set_property(TARGET SharkWaterShaders PROPERTY FOLDER "Shark/Shaders")
 
 shark_compile_hlsl(
     SOURCE "${material_sphere_shader_source}"
@@ -299,6 +344,30 @@ set(SHARK_TERRAIN_VERTEX_DEPFILE
 )
 set(SHARK_TERRAIN_PIXEL_DEPFILE
     "${terrain_pixel_depfile}"
+    PARENT_SCOPE
+)
+set(SHARK_WATER_SHADER_TARGET
+    SharkWaterShaders
+    PARENT_SCOPE
+)
+set(SHARK_WATER_SHADER_INCLUDE_DIRECTORY
+    "${CMAKE_BINARY_DIR}/generated/shaders/$<CONFIG>"
+    PARENT_SCOPE
+)
+set(SHARK_WATER_VERTEX_HEADER
+    "${water_vertex_header}"
+    PARENT_SCOPE
+)
+set(SHARK_WATER_PIXEL_HEADER
+    "${water_pixel_header}"
+    PARENT_SCOPE
+)
+set(SHARK_WATER_VERTEX_DEPFILE
+    "${water_vertex_depfile}"
+    PARENT_SCOPE
+)
+set(SHARK_WATER_PIXEL_DEPFILE
+    "${water_pixel_depfile}"
     PARENT_SCOPE
 )
 set(SHARK_MATERIAL_SPHERE_SHADER_TARGET

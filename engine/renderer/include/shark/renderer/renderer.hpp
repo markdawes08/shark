@@ -138,6 +138,27 @@ struct EnvironmentLightingUploadView final {
     Texture2DUploadView brdf_lut;
 };
 
+// A bounded, presentation-only horizontal water surface. The visible domain
+// is the intersection of the warped rho <= 1 field and this procedural
+// six-vertex quad. The explicit quad selects the intended local basin even
+// when the polynomial warp has remote mathematical solutions.
+struct WaterSurfaceSettings final {
+    math::Float3 center{};
+    float semi_axis_x{};
+    float semi_axis_z{};
+    float x_warp_square_offset{};
+    float x_warp_divisor{};
+    float z_warp_square_offset{};
+    float z_warp_divisor{};
+    float core_depth{};
+    float render_half_extent_x{};
+    float render_half_extent_z{};
+
+    [[nodiscard]] friend bool operator==(
+        const WaterSurfaceSettings&,
+        const WaterSurfaceSettings&) noexcept = default;
+};
+
 // Procedural-daylight fallback controls for the environment renderer
 // boundary. Six float4-compatible rows are copied directly after the two
 // camera matrices in b0.
@@ -195,6 +216,8 @@ struct RendererConfig final {
     ShaderBytecodeView skybox_pixel_shader{};
     ShaderBytecodeView terrain_vertex_shader{};
     ShaderBytecodeView terrain_pixel_shader{};
+    ShaderBytecodeView water_vertex_shader{};
+    ShaderBytecodeView water_pixel_shader{};
     ShaderBytecodeView material_sphere_vertex_shader{};
     ShaderBytecodeView material_sphere_pixel_shader{};
     ShaderBytecodeView tone_map_vertex_shader{};
@@ -203,6 +226,7 @@ struct RendererConfig final {
     TerrainMeshUploadView terrain_mesh{};
     TerrainMaterialUploadView terrain_materials{};
     EnvironmentLightingUploadView environment_lighting{};
+    WaterSurfaceSettings water_surface{};
     bool synchronize_to_vertical_refresh{true};
 };
 
@@ -216,6 +240,7 @@ struct RenderFrameData final {
         TerrainMaterialView::shaded};
     EnvironmentLightingMode environment_lighting_mode{
         EnvironmentLightingMode::image_based};
+    float visual_time_seconds{};
     bool terrain_diagnostics_enabled{false};
 };
 
@@ -253,6 +278,7 @@ struct RendererStats final {
     std::uint64_t pix_pass_events{};
     std::uint64_t pix_terrain_events{};
     std::uint64_t pix_textured_cube_events{};
+    std::uint64_t pix_water_events{};
     std::uint64_t pix_skybox_events{};
     std::uint64_t pix_tone_map_events{};
     std::uint64_t gpu_timestamp_frequency_hz{};
@@ -273,6 +299,10 @@ struct RendererStats final {
     std::uint64_t gpu_textured_cube_min_ticks{};
     std::uint64_t gpu_textured_cube_max_ticks{};
     std::uint64_t gpu_textured_cube_last_ticks{};
+    std::uint64_t gpu_water_total_ticks{};
+    std::uint64_t gpu_water_min_ticks{};
+    std::uint64_t gpu_water_max_ticks{};
+    std::uint64_t gpu_water_last_ticks{};
     std::uint64_t gpu_skybox_total_ticks{};
     std::uint64_t gpu_skybox_min_ticks{};
     std::uint64_t gpu_skybox_max_ticks{};
@@ -283,6 +313,8 @@ struct RendererStats final {
     std::uint64_t gpu_tone_map_last_ticks{};
     std::uint64_t cube_draw_calls{};
     std::uint64_t cube_indices{};
+    std::uint64_t water_draw_calls{};
+    std::uint64_t water_vertices{};
     std::uint64_t skybox_draw_calls{};
     std::uint64_t skybox_indices{};
     std::uint64_t terrain_draw_calls{};

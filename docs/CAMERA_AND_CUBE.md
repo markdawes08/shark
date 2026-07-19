@@ -1,6 +1,7 @@
 # Camera, Reversed-Z Depth, Cube, and Skybox Contract
 
-- **Completed through:** `T-008`
+- **Camera/cube capability completed through:** `G-005`
+- **Renderer integration verified through:** `W-001`
 - **Last verified:** July 19, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
@@ -328,7 +329,8 @@ input, cursor lock, configurable action map, gamepad support, fixed simulation
 clock, pixel readback, or golden-image testing.
 
 The graph remains frame-local and limited to imported whole resources, now
-with ordered `Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` passes. See
+with ordered `Terrain`, `TexturedCube`, `Skybox`, `Water`, and `ToneMap`
+passes. See
 [the render-graph contract](RENDER_GRAPH.md) for its exact ordering/barriers,
 [the DDS cubemap contract](DDS_CUBEMAP.md) for the source texture, and
 [the skybox contract](SKYBOX.md) for the HDR environment and procedural
@@ -343,13 +345,9 @@ final translation-only near pose to exercise both terrain index ranges;
 Debug/Release hardware, normal WARP, and focused GBV validation passed. The
 evidence remains historical.
 
-`T-008` publishes the interactive spawn, dry basin, analytic footprint, core,
-and future waterline without changing cube geometry, sky motion, depth, input,
-or the deterministic smoke schedule. Active T-008 validation passed the Debug
-build and all `150/150` tests in 195.60 seconds and the Release build and all
-`150/150` in 157.45 seconds, including exact hardware/WARP/WARP+GBV
-presentation accounting. Rain remains deferred under the San Andreas-class
-ceiling. The next increment is `W-001`: clip a static water plane to T-008's
-immutable analytic upper support at its published waterline; canonical-terrain
-depth testing determines the visible shoreline, terrain remains unchanged, and
-no fluid simulation is claimed.
+`T-008` publishes the interactive spawn and basin metadata without changing
+cube geometry, sky motion, depth, input, or the deterministic smoke schedule.
+`W-001` adds only presentation-time water input and preserves those camera and
+cube contracts. This component page no longer duplicates the rolling project
+queue; [ENGINE_PLAN.md](ENGINE_PLAN.md) is the roadmap source of truth. Rain
+remains deferred under the San Andreas-class ceiling.

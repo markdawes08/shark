@@ -1,6 +1,7 @@
 # Direct3D 12 Device Contract
 
-- **Completed through:** `T-008`
+- **Device capability completed through:** `G-001`
+- **Renderer integration verified through:** `W-001`
 - **Last verified:** July 19, 2026
 
 G-001 establishes adapter discovery, diagnostics, capability reporting, and
@@ -112,13 +113,14 @@ verification. `--present-smoke` accepts the normal GPU selectors and optional
 GPU-based validation, creates a real window, presents exactly 1,000 successful
 frames normally or 120 in the focused GPU-validation mode, containing the
 visible indexed terrain chunks, matching magenta chunk bounds, material sphere,
-cyan terrain-query marker, cube, and skybox plus final tone mapping, verifies
+cyan terrain-query marker, cube, skybox, visual water, and final tone mapping,
+verifies
 camera/depth/HDR/resource/graph lifecycles, and exits. The default interactive
 path keeps the device alive while the free-fly camera, IBL-lit terrain and
-query-normal pin, material sphere, textured cube, and HDR sky run as
-`Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` passes. `F3` retains the
-procedural-daylight fallback. The startup DDS cubemap remains an asset/upload
-proof and is not imported, bound, or sampled per frame.
+query-normal pin, material sphere, textured cube, HDR sky, and visual lake run
+as `Terrain`, `TexturedCube`, `Skybox`, `Water`, and `ToneMap` passes. `F3`
+retains the procedural-daylight fallback. The startup DDS cubemap remains an
+asset/upload proof and is not imported, bound, or sampled per frame.
 
 ## Required and optional capabilities
 
@@ -236,14 +238,9 @@ Debug/Release, normal WARP, and focused GBV validation passed the four-phase
 smoke with zero corruption/errors and zero live child objects; that evidence is
 historical.
 
-`T-008` composes the CPU height tile and publishes scenario metadata. It changes
-no adapter selection, capability gate, queue, fence, heap, descriptor, resource
-lifetime, or D3D12 object count, and it creates no water resource. Active T-008
-validation passed the Debug build and all `150/150` tests in 195.60 seconds and
-the Release build and all `150/150` in 157.45 seconds. Hardware, WARP, and
-WARP+GBV presentation passed in both configurations with exact accounting.
-Rain remains deferred under the approved San Andreas-class ceiling. The next
-increment is `W-001`: add a static water plane clipped to T-008's immutable
-analytic upper support at its published waterline. Canonical-terrain depth
-testing determines the visible shoreline; terrain remains unchanged and no
-fluid simulation is claimed.
+`T-008` and `W-001` change no adapter selection, capability gate, queue, fence,
+heap, descriptor-lifetime, or device-removal policy. Water's root signature
+and PSO remain renderer-owned objects covered by the existing shutdown and
+live-object validation. This component page no longer duplicates the rolling
+project queue; [ENGINE_PLAN.md](ENGINE_PLAN.md) is the roadmap source of truth.
+Rain remains deferred under the approved San Andreas-class ceiling.

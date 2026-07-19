@@ -1,8 +1,9 @@
 # Sky and HDR Environment-Lighting Contract
 
-- **Completed through:** `T-008`
+- **Sky capability completed through:** `S-003`
+- **Renderer integration verified through:** `W-001`
 - **Last verified:** July 19, 2026
-- **Next planned increment:** `W-001` - bounded visual lake surface
+- **Active roadmap:** [ENGINE_PLAN.md](ENGINE_PLAN.md)
 
 Shark still uses a skybox as the background rasterization technique: a cube is
 drawn around the camera with a translation-free view matrix and forced to the
@@ -171,13 +172,13 @@ EnvironmentBrdfLut
 Its exact submitted-frame contract is:
 
 ```text
-pass order              Terrain -> TexturedCube -> Skybox -> ToneMap
+pass order              Terrain -> TexturedCube -> Skybox -> Water -> ToneMap
 imports                 15
-passes                   4
-dependencies             3
+passes                   5
+dependencies             5
 emitted transitions      6
-elided transitions      31
-texture-table binds      4
+elided transitions      34
+texture-table binds      5
 ```
 
 The six barriers move scene color into render-target state, depth into
@@ -188,12 +189,14 @@ pixel-shader-read state.
 
 With `V` visible terrain chunks, a normal submitted frame issues `V + 3`
 indexed draws: `V` selected LOD0/coarse chunk surfaces, the material sphere,
-textured cube, and skybox. Default-off `F4` diagnostics add `V` matching
+textured cube, and skybox. Water adds one non-indexed procedural six-vertex
+draw after the sky, and `ToneMap` adds one non-indexed fullscreen-triangle
+draw. Default-off `F4` diagnostics add `V` matching
 magenta chunk bounds and the terrain query marker. LOD0 surfaces use 1,536
-indices and coarse surfaces use 864. `ToneMap` adds one non-indexed
-fullscreen-triangle draw. Both surface ranges, bounds, marker, and sphere share
-the packed terrain buffers, so the static scene still contains four geometry
-buffers. Sky remains exactly one indexed draw.
+indices and coarse surfaces use 864. Both surface ranges, bounds, marker, and
+sphere share the packed terrain buffers, so the static scene still contains
+four geometry buffers. Sky remains exactly one indexed draw, and W-001 adds no
+water geometry buffer.
 
 The stable PIX hierarchy is:
 
@@ -202,11 +205,12 @@ Frame
   Terrain
   TexturedCube
   Skybox
+  Water
   ToneMap
 ```
 
-Each of the four pass intervals has a begin/end timestamp. Together with frame
-begin/end, this requires exactly ten timestamps per frame-context slice and 30
+Each of the five pass intervals has a begin/end timestamp. Together with frame
+begin/end, this requires exactly 12 timestamps per frame-context slice and 36
 timestamps across three contexts. Timing results remain fence-delayed and add
 no normal-frame queue drain.
 
@@ -230,10 +234,9 @@ Verify:
    procedural fallback. Both modes remain finite and visually usable.
 5. `F1`/`F2`, resize, minimize/restore, and clean shutdown preserve depth,
    material diagnostics, tone mapping, and Direct3D validation.
-6. The T-008 landscape reads as broad natural rolling ground with a smoothly
-   irregular dry basin visible from the scenario-owned spawn under both
-   lighting modes; no water pixels exist, and the cube and material sphere
-   remain dry and unburied.
+6. The W-001 lake remains visible in solid and wireframe terrain modes, blends
+   over the already-rendered sky/terrain, and reflects the selected
+   environment without changing the one-draw sky policy.
 7. `--present-smoke` ends at the smoke-only `(16, -1, 0)` near pose with the
    preceding yaw/pitch unchanged. Its exact scene/sky matrix-change counts are
    `4/3`: translation changes terrain visibility to `61 (1/60)` without
@@ -261,12 +264,10 @@ ranges live without changing those sky contracts. Hardware Debug/Release,
 normal WARP, and focused GBV validation passed as historical evidence.
 
 `T-008` composes the CPU terrain and publishes dry spawn/basin metadata without
-changing sky pixels, environment textures, daylight settings, shaders,
-descriptors, or the one-draw sky policy. Active T-008 validation passed the
-Debug build and all `150/150` tests in 195.60 seconds and the Release build and
-all `150/150` in 157.45 seconds, including the registered graphics gates. Rain
-remains deferred under the San Andreas-class ceiling. The next increment is
-`W-001`: clip a static water plane to the immutable T-008 analytic upper
-support at the published waterline. Canonical-terrain depth testing determines
-the visible shoreline; terrain remains unchanged and no fluid simulation is
-claimed.
+changing environment textures, daylight settings, shaders, descriptors, or
+the one-draw sky policy. `W-001` preserves those contracts and places
+transparent water after the opaque sky so wireframe terrain cannot expose
+clear pixels that overwrite the lake. This component page no longer duplicates
+the rolling project queue; [ENGINE_PLAN.md](ENGINE_PLAN.md) is the source of
+truth for the next increment. Rain remains deferred under the San
+Andreas-class ceiling.

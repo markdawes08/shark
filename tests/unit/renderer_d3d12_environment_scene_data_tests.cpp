@@ -15,7 +15,22 @@ TEST_CASE(
     STATIC_REQUIRE(material_sphere_rings == 11);
     STATIC_REQUIRE(material_sphere_vertex_count == 266);
     STATIC_REQUIRE(material_sphere_index_count == 1'584);
+    STATIC_REQUIRE(
+        material_sphere_translation_root_parameter == 3);
+    STATIC_REQUIRE(
+        material_sphere_translation_root_constant_count == 3);
+    STATIC_REQUIRE(
+        sizeof(MaterialSphereTranslationRootConstants) == 12);
     STATIC_REQUIRE(sizeof(EnvironmentVertex) == sizeof(float) * 6U);
+
+    const auto identity_translation =
+        make_material_sphere_translation(material_sphere_center);
+    REQUIRE(identity_translation.translation ==
+        shark::math::Float3{});
+    const auto translated = make_material_sphere_translation(
+        {-128.0F, 10.0F, -44.0F});
+    REQUIRE(translated.translation ==
+        shark::math::Float3{-131.0F, 8.75F, -43.0F});
 
     const auto mesh = make_material_sphere_mesh();
     REQUIRE(mesh.vertices.size() == material_sphere_vertex_count);

@@ -61,6 +61,9 @@ TEST_CASE(
     REQUIRE(
         frame.camera_world_position == shark::math::Float3{});
     REQUIRE(
+        frame.material_sphere_world_position ==
+        shark::math::Float3{3.0F, 1.25F, -1.0F});
+    REQUIRE(
         frame.environment_lighting_mode ==
         EnvironmentLightingMode::image_based);
     REQUIRE(frame.visual_time_seconds == 0.0F);

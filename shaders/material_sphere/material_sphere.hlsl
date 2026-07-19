@@ -1,6 +1,11 @@
 #include "shared/camera_constants.hlsli"
 #include "shared/pbr_ibl.hlsli"
 
+cbuffer MaterialSphereTransform : register(b2)
+{
+    float3 material_sphere_translation;
+}
+
 struct VertexInput
 {
     float3 position : POSITION;
@@ -17,10 +22,12 @@ struct VertexOutput
 VertexOutput VSMain(const VertexInput input)
 {
     VertexOutput output;
+    const float3 world_position =
+        input.position + material_sphere_translation;
     output.position = mul(
-        float4(input.position, 1.0F),
+        float4(world_position, 1.0F),
         view_projection);
-    output.world_position = input.position;
+    output.world_position = world_position;
     output.normal = input.normal;
     return output;
 }

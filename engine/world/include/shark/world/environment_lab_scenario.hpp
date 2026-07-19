@@ -34,6 +34,7 @@ struct EnvironmentLabScenario final {
     terrain::LakeBasinShape lake_basin;
     math::Float3 lake_core_position;
     math::Float3 spawn_ground_position;
+    math::Float3 ballistic_body_spawn_position;
     Camera spawn_camera;
 };
 

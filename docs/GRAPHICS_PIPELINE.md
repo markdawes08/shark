@@ -1,6 +1,6 @@
 # HLSL Graphics Pipeline Contract
 
-- **Completed through:** `W-001`
+- **Completed through:** `PHY-001`
 - **Last verified:** July 19, 2026
 
 Shark compiles all production HLSL at build time with a pinned retail DXC and
@@ -9,6 +9,8 @@ adds one bounded visual-water program and immutable PSO to the existing cube,
 terrain, sky, material-sphere, and tone-map programs. The
 pipeline still includes S-003's shared image-based-lighting helpers,
 material-sphere proof, linear-HDR scene target, and final tone-map program.
+PHY-001 changes only the material-sphere vertex transform: three `b2` root
+constants translate its existing geometry to an interpolated body position.
 This remains a focused scene contract, not a general shader asset,
 material-graph, or pipeline-cache system.
 
@@ -120,9 +122,11 @@ Specular reconstruction uses the fixed dielectric `F0` in
 `prefiltered * (F0 * scale + bias)` because the LUT's scale/bias already
 integrates angular Fresnel.
 
-The material-sphere shader consumes deterministic position/normal geometry and
-uses the same sun and IBL functions on a glossy neutral dielectric. It is a
-lighting proof, not a general material instance.
+The material-sphere shader consumes deterministic position/normal geometry,
+adds a three-float `b2` translation to each authored position, and uses the same
+sun and IBL functions on a glossy neutral dielectric. The translation is the
+only PHY-001 simulation/render bridge; the sphere remains a lighting proof,
+not a general material instance.
 
 The cube shader samples the deterministic checker. The sky shader forces
 reversed-Z far depth, normalizes the world direction, and either samples the
@@ -158,7 +162,8 @@ descriptor allocator or bindless convention.
   point-wrap static sampler.
 - The terrain signature contains the frame CBV, material/environment root
   constants, one six-SRV table spanning slots 2-7, and an anisotropic-wrap
-  static sampler. The material sphere reuses it.
+  static sampler. The material sphere reuses it and reads three vertex-visible
+  translation constants from its `b2` root parameter.
 - The water signature contains the frame CBV, 20 surface root constants, one
   radiance SRV table, and a linear-clamp static sampler.
 - The sky signature contains the frame CBV, environment-mode constants, one
@@ -225,8 +230,9 @@ Each non-minimized frame then:
 2. stages one 256-byte constants/probe record;
 3. composes the exact 15-import/five-pass HDR frame graph;
 4. executes `Terrain`, including one selected LOD0/coarse surface per visible
-   chunk plus the sphere; default-off `F4` diagnostics additionally draw each
-   visible chunk's magenta bounds and the query marker;
+   chunk plus the sphere translated from PHY-001's immutable interpolated body
+   snapshot; default-off `F4` diagnostics additionally draw each visible
+   chunk's magenta bounds and the query marker;
 5. executes `TexturedCube`;
 6. executes the far-depth `Skybox`;
 7. composites the local-domain `Water` pass;
@@ -241,7 +247,8 @@ submitted-frame draw contract is:
 ```text
 LOD0 terrain chunks      V0 * DrawIndexedInstanced(1,536, ...)
 coarse terrain chunks    Vc * DrawIndexedInstanced(864, ...)
-material sphere          DrawIndexedInstanced(1,584, ...)
+material sphere at b2 translation
+                         DrawIndexedInstanced(1,584, ...)
 visible chunk AABBs      F4 ? V * DrawIndexedInstanced(24, ...) : 0
 terrain query marker     F4 ? DrawIndexedInstanced(6, ...) : 0
 textured cube            DrawIndexedInstanced(36, ...)
@@ -306,5 +313,9 @@ environment-radiance binding, six-vertex procedural draw, named PIX scope,
 and timestamp pair. It deliberately adds no input element, geometry buffer,
 water texture, persistent descriptor, or simulated state. Terrain retains the
 exact `0/93 -> 0/72 -> 1/60` smoke schedule. Rain remains deferred and the San
-Andreas-class ceiling is unchanged. The next increment is `PHY-001`
-deterministic fixed-step motion.
+Andreas-class ceiling is unchanged.
+
+PHY-001 adds the material-sphere `b2` translation without adding a shader
+stage, PSO, descriptor, geometry buffer, graph pass, water state, or fluid
+coupling. The next increment is `PHY-002`, sphere contact with canonical
+terrain.

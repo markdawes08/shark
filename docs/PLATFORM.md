@@ -2,8 +2,9 @@
 
 - **Increment:** `F-004` host contract; DPI policy completed by `G-002`;
   focus event and first camera consumer added by `G-005`; renderer consumer
-  boundary verified by `REN-001`
-- **Last verified:** July 18, 2026
+  boundary verified by `REN-001`; simulation-control consumer added by
+  `PHY-001`
+- **Last verified:** July 19, 2026
 
 F-004 establishes the Windows host boundary used by later graphics and
 simulation increments. `SharkSandbox` remains a console-subsystem executable so
@@ -96,6 +97,11 @@ dropped event, so a lost release or focus record cannot latch motion. It also
 forwards `WindowFocusChangedEvent` to the controller so focus loss clears held
 keys and mouse-drag state. None of that camera policy belongs to `Application`.
 
+PHY-001 adds a second narrow consumer at the composition root. Non-repeat
+`F5` key presses toggle the fixed-step simulation between paused and running;
+`F6` requests one tick while paused. `Application` still emits only an ordinary
+`KeyEvent` and owns no pause, single-step, clock, physics, or renderer policy.
+
 Text input, IME composition, raw input, an engine-wide key enum, configurable
 gameplay action mapping, cursor capture/recentering, and gamepad input remain
 separate future concerns.
@@ -160,10 +166,12 @@ exact physical client sizing.
 The platform layer owns no DXGI, Direct3D 12, WARP, swap-chain, or renderer
 objects. Graphics consumes only its opaque native handle, physical client
 extent, and raw events. The small G-005 free-fly controller is sandbox policy,
-not a platform input abstraction. A reusable gameplay input/action system, raw
-mouse/cursor-lock mode, fixed simulation clock, multi-window support,
-fullscreen policy, and editor behavior remain deferred.
+not a platform input abstraction. PHY-001's fixed clock and `F5`/`F6` bindings
+also live above the platform boundary. A reusable gameplay input/action system,
+raw mouse/cursor-lock mode, multi-window support, fullscreen policy, and editor
+behavior remain deferred.
 
 See [the camera and textured-cube contract](CAMERA_AND_CUBE.md) for the exact
 G-005 bindings and the ownership boundary between the raw event producer and
-camera consumer.
+camera consumer. See [the simulation contract](SIMULATION.md) for the separate
+fixed-step consumer.

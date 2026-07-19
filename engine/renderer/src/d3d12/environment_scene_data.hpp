@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <numbers>
+#include <type_traits>
 #include <vector>
 
 namespace shark::renderer::d3d12::detail {
@@ -23,6 +24,27 @@ inline constexpr math::Float3 material_sphere_center{
     -1.0F,
 };
 inline constexpr float material_sphere_radius = 1.0F;
+inline constexpr std::uint32_t
+    material_sphere_translation_root_parameter = 3;
+inline constexpr std::uint32_t
+    material_sphere_translation_root_constant_count = 3;
+
+struct MaterialSphereTranslationRootConstants final {
+    math::Float3 translation{};
+};
+
+[[nodiscard]] constexpr MaterialSphereTranslationRootConstants
+make_material_sphere_translation(
+    const math::Float3 world_position) noexcept
+{
+    return {
+        .translation = {
+            world_position.x - material_sphere_center.x,
+            world_position.y - material_sphere_center.y,
+            world_position.z - material_sphere_center.z,
+        },
+    };
+}
 
 struct EnvironmentVertex final {
     math::Float3 position;
@@ -135,6 +157,10 @@ struct MaterialSphereMesh final {
 }
 
 static_assert(sizeof(EnvironmentVertex) == sizeof(float) * 6U);
+static_assert(
+    std::is_standard_layout_v<
+        MaterialSphereTranslationRootConstants>);
+static_assert(sizeof(MaterialSphereTranslationRootConstants) == 12);
 static_assert(material_sphere_vertex_count == 266);
 static_assert(material_sphere_index_count == 1'584);
 

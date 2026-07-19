@@ -1,6 +1,6 @@
 # Building Shark
 
-- **Completed through:** `W-001`
+- **Completed through:** `PHY-001`
 - **Last verified:** July 19, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
@@ -126,7 +126,10 @@ toggle terrain fill between solid and wireframe. Press `F2` to cycle shaded,
 ground/rock weight, and mapped world-normal views. Press `F3` to toggle between
 HDR image-based lighting and the retained procedural-daylight fallback. Press
 `F4` to toggle the query-derived cyan normal pin and magenta chunk bounds,
-which are off by default. Use
+which are off by default. The collision-free material sphere starts paused at
+its scenario-owned spawn. Press `F6` to advance it by exactly one 60 Hz
+simulation tick while paused, or press `F5` to resume/pause continuous
+fixed-step motion. Use
 `W`/`S` along the
 camera forward axis, `A`/`D` to strafe, `Q`/`E` to move down/up, hold `Shift`
 to move faster, and hold the right mouse button while dragging to look around.
@@ -540,6 +543,9 @@ completed the fixed-seed, Q8 natural rolling-height contract on July 19, 2026
 while retaining T-006's topology, resource budgets, canonical queries, and
 global `R16_UINT` indices. Its historical construction timings and graphics
 evidence are recorded above.
+See [the fixed-step simulation contract](SIMULATION.md) for the 60 Hz clock,
+pause/single-step controls, semi-implicit ballistic state, immutable render
+interpolation, and the intentional absence of collision in PHY-001.
 
 W-001 consumes that scenario-owned waterline in a dedicated transparent pass
 after `Skybox`. The vertex shader expands a six-vertex quad from `SV_VertexID`
@@ -556,8 +562,9 @@ Debug hardware/WARP/GBV presentation gates plus a Release hardware smoke for
 ordinary pass/shader work; reserve the full Debug/Release graphics matrix for
 RHI, synchronization, lifetime, or milestone changes.
 
-The next increment is `PHY-001`: add deterministic fixed-step ballistic
-motion without collision or water coupling. Rain remains deferred.
+PHY-001 leaves the W-001 lake presentation-only and adds no water resource,
+fluid state, or coupling. The next increment is `PHY-002`: make the existing
+sphere contact and rest on canonical LOD0 terrain. Rain remains deferred.
 
 ## Visual Studio
 

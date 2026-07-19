@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 19, 2026
-- **Latest completed:** `W-001` - bounded visual lake surface
-- **Next increment:** `PHY-001` - deterministic fixed-step motion
+- **Latest completed:** `PHY-001` - deterministic fixed-step motion
+- **Next increment:** `PHY-002` - sphere contact with canonical terrain
 
 ## 1. Project direction
 
@@ -604,8 +604,14 @@ easy to verify. Add analytic primitive contacts, sequential impulses, friction,
 and restitution before considering arbitrary convex shapes, GJK/EPA, CCD,
 islands, or sleeping.
 
-The first physics proof is simple: a sphere falls, contacts the displayed
-terrain, and rests without hovering, penetrating, or changing behavior when the
+PHY-001 completes the timing and motion foundation: an initially paused fixed
+60 Hz clock supports `F5` pause/resume and `F6` single-step, one collision-free
+body advances under gravity with semi-implicit Euler, and rendering consumes an
+immutable interpolation of previous/current snapshots through the existing
+material sphere's `b2` translation. The visual lake remains presentation-only.
+
+The next physics proof is simple: that sphere contacts the displayed canonical
+terrain and rests without hovering, penetrating, or changing behavior when the
 render frame rate changes.
 
 ### Water and fluids
@@ -786,7 +792,7 @@ M5.
 
 | ID | Level | Increment and acceptance gate | Suggested commit |
 |---|---:|---|---|
-| `PHY-001` | S | Add fixed 60 Hz scheduling, pause/single-step, gravity, and a collision-free ballistic test that is invariant across render rates | `feat(physics): add deterministic fixed-step motion` |
+| `PHY-001` | S | Complete: add an initially paused fixed 60 Hz clock, `F5` pause/resume, `F6` single-step, standard gravity, semi-implicit collision-free motion invariant across render rates, immutable previous/current interpolation, and a three-constant `b2` translation for the existing material sphere | `feat(physics): add deterministic fixed-step motion` |
 | `PHY-002` | S | Add sphere-versus-canonical-terrain contact; the sphere rests without hovering or penetration and normals are debug-drawn | `feat(physics): add sphere terrain contact` |
 | `PHY-003` | S | Add multiple spheres, brute-force pair generation, normal impulses, and restitution with analytic tests | `feat(physics): add sphere body collisions` |
 | `PHY-004` | S | Add orientation, angular velocity, inertia, torque, and angular integration with a torque-response test | `feat(physics): add angular rigid-body state` |
@@ -853,7 +859,7 @@ this section competes with the coupled-environment critical path through M7.
 ### Deferred visual-weather track
 
 The owner deferred these effects on July 19, 2026. They remain approved but
-have no position on the active `PHY-001 -> PHY-002`
+have no position on the active `PHY-002 -> PHY-003`
 path. Resuming one requires a small plan update; skipping them does not remove
 the numerical precipitation rate used by later hydrology.
 
@@ -956,15 +962,17 @@ online architecture is not implied.
 
 ## 14. Immediate next increment
 
-After W-001 is reviewed and committed by the owner, implement only `PHY-001`:
+After PHY-001 is reviewed and committed by the owner, implement only `PHY-002`:
 
-- add a fixed 60 Hz simulation clock independent of render rate;
-- support pause and deterministic single-step controls;
-- advance one collision-free body with gravity using semi-implicit Euler;
-- interpolate previous/current simulation snapshots for rendering;
-- verify the same ballistic trajectory at several render rates; and
-- stop before terrain contact, body/body collision, angular state, buoyancy,
-  or any water coupling.
+- give the existing ballistic sphere a terrain-contact radius;
+- query height and geometric normal from the canonical LOD0 terrain surface,
+  never from render LOD or a D3D12 resource;
+- resolve penetration and normal velocity so the sphere falls and rests on the
+  displayed surface at the same fixed 60 Hz rate;
+- expose a bounded contact-normal diagnostic and test flat, sloped, boundary,
+  and render-rate-independent resting cases; and
+- stop before body/body collision, friction/restitution beyond the minimum
+  terrain response, angular state, buoyancy, or any water coupling.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -1027,8 +1035,8 @@ and a 12-query timing layout. The exact graph is `15/5/5/6/34` for
 imports/passes/dependencies/transitions/elisions. It adds no water GPU
 resource, descriptor, geometry buffer, terrain mutation, or simulation state.
 
-The active queue is `PHY-001` fixed-step physics, then `PHY-002` sphere versus
-canonical-terrain contact. `R-001` through `R-004` remain deferred.
+The active queue is `PHY-002` sphere versus canonical-terrain contact, then
+`PHY-003` sphere body collisions. `R-001` through `R-004` remain deferred.
 
 ## 15. Primary technical references
 

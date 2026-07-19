@@ -903,6 +903,8 @@ static_assert(
     return math::is_finite(frame_data.view_projection) &&
         math::is_finite(frame_data.sky_view_projection) &&
         math::is_finite(frame_data.camera_world_position) &&
+        math::is_finite(
+            frame_data.material_sphere_world_position) &&
         backend_detail::valid_daylight_settings(frame_data.daylight) &&
         valid_terrain_mode(frame_data.terrain_mode) &&
         backend_detail::valid_terrain_material_view(
@@ -1671,6 +1673,7 @@ public:
         const UINT timestamp_query_base,
         const TerrainRenderMode mode,
         const math::Float3 camera_world_position,
+        const math::Float3 material_sphere_world_position,
         const TerrainMaterialView material_view,
         const EnvironmentLightingMode environment_mode,
         const bool terrain_diagnostics_enabled)
@@ -1877,6 +1880,16 @@ public:
         }
 
         command_list->SetPipelineState(material_sphere_pipeline.Get());
+        const auto material_sphere_translation =
+            backend_detail::make_material_sphere_translation(
+                material_sphere_world_position);
+        command_list->SetGraphicsRoot32BitConstants(
+            backend_detail::
+                material_sphere_translation_root_parameter,
+            backend_detail::
+                material_sphere_translation_root_constant_count,
+            &material_sphere_translation,
+            0);
         command_list->DrawIndexedInstanced(
             material_sphere_index_count,
             1,
@@ -5135,7 +5148,7 @@ core::Result<Renderer> Renderer::create(
     terrain_material_range.OffsetInDescriptorsFromTableStart =
         D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-    std::array<D3D12_ROOT_PARAMETER, 3>
+    std::array<D3D12_ROOT_PARAMETER, 4>
         terrain_root_parameters{};
     auto& terrain_camera_parameter =
         terrain_root_parameters[
@@ -5167,6 +5180,19 @@ core::Result<Renderer> Renderer::create(
         &terrain_material_range;
     terrain_table_parameter.ShaderVisibility =
         D3D12_SHADER_VISIBILITY_PIXEL;
+    auto& material_sphere_translation_parameter =
+        terrain_root_parameters[
+            backend_detail::
+                material_sphere_translation_root_parameter];
+    material_sphere_translation_parameter.ParameterType =
+        D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    material_sphere_translation_parameter.Constants.ShaderRegister = 2;
+    material_sphere_translation_parameter.Constants.RegisterSpace = 0;
+    material_sphere_translation_parameter.Constants.Num32BitValues =
+        backend_detail::
+            material_sphere_translation_root_constant_count;
+    material_sphere_translation_parameter.ShaderVisibility =
+        D3D12_SHADER_VISIBILITY_VERTEX;
 
     auto terrain_sampler = checker_sampler;
     terrain_sampler.Filter = D3D12_FILTER_ANISOTROPIC;
@@ -5817,8 +5843,9 @@ core::Result<RenderStatus> Renderer::render_frame(
         return core::Result<RenderStatus>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
             "Renderer frame view-projection matrices must be finite "
-            "and its camera, daylight settings, terrain fill mode, and "
-            "material/environment views must be valid"));
+            "and its camera, material-sphere position, daylight "
+            "settings, terrain fill mode, and material/environment "
+            "views must be valid"));
     }
     auto visibility_result =
         implementation_->update_terrain_visibility(
@@ -5869,6 +5896,8 @@ core::Result<RenderStatus> Renderer::render_frame(
                  terrain_mode = frame_data.terrain_mode,
                  camera_world_position =
                     frame_data.camera_world_position,
+                 material_sphere_world_position =
+                    frame_data.material_sphere_world_position,
                  material_view =
                     frame_data.terrain_material_view,
                  environment_mode =
@@ -5893,6 +5922,7 @@ core::Result<RenderStatus> Renderer::render_frame(
                         timestamp_query_base,
                         terrain_mode,
                         camera_world_position,
+                        material_sphere_world_position,
                         material_view,
                         environment_mode,
                         terrain_diagnostics_enabled);

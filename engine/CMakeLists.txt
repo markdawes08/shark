@@ -24,6 +24,8 @@ add_library(SharkEngine STATIC
     core/src/engine_info.cpp
     core/src/logging.cpp
     core/src/math.cpp
+    physics/include/shark/physics/ballistic_body.hpp
+    physics/src/ballistic_body.cpp
     platform/windows/include/shark/platform/application.hpp
     platform/windows/include/shark/platform/events.hpp
     platform/windows/src/application.cpp
@@ -52,6 +54,8 @@ add_library(SharkEngine STATIC
     rhi/d3d12/src/frame_resource_state.hpp
     rhi/d3d12/src/render_graph_executor.cpp
     rhi/d3d12/src/render_graph_executor.hpp
+    simulation/include/shark/simulation/fixed_step_clock.hpp
+    simulation/src/fixed_step_clock.cpp
     terrain/include/shark/terrain/height_tile.hpp
     terrain/include/shark/terrain/lake_basin.hpp
     terrain/include/shark/terrain/material_palette.hpp
@@ -68,10 +72,12 @@ target_include_directories(SharkEngine
     PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/assets/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/core/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/physics/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/platform/windows/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/render_graph/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/renderer/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/rhi/d3d12/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/simulation/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/terrain/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/world/include"
     PRIVATE

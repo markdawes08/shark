@@ -1,6 +1,6 @@
 # Renderer and Direct3D 12 Presentation/Frame-Resource Contract
 
-- **Completed through:** `W-001`
+- **Completed through:** `PHY-001`
 - **Last verified:** July 19, 2026
 
 `shark::renderer::Renderer` owns Shark's focused D3D12 scene/presentation
@@ -27,8 +27,9 @@ synchronously and retains no caller CPU pointer.
   GGX-prefiltered specular, and split-sum BRDF LUT.
 
 `RenderFrameData` carries finite scene/sky matrices, daylight settings, camera
-world position, terrain fill/material views, and the environment mode. `F3`
-selects image-based lighting or the retained procedural-daylight fallback.
+and material-sphere world positions, terrain fill/material views, and the
+environment mode. `F3` selects image-based lighting or the retained
+procedural-daylight fallback.
 Each `TerrainChunkUploadView` carries contiguous LOD0/coarse ranges, exact
 bounds, and the measured maximum geometric error. The renderer receives
 query-derived terrain marker geometry but does not own or perform canonical
@@ -363,5 +364,7 @@ or static upload. The frame now has 15 imports, five passes, five dependencies,
 six transitions, 34 elisions, and five texture bindings. Sky renders before
 premultiplied transparent water; canonical-terrain depth testing determines the
 visible shoreline. Terrain remains unchanged and no fluid simulation is
-claimed. Rain remains deferred under the San Andreas-class ceiling. The next
-increment is `PHY-001` deterministic fixed-step motion.
+claimed. PHY-001 uses three root constants to translate the existing sphere
+without changing frame-resource or presentation accounting. Rain remains
+deferred under the San Andreas-class ceiling. See
+[ENGINE_PLAN.md](ENGINE_PLAN.md) for the active increment queue.

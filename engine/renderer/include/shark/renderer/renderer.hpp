@@ -235,6 +235,11 @@ struct RenderFrameData final {
     math::Matrix4x4 sky_view_projection{};
     DaylightSettings daylight{};
     math::Float3 camera_world_position{};
+    math::Float3 material_sphere_world_position{
+        3.0F,
+        1.25F,
+        -1.0F,
+    };
     TerrainRenderMode terrain_mode{TerrainRenderMode::solid};
     TerrainMaterialView terrain_material_view{
         TerrainMaterialView::shaded};

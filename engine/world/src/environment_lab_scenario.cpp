@@ -34,7 +34,12 @@ inline constexpr terrain::HorizontalPoint environment_lab_spawn{
     -128.0F,
     -20.0F,
 };
+inline constexpr terrain::HorizontalPoint environment_lab_ballistic_body{
+    -128.0F,
+    -44.0F,
+};
 inline constexpr float environment_lab_spawn_eye_height = 2.0F;
+inline constexpr float environment_lab_ballistic_body_height = 12.0F;
 inline constexpr float environment_lab_spawn_pitch = -0.1F;
 inline constexpr float environment_lab_far_plane = 1'500.0F;
 inline constexpr float minimum_core_depth = 6.0F;
@@ -76,10 +81,17 @@ make_environment_lab_scenario()
     const auto spawn_height = surface.sample_lod0_height(
         environment_lab_spawn.x,
         environment_lab_spawn.z);
-    if (!core_height || !spawn_height) {
+    const auto ballistic_body_ground_height =
+        surface.sample_lod0_height(
+            environment_lab_ballistic_body.x,
+            environment_lab_ballistic_body.z);
+    if (!core_height ||
+        !spawn_height ||
+        !ballistic_body_ground_height) {
         return core::Result<EnvironmentLabScenario>::failure(
             scenario_error(
-                "Environment Lab core or spawn lies outside the terrain"));
+                "Environment Lab core, spawn, or ballistic body lies "
+                "outside the terrain"));
     }
     if (*core_height >
         environment_lab_lake_basin.future_waterline_y -
@@ -103,13 +115,20 @@ make_environment_lab_scenario()
         terrain::lake_basin_normalized_radius_squared(
             environment_lab_lake_basin.footprint,
             environment_lab_spawn);
+    const auto ballistic_body_field =
+        terrain::lake_basin_normalized_radius_squared(
+            environment_lab_lake_basin.footprint,
+            environment_lab_ballistic_body);
     if (!std::isfinite(core_field) ||
         !std::isfinite(spawn_field) ||
+        !std::isfinite(ballistic_body_field) ||
         core_field > 1.0 ||
-        spawn_field <= 1.0) {
+        spawn_field <= 1.0 ||
+        ballistic_body_field <= 1.0) {
         return core::Result<EnvironmentLabScenario>::failure(
             scenario_error(
-                "Environment Lab core/spawn footprint ownership is invalid"));
+                "Environment Lab core/spawn/body footprint ownership "
+                "is invalid"));
     }
 
     const math::Float3 core_position{
@@ -121,6 +140,12 @@ make_environment_lab_scenario()
         environment_lab_spawn.x,
         *spawn_height,
         environment_lab_spawn.z,
+    };
+    const math::Float3 ballistic_body_spawn{
+        environment_lab_ballistic_body.x,
+        *ballistic_body_ground_height +
+            environment_lab_ballistic_body_height,
+        environment_lab_ballistic_body.z,
     };
     Camera spawn_camera;
     spawn_camera.transform.position = {
@@ -138,6 +163,8 @@ make_environment_lab_scenario()
             .lake_basin = environment_lab_lake_basin,
             .lake_core_position = core_position,
             .spawn_ground_position = spawn_ground,
+            .ballistic_body_spawn_position =
+                ballistic_body_spawn,
             .spawn_camera = spawn_camera,
         });
 }

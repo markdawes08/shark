@@ -17,6 +17,7 @@ add_executable(SharkTests
     unit/engine_info_tests.cpp
     unit/logging_tests.cpp
     unit/math_tests.cpp
+    unit/physics_ballistic_body_tests.cpp
     unit/render_graph_tests.cpp
     unit/renderer_contract_tests.cpp
     unit/renderer_d3d12_cube_scene_data_tests.cpp
@@ -31,6 +32,7 @@ add_executable(SharkTests
     unit/renderer_terrain_lod_selection_tests.cpp
     unit/result_tests.cpp
     unit/sandbox_options_tests.cpp
+    unit/simulation_fixed_step_clock_tests.cpp
     unit/terrain_height_tile_tests.cpp
     unit/terrain_height_tile_query_tests.cpp
     unit/terrain_lake_basin_tests.cpp

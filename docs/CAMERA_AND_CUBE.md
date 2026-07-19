@@ -1,7 +1,7 @@
 # Camera, Reversed-Z Depth, Cube, and Skybox Contract
 
 - **Camera/cube capability completed through:** `G-005`
-- **Renderer integration verified through:** `W-001`
+- **Renderer integration verified through:** `PHY-001`
 - **Last verified:** July 19, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
@@ -27,6 +27,8 @@ position for terrain specular evaluation; it does not change the camera,
 controller, matrix, cube, depth, or sky-motion contracts. S-003 preserves
 those conventions while adding HDR IBL, a material sphere, and final tone
 mapping; `F3` switches the environment mode without changing camera state.
+PHY-001 preserves the camera and cube contracts while driving the existing
+material sphere from an interpolated fixed-step body position.
 
 This remains a deliberately narrow proof. It establishes conventions and
 lifetime rules that later sky, terrain, rain, and water passes can reuse; it is
@@ -95,6 +97,13 @@ interprets the existing platform event records:
 | Hold right mouse and drag | Change yaw and pitch |
 | `F4` | Toggle terrain chunk bounds and query-marker diagnostics |
 
+`F5` and `F6` are separate simulation controls owned by the sandbox:
+
+| Input | Simulation action |
+|---|---|
+| `F5` | Toggle the fixed 60 Hz body simulation between paused and running |
+| `F6` | Advance exactly one fixed tick while paused |
+
 Mouse coordinates remain absolute client coordinates at the platform boundary.
 The right-button press coordinates establish the drag baseline, so movement
 before the press is ignored and the first drag delta cannot inherit an old
@@ -111,12 +120,13 @@ Movement is scaled by elapsed render time and clamps one update to at most
 camera jump. `F4` diagnostics are off at startup. `WindowFocusChangedEvent`
 drives the controller's focus hook;
 focus loss, minimize, close request, and final close clear held input. This is
-an interactive camera proof, not the fixed 60 Hz simulation clock planned for
-physics. The controller owns only the documented bindings; the platform layer
-continues to publish raw window and input events without acquiring camera or
-gameplay policy. If the bounded platform queue reports any dropped event, the
-composition root also clears held controller state so a lost release or focus
-record cannot leave movement or right-drag latched.
+an interactive render-time camera proof; it remains independent of PHY-001's
+fixed 60 Hz simulation clock. The controller owns only the documented camera
+bindings, while the sandbox consumes `F5`/`F6` as simulation policy. The
+platform layer continues to publish raw window and input events without
+acquiring camera or gameplay policy. If the bounded platform queue reports any
+dropped event, the composition root also clears held controller state so a
+lost release or focus record cannot leave movement or right-drag latched.
 
 ## Cube geometry and procedural texture
 
@@ -182,6 +192,14 @@ procedural fallback. Cube, sky, terrain, and sphere write linear color to the
 `R16G16B16A16_FLOAT` scene target. The final `ToneMap` pass applies a fixed
 ACES-fitted curve and explicit linear-to-sRGB transfer to the UNORM back
 buffer.
+
+PHY-001 adds three 32-bit material-sphere translation constants at `b2` to the
+terrain/sphere root signature. The sandbox interpolates immutable
+previous/current body snapshots, passes the resulting world position through
+`RenderFrameData`, and the renderer converts it to a translation from the
+sphere's authored center. The material-sphere vertex shader applies that
+translation before the existing `view_projection`; normals, lighting, geometry
+buffers, descriptors, and draw count remain unchanged.
 
 The focused cube and sky root signatures plus immutable cube/skybox PSOs are
 created synchronously from pinned build-time DXIL. They survive swap-chain
@@ -284,10 +302,12 @@ after resize. Press `F4` and verify the magenta bounds and cyan terrain pin
 appear, with the pin anchored to the displayed surface and pointing along its
 exact geometric normal; press it again and verify both disappear. Resize,
 minimize/restore, and shutdown must remain clean.
-The validation cube and material sphere must remain outside the analytic basin
-support, above the `-4`-meter future waterline, and unburied. T-008 adds the dry
-indentation and metadata but creates no water. The scenario-owned camera must
-begin on dry ground overlooking the basin without changing the sky under
+The validation cube must remain outside the analytic basin support, above the
+`-4`-meter future waterline, and unburied. The material sphere must meet those
+conditions at its initial paused spawn; after `F5`, PHY-001 deliberately lets
+it fall through terrain because contact is not implemented yet. T-008 adds the
+dry indentation and metadata but creates no water. The scenario-owned camera
+must begin on dry ground overlooking the basin without changing the sky under
 translation.
 When running `--present-smoke`, its final reported state must be 61 visible
 chunks at `LOD0=1, coarse=60`; this final near pose is not an interactive camera
@@ -314,19 +334,20 @@ file-backed HDR conversion, arbitrary material graph/system, shadow map,
 atmospheric scattering, cloud, automatic exposure, time of day, terrain
 streaming, additional LOD levels, or content database.
 
-The query marker, CPU chunk culling, stateless LOD choice, and F4 diagnostic
-gate add no camera matrix, GPU resource, PSO, graph pass, dependency, barrier,
-PIX event, or timestamp. T-008 retains 15 imports, four passes, three
-dependencies, six barriers, 31 elisions, four geometry buffers, and ten
-timestamps as the current exact contract.
+The query marker, CPU chunk culling, stateless LOD choice, F4 diagnostic gate,
+and PHY-001 sphere translation add no camera matrix, GPU resource, PSO, graph
+pass, dependency, barrier, PIX event, or timestamp. W-001 retains 15 imports,
+five passes, five dependencies, six barriers, 34 elisions, four geometry
+buffers, and 12 timestamps as the current exact contract.
 
 It also adds no general mesh/resource/descriptor manager, typed GPU handles,
 placed-resource pool, copy queue, deferred uploader, shader reflection, runtime
 shader compilation, hot reload, PSO cache, scene graph, ECS,
-multiple cameras, controllable entity, physics, animation, shadows, MSAA,
+multiple cameras, controllable entity, additional physics bodies, terrain or
+body collision, angular dynamics, animation, shadows, MSAA,
 additional terrain LOD levels, LOD hysteresis/morphing, instancing, raw mouse
-input, cursor lock, configurable action map, gamepad support, fixed simulation
-clock, pixel readback, or golden-image testing.
+input, cursor lock, configurable action map, gamepad support, pixel readback,
+or golden-image testing.
 
 The graph remains frame-local and limited to imported whole resources, now
 with ordered `Terrain`, `TexturedCube`, `Skybox`, `Water`, and `ToneMap`
@@ -348,6 +369,8 @@ evidence remains historical.
 `T-008` publishes the interactive spawn and basin metadata without changing
 cube geometry, sky motion, depth, input, or the deterministic smoke schedule.
 `W-001` adds only presentation-time water input and preserves those camera and
-cube contracts. This component page no longer duplicates the rolling project
+cube contracts. `PHY-001` adds only the independently interpolated sphere
+translation; see [the simulation contract](SIMULATION.md). This component page
+no longer duplicates the rolling project
 queue; [ENGINE_PLAN.md](ENGINE_PLAN.md) is the roadmap source of truth. Rain
 remains deferred under the San Andreas-class ceiling.

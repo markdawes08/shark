@@ -1,6 +1,6 @@
 # Canonical Terrain-Tile Contract
 
-- **Completed through:** `W-001`
+- **Completed through:** `PHY-001`
 - **Last verified:** July 19, 2026
 
 T-008 composes the untouched T-007 rolling-height oracle with a bounded
@@ -18,9 +18,11 @@ contains 530 canonical samples.
 
 The scenario publishes dry spawn ground at `(-128,1.34375,-20)` and a camera eye
 at `(-128,3.34375,-20)` with pitch `-0.1`; sampled support-boundary distance is
-about 58.496138 meters. Cube and material sphere remain outside the shaping
-support, above the waterline, and unburied. W-001 consumes this metadata without
-changing any canonical terrain sample, query, topology, resource, or descriptor.
+about 58.496138 meters. PHY-001 also publishes a collision-free body spawn at
+`(-128,-44)` exactly 12 meters above its canonical LOD0 ground sample. Cube and
+body sphere remain outside the water support and initially unburied. W-001
+consumes the basin metadata without changing any canonical terrain sample,
+query, topology, resource, or descriptor.
 
 Focused Debug verification passes 56,792 lake-basin assertions across three
 cases, 4,732 scenario assertions across three cases, 23 culling assertions
@@ -954,7 +956,9 @@ sphere switch coherently. Verify the 32-meter/second camera, four-times sprint,
 and 1,500-meter far plane make the full footprint navigable. Move, rotate,
 resize, minimize, restore, and close; world-space material tiling, checker
 cube, sky, tone mapping, diagnostics, and Direct3D validation must remain
-clean. The validation cube and material sphere must remain dry and unburied.
+clean. The validation cube must remain dry and unburied; the material sphere
+must begin dry and unburied while paused, then is expected to pass through
+terrain once PHY-001 motion runs.
 Fly around the complete basin rim and confirm the broad natural terrain resumes
 smoothly outside the bounded shaping support. The spawn must remain on dry
 ground overlooking the basin.
@@ -968,11 +972,11 @@ partition, authored/file-backed material assets, stored mesh UVs/tangents,
 arbitrary layer counts, painting, virtual texturing, mesh shaders, shadows,
 weather interaction, erosion, water rendering or simulation, editor, dynamic
 mouse picking, general debug-draw service, or general scene/mesh/material
-resource system. The fixed
-ray proof, static pin, chunk bounds, and material sphere are diagnostics, not
-gameplay or editor selection. The bounded natural fixture is not a general
-procedural-world system or a promise that one resident tile is the eventual
-world-size strategy.
+resource system. The fixed ray proof, static pin, and chunk bounds are
+diagnostics, not gameplay or editor selection. The material sphere is PHY-001's
+simulation presentation proxy and lighting proof, not a general entity or mesh
+system. The bounded natural fixture is not a general procedural-world system
+or a promise that one resident tile is the eventual world-size strategy.
 
 `HeightTileSurface` remains platform-independent and authoritative; material
 weights, sampled normals, and shading never feed its height, ray, or collision
@@ -1006,5 +1010,6 @@ transmission/tint, analytic depth-proxy absorption, Fresnel, bounded environment
 reflection/refraction, animated normal-only waves, and sun glint provide a
 visual surface without canonical terrain mutation or simulated fluid state.
 
-The next increment is `PHY-001`: add deterministic fixed-step motion while
-leaving this terrain and visual-water contract unchanged.
+PHY-001 adds only the scenario-owned body spawn; ballistic integration never
+queries or mutates terrain. Canonical contact is therefore future work; the
+active queue remains centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).

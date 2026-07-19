@@ -3,10 +3,12 @@
 #include <shark/core/error.hpp>
 #include <shark/core/logging.hpp>
 #include <shark/core/result.hpp>
+#include <shark/physics/ballistic_body.hpp>
 #include <shark/platform/application.hpp>
 #include <shark/platform/events.hpp>
 #include <shark/rhi/d3d12/device.hpp>
 #include <shark/renderer/renderer.hpp>
+#include <shark/simulation/fixed_step_clock.hpp>
 #include <shark/terrain/height_tile.hpp>
 #include <shark/terrain/material_palette.hpp>
 #include <shark/world/camera.hpp>
@@ -1554,7 +1556,9 @@ void log_platform_event(const shark::platform::Event& event)
               "and tone mapping initialized; F1 toggles "
               "solid/wireframe, F2 cycles terrain material views, and "
               "F3 toggles HDR IBL/procedural daylight, and F4 toggles "
-              "terrain chunk/query diagnostics");
+              "terrain chunk/query diagnostics; F5 resumes/pauses the "
+              "fixed 60 Hz ballistic simulation and F6 advances one "
+              "tick while paused");
 
     world::Camera camera;
     if (smoke_mode) {
@@ -1565,6 +1569,23 @@ void log_platform_event(const shark::platform::Event& event)
     else {
         camera = environment_scenario.spawn_camera;
     }
+    auto simulation_clock_result =
+        simulation::FixedStepClock::create(
+            simulation::FixedStepClockConfig{
+                .initially_paused = !smoke_mode,
+            });
+    if (!simulation_clock_result) {
+        return core::Result<void>::failure(
+            std::move(simulation_clock_result).error());
+    }
+    auto simulation_clock =
+        std::move(simulation_clock_result).value();
+    const physics::BallisticBodyState initial_ballistic_body{
+        .position =
+            environment_scenario.ballistic_body_spawn_position,
+    };
+    auto previous_ballistic_body = initial_ballistic_body;
+    auto current_ballistic_body = initial_ballistic_body;
     const renderer::DaylightSettings daylight{};
     sandbox::CameraController camera_controller{
         sandbox::CameraControllerConfig{
@@ -1578,6 +1599,11 @@ void log_platform_event(const shark::platform::Event& event)
         renderer::EnvironmentLightingMode::image_based;
     auto terrain_diagnostics_enabled = false;
     auto previous_frame_time = std::chrono::steady_clock::now();
+    const auto reset_simulation_time_baseline = [&] {
+        simulation_clock.discard_accumulated_time();
+        previous_ballistic_body = current_ballistic_body;
+        previous_frame_time = std::chrono::steady_clock::now();
+    };
     const auto visual_start_time = previous_frame_time;
     const auto smoke_deadline =
         std::chrono::steady_clock::now() + smoke_deadline_duration;
@@ -1674,6 +1700,39 @@ void log_platform_event(const shark::platform::Event& event)
                             ? "Terrain chunk bounds and query marker: on"
                             : "Terrain chunk bounds and query marker: off");
                 }
+                if (key != nullptr &&
+                    key->virtual_key == VK_F5 &&
+                    key->action == platform::KeyAction::pressed &&
+                    !key->repeated) {
+                    simulation_clock.set_paused(
+                        !simulation_clock.paused());
+                    reset_simulation_time_baseline();
+                    core::log_message(
+                        core::LogLevel::info,
+                        "physics",
+                        simulation_clock.paused()
+                            ? "Fixed 60 Hz simulation: paused"
+                            : "Fixed 60 Hz simulation: running");
+                }
+                if (key != nullptr &&
+                    key->virtual_key == VK_F6 &&
+                    key->action == platform::KeyAction::pressed &&
+                    !key->repeated) {
+                    auto step_result =
+                        simulation_clock.request_single_step();
+                    if (!step_result) {
+                        core::log_message(
+                            core::LogLevel::warning,
+                            "physics",
+                            step_result.error().message());
+                    }
+                    else {
+                        core::log_message(
+                            core::LogLevel::info,
+                            "physics",
+                            "Queued one fixed simulation tick");
+                    }
+                }
             }
             camera_controller.handle_event(event);
             log_platform_event(event);
@@ -1711,6 +1770,7 @@ void log_platform_event(const shark::platform::Event& event)
         const auto dropped_events = application.dropped_event_count();
         if (dropped_events != 0) {
             camera_controller.reset();
+            reset_simulation_time_baseline();
         }
         application.clear_events();
         if (smoke_mode && dropped_events != 0) {
@@ -1823,6 +1883,7 @@ void log_platform_event(const shark::platform::Event& event)
             }
 
             if (application.minimized()) {
+                reset_simulation_time_baseline();
                 if (minimize_requested && !restore_requested) {
                     observed_minimized_iteration = true;
                     if (renderer_instance.stats() != stats_when_minimized) {
@@ -1883,13 +1944,16 @@ void log_platform_event(const shark::platform::Event& event)
                 return core::Result<void>::failure(
                     std::move(wait_result).error());
             }
+            reset_simulation_time_baseline();
             continue;
         }
 
         const auto frame_time = std::chrono::steady_clock::now();
+        const auto elapsed =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                frame_time - previous_frame_time);
         const auto elapsed_seconds =
-            std::chrono::duration<float>(
-                frame_time - previous_frame_time).count();
+            std::chrono::duration<float>(elapsed).count();
         previous_frame_time = frame_time;
         const auto visual_time_seconds = smoke_mode
             ? static_cast<float>(
@@ -1950,6 +2014,59 @@ void log_platform_event(const shark::platform::Event& event)
                     procedural_daylight;
         }
 
+        auto simulation_frame_result = simulation_clock.advance(
+            smoke_mode
+                ? simulation_clock.fixed_step_ceiling_duration()
+                : elapsed);
+        if (!simulation_frame_result) {
+            return core::Result<void>::failure(
+                std::move(simulation_frame_result).error());
+        }
+        const auto simulation_frame =
+            std::move(simulation_frame_result).value();
+        for (std::uint32_t step = 0;
+             step < simulation_frame.step_count;
+             ++step) {
+            previous_ballistic_body = current_ballistic_body;
+            auto physics_result =
+                physics::advance_ballistic_body(
+                    current_ballistic_body,
+                    physics::standard_gravity,
+                    simulation_clock.fixed_delta_seconds());
+            if (!physics_result) {
+                return core::Result<void>::failure(
+                    std::move(physics_result).error());
+            }
+        }
+        auto interpolated_body_result =
+            physics::interpolate_ballistic_body(
+                previous_ballistic_body,
+                current_ballistic_body,
+                simulation_frame.interpolation_alpha);
+        if (!interpolated_body_result) {
+            return core::Result<void>::failure(
+                std::move(interpolated_body_result).error());
+        }
+        const auto interpolated_body =
+            std::move(interpolated_body_result).value();
+        if (!smoke_mode &&
+            simulation_clock.paused() &&
+            simulation_frame.step_count != 0) {
+            core::log_message(
+                core::LogLevel::info,
+                "physics",
+                std::string{"Tick "} +
+                    std::to_string(
+                        simulation_clock.total_step_count()) +
+                    ": body position=(" +
+                    std::to_string(
+                        current_ballistic_body.position.x) + ", " +
+                    std::to_string(
+                        current_ballistic_body.position.y) + ", " +
+                    std::to_string(
+                        current_ballistic_body.position.z) + ")");
+        }
+
         const auto render_extent = renderer_instance.extent();
         const auto aspect_ratio =
             static_cast<float>(render_extent.width) /
@@ -1968,6 +2085,8 @@ void log_platform_event(const shark::platform::Event& event)
                 matrices_result.value().sky_view_projection,
             .daylight = daylight,
             .camera_world_position = camera.transform.position,
+            .material_sphere_world_position =
+                interpolated_body.position,
             .terrain_mode = terrain_mode,
             .terrain_material_view = terrain_material_view,
             .environment_lighting_mode =
@@ -1999,6 +2118,8 @@ void log_platform_event(const shark::platform::Event& event)
     if (smoke_mode) {
         const auto& stats = renderer_instance.stats();
         if (stats.presented_frames != required_smoke_frames ||
+            simulation_clock.total_step_count() !=
+                stats.frame_submissions ||
             !observed_close_request ||
             !observed_closed) {
             return core::Result<void>::failure(

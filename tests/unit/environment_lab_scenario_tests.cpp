@@ -248,6 +248,8 @@ TEST_CASE(
         second.lake_core_position);
     REQUIRE(first.spawn_ground_position ==
         second.spawn_ground_position);
+    REQUIRE(first.ballistic_body_spawn_position ==
+        second.ballistic_body_spawn_position);
     REQUIRE(first.spawn_camera.transform.position ==
         second.spawn_camera.transform.position);
     const auto coarse =
@@ -325,6 +327,8 @@ TEST_CASE(
         math::Float3{-124.0F, -10.47265625F, -128.0F});
     REQUIRE(first.spawn_ground_position ==
         math::Float3{-128.0F, 1.34375F, -20.0F});
+    REQUIRE(first.ballistic_body_spawn_position.x == -128.0F);
+    REQUIRE(first.ballistic_body_spawn_position.z == -44.0F);
     REQUIRE(first.spawn_camera.transform.position ==
         math::Float3{-128.0F, 3.34375F, -20.0F});
     REQUIRE(first.spawn_camera.transform.yaw_radians == 0.0F);
@@ -381,6 +385,13 @@ TEST_CASE(
     const auto surface =
         terrain::HeightTileSurface::create(first.terrain);
     REQUIRE(surface);
+    const auto ballistic_body_ground =
+        surface.value().sample_lod0_height(
+            first.ballistic_body_spawn_position.x,
+            first.ballistic_body_spawn_position.z);
+    REQUIRE(ballistic_body_ground);
+    REQUIRE(first.ballistic_body_spawn_position.y ==
+        *ballistic_body_ground + 12.0F);
     const auto spawn_sample =
         surface.value().sample_lod0_surface(
             first.spawn_ground_position.x,
@@ -414,6 +425,14 @@ TEST_CASE(
         terrain::lake_basin_normalized_radius_squared(
             first.lake_basin.footprint,
             spawn_xz) >
+        1.0);
+    REQUIRE(
+        terrain::lake_basin_normalized_radius_squared(
+            first.lake_basin.footprint,
+            {
+                first.ballistic_body_spawn_position.x,
+                first.ballistic_body_spawn_position.z,
+            }) >
         1.0);
 
     const auto camera_basis =

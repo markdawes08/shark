@@ -998,4 +998,148 @@ core::Result<HeightTileMesh> build_lod0_mesh(
     return core::Result<HeightTileMesh>::success(std::move(mesh));
 }
 
+core::Result<HeightTileChunkLayout> build_lod0_chunk_layout(
+    const HeightTile& tile,
+    const std::uint32_t chunk_cell_columns,
+    const std::uint32_t chunk_cell_rows)
+{
+    if (chunk_cell_columns == 0U || chunk_cell_rows == 0U) {
+        return core::Result<HeightTileChunkLayout>::failure(terrain_error(
+            core::ErrorCode::invalid_argument,
+            "Terrain chunk cell dimensions must be positive"));
+    }
+
+    auto bounds_result = validate_height_tile(tile);
+    if (!bounds_result) {
+        return core::Result<HeightTileChunkLayout>::failure(
+            std::move(bounds_result).error());
+    }
+
+    const auto columns = static_cast<std::size_t>(tile.sample_columns);
+    const auto rows = static_cast<std::size_t>(tile.sample_rows);
+    const auto vertex_count = columns * rows;
+    constexpr auto maximum_vertex_count =
+        static_cast<std::size_t>(
+            std::numeric_limits<std::uint16_t>::max()) +
+        1U;
+    if (vertex_count > maximum_vertex_count) {
+        return core::Result<HeightTileChunkLayout>::failure(terrain_error(
+            core::ErrorCode::unsupported,
+            "Height-tile chunk layout exceeds the uint16 index contract"));
+    }
+
+    const auto cell_columns = tile.sample_columns - 1U;
+    const auto cell_rows = tile.sample_rows - 1U;
+    const auto chunk_columns =
+        1U + (cell_columns - 1U) / chunk_cell_columns;
+    const auto chunk_rows =
+        1U + (cell_rows - 1U) / chunk_cell_rows;
+    const auto cell_count =
+        static_cast<std::size_t>(cell_columns) *
+        static_cast<std::size_t>(cell_rows);
+
+    HeightTileChunkLayout layout;
+    layout.indices.reserve(cell_count * 6U);
+    layout.chunks.reserve(
+        static_cast<std::size_t>(chunk_columns) * chunk_rows);
+
+    for (std::uint32_t first_cell_z = 0;
+         first_cell_z < cell_rows;) {
+        const auto current_cell_rows = std::min(
+            chunk_cell_rows,
+            cell_rows - first_cell_z);
+        for (std::uint32_t first_cell_x = 0;
+             first_cell_x < cell_columns;) {
+            const auto current_cell_columns = std::min(
+                chunk_cell_columns,
+                cell_columns - first_cell_x);
+            const auto first_index = layout.indices.size();
+
+            for (std::uint32_t local_cell_z = 0;
+                 local_cell_z < current_cell_rows;
+                 ++local_cell_z) {
+                const auto cell_z = first_cell_z + local_cell_z;
+                for (std::uint32_t local_cell_x = 0;
+                     local_cell_x < current_cell_columns;
+                     ++local_cell_x) {
+                    const auto cell_x = first_cell_x + local_cell_x;
+                    constexpr std::array triangles{
+                        HeightTileTriangle::v00_v01_v11,
+                        HeightTileTriangle::v00_v11_v10,
+                    };
+                    for (const auto triangle : triangles) {
+                        const auto triangle_indices =
+                            fixed_triangle_indices(
+                                cell_x,
+                                cell_z,
+                                tile.sample_columns,
+                                triangle);
+                        for (const auto index :
+                             triangle_indices.vertices) {
+                            layout.indices.push_back(
+                                static_cast<std::uint16_t>(index));
+                        }
+                    }
+                }
+            }
+
+            const auto maximum_float =
+                std::numeric_limits<float>::max();
+            Bounds3 chunk_bounds{
+                {maximum_float, maximum_float, maximum_float},
+                {-maximum_float, -maximum_float, -maximum_float},
+            };
+            for (std::uint32_t local_sample_z = 0;
+                 local_sample_z <= current_cell_rows;
+                 ++local_sample_z) {
+                const auto sample_z = first_cell_z + local_sample_z;
+                for (std::uint32_t local_sample_x = 0;
+                     local_sample_x <= current_cell_columns;
+                     ++local_sample_x) {
+                    const auto sample_x =
+                        first_cell_x + local_sample_x;
+                    const auto position = sample_position(
+                        tile,
+                        sample_x,
+                        sample_z);
+                    chunk_bounds.minimum.x = std::min(
+                        chunk_bounds.minimum.x,
+                        position.x);
+                    chunk_bounds.minimum.y = std::min(
+                        chunk_bounds.minimum.y,
+                        position.y);
+                    chunk_bounds.minimum.z = std::min(
+                        chunk_bounds.minimum.z,
+                        position.z);
+                    chunk_bounds.maximum.x = std::max(
+                        chunk_bounds.maximum.x,
+                        position.x);
+                    chunk_bounds.maximum.y = std::max(
+                        chunk_bounds.maximum.y,
+                        position.y);
+                    chunk_bounds.maximum.z = std::max(
+                        chunk_bounds.maximum.z,
+                        position.z);
+                }
+            }
+
+            layout.chunks.push_back(HeightTileChunk{
+                .first_cell_x = first_cell_x,
+                .first_cell_z = first_cell_z,
+                .cell_columns = current_cell_columns,
+                .cell_rows = current_cell_rows,
+                .first_index = first_index,
+                .index_count = layout.indices.size() - first_index,
+                .bounds = chunk_bounds,
+                .bounds_lines = make_bounds_lines(chunk_bounds),
+            });
+            first_cell_x += current_cell_columns;
+        }
+        first_cell_z += current_cell_rows;
+    }
+
+    return core::Result<HeightTileChunkLayout>::success(
+        std::move(layout));
+}
+
 } // namespace shark::terrain

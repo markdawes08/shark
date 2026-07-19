@@ -1,19 +1,19 @@
 # Renderer and Direct3D 12 Presentation/Frame-Resource Contract
 
-- **Completed through:** `S-003`
-- **Last verified:** July 18, 2026
+- **Completed through:** `T-004`
+- **Last verified:** July 19, 2026
 
 `shark::renderer::Renderer` owns Shark's focused D3D12 scene/presentation
-backend. S-003 preserves the triple-buffered fence-gated lifecycle and adds a
-deterministic HDR environment, a resize-owned linear-HDR scene target, shared
-terrain/material-sphere IBL, and a final tone-map pass. Normal frames still
-submit and present without an unconditional post-frame queue drain.
+backend. T-004 preserves the triple-buffered fence-gated HDR lifecycle and
+adds CPU frustum culling for 16 full-resolution terrain chunks. Normal frames
+still submit and present without an unconditional post-frame queue drain.
 
 ## Public boundary and ownership
 
 `Renderer` is a move-only public PIMPL. Its COM-free public records include
 `RendererConfig`, `RenderFrameData`, `RenderStatus`, `RendererStats`,
-shader-bytecode views, mesh views, and generic 2D/cube upload views.
+shader-bytecode views, mesh/chunk-range views, and generic 2D/cube upload
+views.
 `Renderer::create` consumes every pointer-based upload/bytecode view
 synchronously and retains no caller CPU pointer.
 
@@ -56,8 +56,8 @@ The private backend owns:
 - one reusable graphics command list;
 - cube, sky, terrain solid/wireframe/line, material-sphere, and tone-map PSOs
   plus their focused root signatures;
-- four committed geometry buffers: cube vertex/index and packed
-  terrain/bounds/query-marker/material-sphere vertex/index;
+- four committed geometry buffers: cube vertex/index and packed shared
+  terrain/chunk-bounds/query-marker/material-sphere vertex/index;
 - checker and retained S-001 DDS cubemap textures;
 - three two-layer `32x32`, six-mip terrain material arrays;
 - a `32x32` six-mip radiance cube, `8x8` irradiance cube, `32x32` six-mip
@@ -80,7 +80,7 @@ substituted. Fence zero means never submitted or already retired.
 
 Renderer creation records one `StaticSceneUpload` direct-queue submission:
 
-- cube and packed terrain/sphere vertex/index data;
+- cube and packed terrain/chunk-bounds/marker/sphere vertex/index data;
 - deterministic checker;
 - six retained DDS cubemap faces;
 - 36 terrain-material subresources containing 32,760 meaningful bytes; and
@@ -107,30 +107,34 @@ submission signals the normal fence, performs one bounded startup wait, and
 releases temporary upload resources before the first frame. No static upload
 occurs in the frame loop.
 
-The 266-vertex/1,584-index material sphere is packed after the terrain query
-marker; it adds no fifth geometry buffer.
+The terrain buffers contain one 1,089-vertex stream, 16 contiguous 384-index
+surface ranges, 16 eight-vertex/24-index bounds ranges, the query marker, and
+the 266-vertex/1,584-index material sphere. The sphere remains packed after the
+marker; chunking adds no fifth geometry buffer.
 
 ## Frame acquisition, recording, and present
 
 One frame:
 
-1. obtains DXGI's current back-buffer index and selects that context;
-2. waits only if that context's preceding submission is still in flight;
-3. consumes its completed ten-timestamp sample, retires the submission, and
+1. extracts the current Direct3D frustum, tests all 16 terrain AABBs, and logs
+   a changed visible/total count;
+2. obtains DXGI's current back-buffer index and selects that context;
+3. waits only if that context's preceding submission is still in flight;
+4. consumes its completed ten-timestamp sample, retires the submission, and
    resets bounded cursors;
-4. reserves one 256-byte frame record and one CPU staging descriptor;
-5. reserves the exact ten-query timestamp slice;
-6. composes the 15-import/four-pass frame graph;
-7. resets the allocator and shared command list;
-8. begins `Frame`, writes `frame_begin`, and copies the 256-byte diagnostic
+5. reserves one 256-byte frame record and one CPU staging descriptor;
+6. reserves the exact ten-query timestamp slice;
+7. composes the 15-import/four-pass frame graph;
+8. resets the allocator and shared command list;
+9. begins `Frame`, writes `frame_begin`, and copies the 256-byte diagnostic
    record to the context probe outside the graph;
-9. executes `Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` with graph-owned
+10. executes `Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` with graph-owned
    transitions between them;
-10. writes `frame_end`, resolves ten queries to the context readback slice, and
+11. writes `frame_end`, resolves ten queries to the context readback slice, and
     ends `Frame`;
-11. closes/executes, signals the next fence value, and marks the timing sample
+12. closes/executes, signals the next fence value, and marks the timing sample
     pending; and
-12. calls `Present` without an unconditional fence wait.
+13. calls `Present` without an unconditional fence wait.
 
 The exact frame graph is:
 
@@ -147,12 +151,13 @@ elided transitions      31
 transitions cover scene-color render/read state, depth write/read state, and
 back-buffer present/render state.
 
-The submitted commands contain six indexed scene draws:
+For `V` visible chunks, the submitted commands contain `2V + 4` indexed scene
+draws:
 
 ```text
-terrain surface          6,144 indices
+visible terrain chunks      384 * V indices
 material sphere          1,584 indices
-terrain AABB                 24 indices
+visible chunk AABBs           24 * V indices
 terrain query marker          6 indices
 textured cube                 36 indices
 skybox                        36 indices
@@ -160,7 +165,8 @@ skybox                        36 indices
 
 `ToneMap` adds `DrawInstanced(3, 1, 0, 0)`. Per frame there is one depth clear
 and four texture-table binds: terrain/IBL, checker, sky radiance, and HDR scene
-color.
+color. The fixed smoke poses produce `V=16`, then `V=5`: 36 then 14 indexed
+draws, respectively.
 
 The 256-byte frame record remains:
 
@@ -252,12 +258,14 @@ GPU-validated WARP requires 120, a 180-second application deadline, and a
 240-second CTest timeout. The paths:
 
 - resize `1280x720` to `960x600`;
-- script camera yaw;
+- start with all 16 terrain chunks visible, then script yaw `1.25` radians so
+  exactly five remain visible;
 - exercise all three contexts;
 - exercise both terrain fill modes, all three material views, and both
   environment modes;
-- prove the exact draws, graph, texture-binding, upload, descriptor, and
-  timestamp accounting;
+- prove `16 * frame_submissions` chunk tests, visible-plus-culled conservation,
+  actual visible surface/bounds draws and indices, min/max/last visibility,
+  graph, texture-binding, upload, descriptor, and timestamp accounting;
 - prove one static upload, four geometry buffers, three material arrays, four
   HDR environment textures, ten persistent descriptors, and 79/284,608
   environment upload accounting;
@@ -272,7 +280,7 @@ commands and accounting, not pixels.
 
 ## Explicit non-goals
 
-S-003 does not expose a public/general upload allocator, global upload ring,
+T-004 does not expose a public/general upload allocator, global upload ring,
 persistent descriptor allocator, generic deferred-destruction service, or
 image readback. Its fixed scene, ten-slot heap, query storage, HDR target, and
 environment maps are focused infrastructure, not a general scene/material/
@@ -283,7 +291,7 @@ is no graph-owned transient allocation, aliasing, subresource tracking,
 parallel recording, copy queue, async compute, enhanced barriers, automatic
 exposure, HDR display output, or texture streaming.
 
-This modern HDR implementation does not broaden Shark beyond its approved San
-Andreas-class local-sandbox feature ceiling. `S-003` was completed on
-July 18, 2026. The next increment is `T-004`, terrain chunk culling, followed
-by `T-005`, bounded visual LOD.
+This modern chunked HDR implementation does not broaden Shark beyond its
+approved San Andreas-class local-sandbox feature ceiling. `T-004` was
+completed on July 19, 2026. The next increment is `T-005`, one bounded coarser
+terrain LOD with crack-free seams and full-resolution canonical queries.

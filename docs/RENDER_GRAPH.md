@@ -1,12 +1,12 @@
 # Minimal Render-Graph Contract
 
-- **Completed through:** `S-003`
-- **Renderer integration verified through:** `S-003`
-- **Last updated:** July 18, 2026
+- **Completed through:** `T-004`
+- **Renderer integration verified through:** `T-004`
+- **Last updated:** July 19, 2026
 
 Shark's render graph is a small platform-independent planner with a Direct3D
-12 legacy-barrier executor. S-003 keeps the existing frame-local,
-whole-resource design and extends the production composer to an HDR scene:
+12 legacy-barrier executor. T-004 keeps the existing frame-local,
+whole-resource HDR composer introduced by S-003:
 `Terrain -> TexturedCube -> Skybox -> ToneMap`. It does not add graph-owned
 resources, subresource tracking, or multi-queue scheduling.
 
@@ -106,7 +106,7 @@ null native bindings fail even for an import whose transitions were elided.
 The renderer cross-checks compiled, executed, and recorded counts before
 submission.
 
-## S-003 frame graph
+## T-004 frame graph
 
 Every non-minimized frame imports:
 
@@ -118,8 +118,8 @@ Every non-minimized frame imports:
 | `CheckerTexture` | `pixel_shader_read` | persistent checker |
 | `CubeVertexBuffer` | `vertex_buffer` | persistent cube vertices |
 | `CubeIndexBuffer` | `index_buffer` | persistent cube indices |
-| `TerrainVertexBuffer` | `vertex_buffer` | surface/bounds/marker/sphere vertices |
-| `TerrainIndexBuffer` | `index_buffer` | surface/bounds/marker/sphere indices |
+| `TerrainVertexBuffer` | `vertex_buffer` | shared surface/chunk-bounds/marker/sphere vertices |
+| `TerrainIndexBuffer` | `index_buffer` | chunk-major surface/chunk-bounds/marker/sphere indices |
 | `TerrainAlbedoLayers` | `pixel_shader_read` | two-layer sRGB array |
 | `TerrainNormalLayers` | `pixel_shader_read` | two-layer linear array |
 | `TerrainRoughnessLayers` | `pixel_shader_read` | two-layer linear array |
@@ -164,14 +164,18 @@ uploads and per-frame diagnostic `CopyBufferRegion` remain outside the graph.
 
 The graph pass callbacks own commands, not graph policy:
 
-- `Terrain` clears scene/depth and issues the surface, material-sphere, bounds,
-  and query-marker indexed draws;
+- `Terrain` clears scene/depth and issues one surface and one magenta-bounds
+  draw per visible chunk plus the material-sphere and query-marker draws;
 - `TexturedCube` issues one checker-cube indexed draw;
 - `Skybox` binds read-only depth and issues one far-depth indexed draw; and
 - `ToneMap` issues one non-indexed fullscreen-triangle draw.
 
-Thus six indexed draws plus one tone-map draw correspond to four graph-pass
-executions. The extra draws inside `Terrain` do not add passes or resources.
+If `V` of the 16 chunks are visible, `Terrain` contains `2V + 2` indexed draws
+and the frame contains `2V + 4` indexed draws plus one tone-map draw. The
+initial and scripted smoke poses therefore contain 36 and 14 indexed draws.
+These variable draws inside `Terrain` do not add passes or resources. CPU
+frustum extraction and AABB tests occur before graph execution and likewise
+add no graph declaration.
 
 ## Diagnostics and verification
 
@@ -186,9 +190,12 @@ render_graph_dependencies        == frame_submissions * 3
 render_graph_transition_barriers == frame_submissions * 6
 render_graph_elided_transitions  == frame_submissions * 31
 
-terrain_draw_calls + cube_draw_calls + skybox_draw_calls
+pix_terrain_events + cube_draw_calls + skybox_draw_calls
     + tone_map_draw_calls == render_graph_pass_executions
 ```
+
+`terrain_draw_calls` now counts actual visible 384-index chunk draws, so it is
+deliberately not a graph-pass proxy.
 
 The production composer test locks all 15 IDs, each pass's exact access set,
 the dependency chain, transition order, final transitions, callback order,
@@ -204,7 +211,7 @@ per frame context.
 
 ## Explicit non-goals
 
-S-003 adds no graph-owned/transient resource creation, placed-resource pool,
+T-004 adds no graph-owned/transient resource creation, placed-resource pool,
 lifetime/aliasing analysis, resource pooling, subresource tracking, UAV state,
 automatic RTV/DSV binding, render-pass load/store policy, pass
 culling/merging, parallel recording, queue preference, copy/compute queue,
@@ -216,5 +223,7 @@ keeps the implementation proportional to Shark's approved San Andreas-class
 scope while leaving later renderer infrastructure possible when a measured
 need appears.
 
-`S-003` was completed on July 18, 2026. The next increment is `T-004`, terrain
-chunk culling, followed by `T-005`, bounded visual LOD.
+`T-004` was completed on July 19, 2026 without changing the exact
+`15/4/3/6/31` graph contract. The next increment is `T-005`, one bounded
+coarser terrain LOD with crack-free seams and full-resolution canonical
+queries.

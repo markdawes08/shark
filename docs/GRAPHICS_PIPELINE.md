@@ -1,14 +1,16 @@
 # HLSL Graphics Pipeline Contract
 
-- **Completed through:** `S-003`
-- **Last verified:** July 18, 2026
+- **Completed through:** `T-004`
+- **Last verified:** July 19, 2026
 
 Shark compiles all production HLSL at build time with a pinned retail DXC and
-creates immutable Direct3D 12 pipeline state during renderer startup. S-003
-extends the existing cube, terrain, and sky programs with shared
-image-based-lighting helpers, one material-sphere proof, a linear-HDR scene
-target, and a final tone-map program. This remains a focused scene contract,
-not a general shader asset, material-graph, or pipeline-cache system.
+creates immutable Direct3D 12 pipeline state during renderer startup. T-004
+retains the existing cube, terrain, sky, material-sphere, and tone-map programs
+while selecting full-resolution terrain draw ranges on the CPU. The pipeline
+still includes S-003's shared image-based-lighting helpers, material-sphere
+proof, linear-HDR scene target, and final tone-map program. This remains a
+focused scene contract, not a general shader asset, material-graph, or
+pipeline-cache system.
 
 ## Pinned compiler and artifacts
 
@@ -187,8 +189,8 @@ one opaque `DXGI_FORMAT_R8G8B8A8_UNORM` render target from
 
 One startup direct-queue submission copies:
 
-- four immutable geometry buffers for cube and packed
-  terrain/bounds/query-marker/material-sphere data;
+- four immutable geometry buffers for cube and packed shared
+  terrain/chunk-bounds/query-marker/material-sphere data;
 - checker and retained DDS cubemap textures;
 - 36 terrain-material subresources; and
 - 79 derived HDR environment subresources containing 284,608 meaningful
@@ -199,33 +201,38 @@ bounded fence wait releases temporary upload storage.
 
 Each non-minimized frame then:
 
-1. stages one 256-byte constants/probe record;
-2. composes the exact 15-import/four-pass HDR frame graph;
-3. executes `Terrain`, including surface, sphere, bounds, and marker draws;
-4. executes `TexturedCube`;
-5. executes the far-depth `Skybox`;
-6. executes `ToneMap` to the current back buffer;
-7. restores declared graph final states; and
-8. submits, signals the context fence, and presents without an unconditional
+1. extracts the current Direct3D frustum and selects visible terrain chunks;
+2. stages one 256-byte constants/probe record;
+3. composes the exact 15-import/four-pass HDR frame graph;
+4. executes `Terrain`, including one surface and one magenta-bounds draw per
+   visible chunk plus the sphere and marker draws;
+5. executes `TexturedCube`;
+6. executes the far-depth `Skybox`;
+7. executes `ToneMap` to the current back buffer;
+8. restores declared graph final states; and
+9. submits, signals the context fence, and presents without an unconditional
    post-frame drain.
 
-The submitted-frame draw contract is:
+For `V` visible chunks, the submitted-frame draw contract is:
 
 ```text
-terrain surface          DrawIndexedInstanced(6,144, ...)
+visible terrain chunks   V * DrawIndexedInstanced(384, ...)
 material sphere          DrawIndexedInstanced(1,584, ...)
-terrain AABB             DrawIndexedInstanced(24, ...)
+visible chunk AABBs      V * DrawIndexedInstanced(24, ...)
 terrain query marker     DrawIndexedInstanced(6, ...)
 textured cube            DrawIndexedInstanced(36, ...)
 skybox                   DrawIndexedInstanced(36, ...)
 tone map                 DrawInstanced(3, 1, 0, 0)
 ```
 
-The sphere is packed into the existing terrain buffers, so the six indexed
-draws still use four geometry buffers. Exact per-frame graph accounting is 15
-imports, four passes, three dependencies, six transitions, and 31 elisions.
-Diagnostics allocate ten timestamps per context: frame begin/end plus
-begin/end for each pass.
+Each chunk selects one contiguous first-index/count range into the shared
+1,089-vertex stream. The matching bounds draw selects its own packed
+eight-vertex/24-index range. The sphere remains in those terrain buffers, so
+the variable `2V + 4` indexed draws still use four geometry buffers. The smoke
+poses produce 36 indexed draws at `V=16` and 14 at `V=5`. Exact per-frame graph
+accounting remains 15 imports, four passes, three dependencies, six
+transitions, and 31 elisions. Diagnostics retain ten timestamps per context:
+frame begin/end plus begin/end for each pass.
 
 ## Acceptance and non-goals
 
@@ -248,5 +255,6 @@ exposure, HDR display output, or image-comparison testing. Those omissions
 preserve the bounded San Andreas-class product scope while allowing modern HDR
 implementation quality.
 
-`S-003` was completed on July 18, 2026. The next increment is `T-004`, terrain
-chunk culling, followed by `T-005`, bounded visual LOD.
+`T-004` was completed on July 19, 2026 without adding or changing HLSL, root
+signatures, or PSOs. The next increment is `T-005`, one bounded coarser terrain
+LOD with crack-free seams and full-resolution canonical queries.

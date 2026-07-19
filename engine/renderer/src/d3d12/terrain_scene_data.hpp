@@ -67,6 +67,9 @@ inline constexpr D3D12_COMPARISON_FUNC terrain_depth_comparison =
     cube_depth_comparison;
 inline constexpr std::uint32_t terrain_query_marker_vertex_count = 6;
 inline constexpr std::uint32_t terrain_query_marker_index_count = 6;
+inline constexpr std::uint32_t terrain_chunk_bounds_vertex_count = 8;
+inline constexpr std::uint32_t terrain_chunk_bounds_index_count = 24;
+inline constexpr std::uint32_t terrain_maximum_chunk_count = 4'096;
 
 inline constexpr std::uint32_t terrain_material_layer_count = 2;
 inline constexpr std::uint32_t terrain_material_texture_count = 3;

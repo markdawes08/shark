@@ -37,6 +37,7 @@
 #include <exception>
 #include <filesystem>
 #include <iomanip>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -665,6 +666,7 @@ void log_platform_event(const shark::platform::Event& event)
     const auto minimize_after_frames = required_smoke_frames / 2;
     const auto change_camera_after_frames =
         required_smoke_frames * 3 / 4;
+    constexpr float smoke_culling_yaw_radians = 1.25F;
     constexpr platform::WindowExtent smoke_resize_extent{960, 600};
     const auto smoke_deadline_duration =
         focused_gpu_validation
@@ -797,6 +799,28 @@ void log_platform_event(const shark::platform::Event& event)
             std::move(terrain_mesh_result).error());
     }
     auto terrain_mesh = std::move(terrain_mesh_result).value();
+    auto terrain_chunk_layout_result =
+        terrain::build_lod0_chunk_layout(
+            terrain_tile,
+            terrain::deterministic_tile_chunk_cell_columns,
+            terrain::deterministic_tile_chunk_cell_rows);
+    if (!terrain_chunk_layout_result) {
+        return core::Result<void>::failure(
+            std::move(terrain_chunk_layout_result).error());
+    }
+    auto terrain_chunk_layout =
+        std::move(terrain_chunk_layout_result).value();
+    if (terrain_chunk_layout.chunks.size() !=
+            terrain::deterministic_tile_chunk_count ||
+        terrain_chunk_layout.indices.size() !=
+            terrain_mesh.indices.size()) {
+        return core::Result<void>::failure(core::Error{
+            core::ErrorCategory::simulation,
+            core::ErrorCode::invalid_state,
+            "The deterministic terrain did not produce the fixed "
+            "4x4 full-resolution chunk layout",
+        });
+    }
     if (terrain_surface.bounds() != terrain_mesh.bounds) {
         return core::Result<void>::failure(core::Error{
             core::ErrorCategory::simulation,
@@ -815,19 +839,56 @@ void log_platform_event(const shark::platform::Event& event)
             terrain_mesh.normals[index],
         });
     }
-    std::array<TerrainGpuVertex, 8> terrain_bounds_vertices{};
+    std::vector<renderer::TerrainChunkUploadView>
+        terrain_chunk_uploads;
+    terrain_chunk_uploads.reserve(
+        terrain_chunk_layout.chunks.size());
+    std::vector<TerrainGpuVertex> terrain_bounds_vertices;
+    terrain_bounds_vertices.reserve(
+        terrain_chunk_layout.chunks.size() *
+            terrain::BoundsLineGeometry{}.positions.size());
+    std::vector<std::uint16_t> terrain_bounds_indices;
+    terrain_bounds_indices.reserve(
+        terrain_chunk_layout.chunks.size() *
+            terrain::BoundsLineGeometry{}.indices.size());
     constexpr math::Float3 bounds_diagnostic_color{
         1.0F,
         -1.0F,
         1.0F,
     };
-    for (std::size_t index = 0;
-         index < terrain_bounds_vertices.size();
-         ++index) {
-        terrain_bounds_vertices[index] = TerrainGpuVertex{
-            terrain_mesh.bounds_lines.positions[index],
-            bounds_diagnostic_color,
-        };
+    for (const auto& chunk : terrain_chunk_layout.chunks) {
+        if (chunk.first_index >
+                std::numeric_limits<std::uint32_t>::max() ||
+            chunk.index_count >
+                std::numeric_limits<std::uint32_t>::max()) {
+            return core::Result<void>::failure(core::Error{
+                core::ErrorCategory::simulation,
+                core::ErrorCode::unsupported,
+                "The terrain chunk layout exceeds the renderer's "
+                "uint32 draw-range contract",
+            });
+        }
+        terrain_chunk_uploads.push_back(
+            renderer::TerrainChunkUploadView{
+                .first_index = static_cast<std::uint32_t>(
+                    chunk.first_index),
+                .index_count = static_cast<std::uint32_t>(
+                    chunk.index_count),
+                .bounds_minimum = chunk.bounds.minimum,
+                .bounds_maximum = chunk.bounds.maximum,
+            });
+        for (const auto position :
+             chunk.bounds_lines.positions) {
+            terrain_bounds_vertices.push_back(
+                TerrainGpuVertex{
+                    position,
+                    bounds_diagnostic_color,
+                });
+        }
+        terrain_bounds_indices.insert(
+            terrain_bounds_indices.end(),
+            chunk.bounds_lines.indices.begin(),
+            chunk.bounds_lines.indices.end());
     }
 
     constexpr float query_marker_world_x = -5.125F;
@@ -1024,13 +1085,15 @@ void log_platform_event(const shark::platform::Event& event)
         .vertices = terrain_vertices.data(),
         .vertex_count = terrain_vertices.size(),
         .vertex_stride = sizeof(TerrainGpuVertex),
-        .indices = terrain_mesh.indices.data(),
-        .index_count = terrain_mesh.indices.size(),
+        .indices = terrain_chunk_layout.indices.data(),
+        .index_count = terrain_chunk_layout.indices.size(),
+        .chunks = terrain_chunk_uploads.data(),
+        .chunk_count = terrain_chunk_uploads.size(),
         .bounds_vertices = terrain_bounds_vertices.data(),
         .bounds_vertex_count = terrain_bounds_vertices.size(),
         .bounds_vertex_stride = sizeof(TerrainGpuVertex),
-        .bounds_indices = terrain_mesh.bounds_lines.indices.data(),
-        .bounds_index_count = terrain_mesh.bounds_lines.indices.size(),
+        .bounds_indices = terrain_bounds_indices.data(),
+        .bounds_index_count = terrain_bounds_indices.size(),
         .query_marker_vertices = terrain_query_marker_vertices.data(),
         .query_marker_vertex_count =
             terrain_query_marker_vertices.size(),
@@ -1128,6 +1191,13 @@ void log_platform_event(const shark::platform::Event& event)
             std::to_string(terrain_mesh.positions.size()) +
             ", triangles=" +
             std::to_string(terrain_mesh.indices.size() / 3U) +
+            ", chunks=" +
+            std::to_string(
+                terrain::deterministic_tile_chunk_columns) + "x" +
+            std::to_string(
+                terrain::deterministic_tile_chunk_rows) + " (" +
+            std::to_string(terrain_chunk_layout.chunks.size()) +
+            " total, 8x8 cells each)" +
             ", bounds=[(" +
             std::to_string(terrain_mesh.bounds.minimum.x) + ", " +
             std::to_string(terrain_mesh.bounds.minimum.y) + ", " +
@@ -1516,7 +1586,8 @@ void log_platform_event(const shark::platform::Event& event)
                      change_camera_after_frames) {
             world::advance_camera(
                 camera,
-                world::CameraMotion{.yaw_radians = 0.25F},
+                world::CameraMotion{
+                    .yaw_radians = smoke_culling_yaw_radians},
                 0.0F,
                 1.0F);
             smoke_camera_pose_changed = true;
@@ -1698,11 +1769,30 @@ void log_platform_event(const shark::platform::Event& event)
             stats.material_sphere_draw_calls !=
                 stats.frame_submissions ||
             stats.tone_map_draw_calls != stats.frame_submissions ||
-            stats.terrain_draw_calls != stats.frame_submissions ||
-            stats.terrain_bounds_draw_calls !=
-                stats.frame_submissions ||
             stats.terrain_query_marker_draw_calls !=
                 stats.frame_submissions ||
+            stats.terrain_chunk_count !=
+                terrain::deterministic_tile_chunk_count ||
+            stats.terrain_chunks_tested !=
+                stats.frame_submissions *
+                    terrain::deterministic_tile_chunk_count ||
+            stats.terrain_chunks_visible +
+                    stats.terrain_chunks_culled !=
+                stats.terrain_chunks_tested ||
+            stats.terrain_chunks_visible !=
+                stats.terrain_draw_calls ||
+            stats.terrain_bounds_draw_calls !=
+                stats.terrain_chunks_visible ||
+            stats.terrain_visible_chunk_min >=
+                stats.terrain_chunk_count ||
+            stats.terrain_visible_chunk_max <=
+                stats.terrain_visible_chunk_min ||
+            stats.terrain_visible_chunk_max >
+                stats.terrain_chunk_count ||
+            stats.terrain_visible_chunk_last >
+                stats.terrain_chunk_count ||
+            stats.terrain_chunks_visible == 0 ||
+            stats.terrain_chunks_culled == 0 ||
             stats.terrain_solid_draw_calls == 0 ||
             stats.terrain_wireframe_draw_calls == 0 ||
             stats.terrain_solid_draw_calls +
@@ -1715,7 +1805,7 @@ void log_platform_event(const shark::platform::Event& event)
                     stats.terrain_material_weight_draw_calls +
                     stats.terrain_shading_normal_draw_calls !=
                 stats.terrain_draw_calls ||
-            stats.terrain_draw_calls +
+            stats.pix_terrain_events +
                     stats.cube_draw_calls +
                     stats.skybox_draw_calls +
                     stats.tone_map_draw_calls !=
@@ -1725,8 +1815,8 @@ void log_platform_event(const shark::platform::Event& event)
             stats.skybox_indices !=
                 stats.skybox_draw_calls * 36 ||
             stats.terrain_indices !=
-                stats.terrain_draw_calls *
-                    terrain::deterministic_tile_index_count ||
+                stats.terrain_chunks_visible *
+                    terrain::deterministic_tile_chunk_index_count ||
             stats.terrain_bounds_indices !=
                 stats.terrain_bounds_draw_calls * 24 ||
             stats.terrain_query_marker_indices !=
@@ -1737,8 +1827,10 @@ void log_platform_event(const shark::platform::Event& event)
                 terrain::deterministic_tile_vertex_count ||
             stats.terrain_index_count !=
                 terrain::deterministic_tile_index_count ||
-            stats.terrain_bounds_vertex_count != 8 ||
-            stats.terrain_bounds_index_count != 24 ||
+            stats.terrain_bounds_vertex_count !=
+                terrain::deterministic_tile_chunk_count * 8U ||
+            stats.terrain_bounds_index_count !=
+                terrain::deterministic_tile_chunk_count * 24U ||
             stats.terrain_query_marker_vertex_count != 6 ||
             stats.terrain_query_marker_index_count != 6 ||
             stats.material_sphere_vertex_count != 266 ||
@@ -1906,6 +1998,23 @@ void log_platform_event(const shark::platform::Event& event)
         summary.push_back('/');
         summary.append(std::to_string(
             stats.terrain_query_marker_draw_calls));
+        summary.append(", terrain-chunks(last/min/max/total)=");
+        summary.append(std::to_string(
+            stats.terrain_visible_chunk_last));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.terrain_visible_chunk_min));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.terrain_visible_chunk_max));
+        summary.push_back('/');
+        summary.append(std::to_string(stats.terrain_chunk_count));
+        summary.append(", terrain-chunks(tested/visible/culled)=");
+        summary.append(std::to_string(stats.terrain_chunks_tested));
+        summary.push_back('/');
+        summary.append(std::to_string(stats.terrain_chunks_visible));
+        summary.push_back('/');
+        summary.append(std::to_string(stats.terrain_chunks_culled));
         summary.append(", terrain(shaded/weights/normals)-views=");
         summary.append(std::to_string(
             stats.terrain_shaded_draw_calls));

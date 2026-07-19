@@ -1,8 +1,8 @@
 # Sky and HDR Environment-Lighting Contract
 
-- **Completed through:** `S-003`
-- **Last verified:** July 18, 2026
-- **Next planned increment:** `T-004` - terrain chunk culling
+- **Completed through:** `T-004`
+- **Last verified:** July 19, 2026
+- **Next planned increment:** `T-005` - bounded terrain LOD
 
 Shark still uses a skybox as the background rasterization technique: a cube is
 drawn around the camera with a translation-free view matrix and forced to the
@@ -186,10 +186,12 @@ color into shader-read state, then restore the back buffer and depth to their
 declared final states. Persistent environment and material resources remain in
 pixel-shader-read state.
 
-A submitted frame issues six indexed draws: terrain surface, material sphere,
-terrain AABB, terrain query marker, textured cube, and skybox. `ToneMap` adds
-one non-indexed fullscreen-triangle draw. The sphere shares the packed terrain
-buffers, so the static scene still contains four geometry buffers.
+With `V` visible terrain chunks, a submitted frame issues `2V + 4` indexed
+draws: `V` chunk surfaces, the material sphere, `V` matching magenta chunk
+bounds, the terrain query marker, textured cube, and skybox. `ToneMap` adds one
+non-indexed fullscreen-triangle draw. The chunk ranges, bounds, marker, and
+sphere share the packed terrain buffers, so the static scene still contains
+four geometry buffers. Sky remains exactly one indexed draw.
 
 The stable PIX hierarchy is:
 
@@ -241,7 +243,7 @@ mip zero, and material roughness uses the separately GGX-prefiltered specular
 cube, so that limitation is not on the visible S-003 path.
 
 It does not broaden Shark beyond the approved San Andreas-class local-sandbox
-ceiling. The next increment is `T-004`: split the current full-resolution
-terrain into render chunks and add frustum culling with visible bounds/counts.
-`T-005` follows with one bounded coarser visual LOD while collision and
-canonical queries remain full resolution.
+ceiling. `T-004` completed full-resolution terrain chunks and frustum culling
+on July 19, 2026 without changing sky pixels, resources, or the sky draw
+policy. The next increment is `T-005`: add one bounded coarser visual LOD with
+crack-free seams while collision and canonical queries remain full resolution.

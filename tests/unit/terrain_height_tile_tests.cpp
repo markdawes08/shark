@@ -83,6 +83,130 @@ constexpr void add_assign(
     };
 }
 
+[[nodiscard]] shark::math::Float3 tile_sample_position(
+    const shark::terrain::HeightTile& tile,
+    const std::uint32_t x,
+    const std::uint32_t z)
+{
+    return {
+        tile.origin.x +
+            static_cast<float>(x) * tile.sample_spacing,
+        tile.origin.y +
+            tile.height_offsets[sample_index(
+                x,
+                z,
+                tile.sample_columns)],
+        tile.origin.z +
+            static_cast<float>(z) * tile.sample_spacing,
+    };
+}
+
+[[nodiscard]] shark::terrain::Bounds3 expected_chunk_bounds(
+    const shark::terrain::HeightTile& tile,
+    const std::uint32_t first_cell_x,
+    const std::uint32_t first_cell_z,
+    const std::uint32_t cell_columns,
+    const std::uint32_t cell_rows)
+{
+    auto result = shark::terrain::Bounds3{
+        tile_sample_position(tile, first_cell_x, first_cell_z),
+        tile_sample_position(tile, first_cell_x, first_cell_z),
+    };
+    for (std::uint32_t local_z = 0;
+         local_z <= cell_rows;
+         ++local_z) {
+        for (std::uint32_t local_x = 0;
+             local_x <= cell_columns;
+             ++local_x) {
+            const auto position = tile_sample_position(
+                tile,
+                first_cell_x + local_x,
+                first_cell_z + local_z);
+            result.minimum.x = std::min(
+                result.minimum.x,
+                position.x);
+            result.minimum.y = std::min(
+                result.minimum.y,
+                position.y);
+            result.minimum.z = std::min(
+                result.minimum.z,
+                position.z);
+            result.maximum.x = std::max(
+                result.maximum.x,
+                position.x);
+            result.maximum.y = std::max(
+                result.maximum.y,
+                position.y);
+            result.maximum.z = std::max(
+                result.maximum.z,
+                position.z);
+        }
+    }
+    return result;
+}
+
+[[nodiscard]] std::array<std::uint16_t, 6> expected_cell_indices(
+    const std::uint32_t cell_x,
+    const std::uint32_t cell_z,
+    const std::uint32_t sample_columns)
+{
+    const auto v00 = sample_index(cell_x, cell_z, sample_columns);
+    const auto v10 = sample_index(
+        cell_x + 1U,
+        cell_z,
+        sample_columns);
+    const auto v01 = sample_index(
+        cell_x,
+        cell_z + 1U,
+        sample_columns);
+    const auto v11 = sample_index(
+        cell_x + 1U,
+        cell_z + 1U,
+        sample_columns);
+    return {
+        static_cast<std::uint16_t>(v00),
+        static_cast<std::uint16_t>(v01),
+        static_cast<std::uint16_t>(v11),
+        static_cast<std::uint16_t>(v00),
+        static_cast<std::uint16_t>(v11),
+        static_cast<std::uint16_t>(v10),
+    };
+}
+
+inline constexpr std::array<std::uint16_t, 24>
+    expected_bounds_line_indices{{
+        0, 1,
+        1, 2,
+        2, 3,
+        3, 0,
+        4, 5,
+        5, 6,
+        6, 7,
+        7, 4,
+        0, 4,
+        1, 5,
+        2, 6,
+        3, 7,
+    }};
+
+[[nodiscard]] std::array<shark::math::Float3, 8>
+expected_bounds_line_positions(
+    const shark::terrain::Bounds3 bounds)
+{
+    const auto& minimum = bounds.minimum;
+    const auto& maximum = bounds.maximum;
+    return {{
+        {minimum.x, minimum.y, minimum.z},
+        {maximum.x, minimum.y, minimum.z},
+        {maximum.x, minimum.y, maximum.z},
+        {minimum.x, minimum.y, maximum.z},
+        {minimum.x, maximum.y, minimum.z},
+        {maximum.x, maximum.y, minimum.z},
+        {maximum.x, maximum.y, maximum.z},
+        {minimum.x, maximum.y, maximum.z},
+    }};
+}
+
 } // namespace
 
 TEST_CASE(
@@ -360,6 +484,322 @@ TEST_CASE(
         [](const std::uint32_t degree) {
             return degree == 3U;
         }));
+}
+
+TEST_CASE(
+    "LOD0 chunk layout partitions the deterministic tile exactly",
+    "[terrain][height-tile][chunks][contract]")
+{
+    using namespace shark;
+
+    STATIC_REQUIRE(
+        terrain::deterministic_tile_chunk_cell_columns == 8);
+    STATIC_REQUIRE(
+        terrain::deterministic_tile_chunk_cell_rows == 8);
+    STATIC_REQUIRE(terrain::deterministic_tile_chunk_columns == 4);
+    STATIC_REQUIRE(terrain::deterministic_tile_chunk_rows == 4);
+    STATIC_REQUIRE(terrain::deterministic_tile_chunk_count == 16);
+    STATIC_REQUIRE(
+        terrain::deterministic_tile_chunk_index_count == 384);
+
+    const auto tile = terrain::make_deterministic_height_tile();
+    const auto layout_result = terrain::build_lod0_chunk_layout(
+        tile,
+        terrain::deterministic_tile_chunk_cell_columns,
+        terrain::deterministic_tile_chunk_cell_rows);
+    REQUIRE(layout_result);
+    const auto& layout = layout_result.value();
+
+    REQUIRE(layout.chunks.size() ==
+        terrain::deterministic_tile_chunk_count);
+    REQUIRE(layout.indices.size() ==
+        terrain::deterministic_tile_index_count);
+
+    constexpr auto indices_per_chunk =
+        terrain::deterministic_tile_chunk_index_count;
+    std::vector<std::uint32_t> cell_visits(
+        (tile.sample_columns - 1U) *
+        (tile.sample_rows - 1U));
+    std::size_t expected_first_index = 0;
+    for (std::uint32_t chunk_z = 0;
+         chunk_z < terrain::deterministic_tile_chunk_rows;
+         ++chunk_z) {
+        for (std::uint32_t chunk_x = 0;
+             chunk_x < terrain::deterministic_tile_chunk_columns;
+             ++chunk_x) {
+            const auto chunk_index =
+                static_cast<std::size_t>(chunk_z) *
+                    terrain::deterministic_tile_chunk_columns +
+                chunk_x;
+            const auto& chunk = layout.chunks[chunk_index];
+            const auto expected_first_cell_x =
+                chunk_x *
+                terrain::deterministic_tile_chunk_cell_columns;
+            const auto expected_first_cell_z =
+                chunk_z *
+                terrain::deterministic_tile_chunk_cell_rows;
+
+            REQUIRE(chunk.first_cell_x == expected_first_cell_x);
+            REQUIRE(chunk.first_cell_z == expected_first_cell_z);
+            REQUIRE(chunk.cell_columns ==
+                terrain::deterministic_tile_chunk_cell_columns);
+            REQUIRE(chunk.cell_rows ==
+                terrain::deterministic_tile_chunk_cell_rows);
+            REQUIRE(chunk.first_index == expected_first_index);
+            REQUIRE(chunk.index_count == indices_per_chunk);
+            REQUIRE(chunk.first_index + chunk.index_count <=
+                layout.indices.size());
+
+            const auto expected_bounds = expected_chunk_bounds(
+                tile,
+                chunk.first_cell_x,
+                chunk.first_cell_z,
+                chunk.cell_columns,
+                chunk.cell_rows);
+            REQUIRE(chunk.bounds == expected_bounds);
+            REQUIRE(chunk.bounds_lines.positions ==
+                expected_bounds_line_positions(expected_bounds));
+            REQUIRE(chunk.bounds_lines.indices ==
+                expected_bounds_line_indices);
+
+            auto current_index = chunk.first_index;
+            for (std::uint32_t local_z = 0;
+                 local_z < chunk.cell_rows;
+                 ++local_z) {
+                const auto cell_z = chunk.first_cell_z + local_z;
+                for (std::uint32_t local_x = 0;
+                     local_x < chunk.cell_columns;
+                     ++local_x) {
+                    const auto cell_x =
+                        chunk.first_cell_x + local_x;
+                    const auto expected = expected_cell_indices(
+                        cell_x,
+                        cell_z,
+                        tile.sample_columns);
+                    for (const auto index : expected) {
+                        REQUIRE(layout.indices[current_index] == index);
+                        ++current_index;
+                    }
+                    const auto cell_index =
+                        static_cast<std::size_t>(cell_z) *
+                            (tile.sample_columns - 1U) +
+                        cell_x;
+                    ++cell_visits[cell_index];
+                }
+            }
+            REQUIRE(current_index ==
+                chunk.first_index + chunk.index_count);
+            expected_first_index += chunk.index_count;
+        }
+    }
+    REQUIRE(expected_first_index == layout.indices.size());
+    REQUIRE(std::all_of(
+        cell_visits.begin(),
+        cell_visits.end(),
+        [](const std::uint32_t visits) {
+            return visits == 1U;
+        }));
+
+    REQUIRE((
+        layout.chunks.front().bounds == terrain::Bounds3{
+            {-8.0F, -2.5F, -12.0F},
+            {-4.0F, -1.75F, -8.0F},
+        }));
+    REQUIRE((
+        layout.chunks[10].bounds == terrain::Bounds3{
+            {0.0F, -3.171875F, -4.0F},
+            {4.0F, -0.578125F, 0.0F},
+        }));
+    REQUIRE((
+        layout.chunks.back().bounds == terrain::Bounds3{
+            {4.0F, -2.984375F, 0.0F},
+            {8.0F, -2.0F, 4.0F},
+        }));
+}
+
+TEST_CASE(
+    "LOD0 chunk layout supports partial edge chunks",
+    "[terrain][height-tile][chunks][partial]")
+{
+    using namespace shark;
+
+    auto tile = make_flat_tile(12, 7);
+    tile.sample_spacing = 0.25F;
+    tile.origin = {-3.0F, -5.0F, 2.0F};
+    for (std::uint32_t z = 0; z < tile.sample_rows; ++z) {
+        for (std::uint32_t x = 0;
+             x < tile.sample_columns;
+             ++x) {
+            tile.height_offsets[sample_index(
+                x,
+                z,
+                tile.sample_columns)] =
+                static_cast<float>(x + z * 10U) / 8.0F;
+        }
+    }
+
+    const auto layout_result =
+        terrain::build_lod0_chunk_layout(tile, 4, 4);
+    REQUIRE(layout_result);
+    const auto& layout = layout_result.value();
+    REQUIRE(layout.chunks.size() == 6);
+    REQUIRE(layout.indices.size() == 11U * 6U * 6U);
+
+    struct ExpectedChunk final {
+        std::uint32_t first_cell_x;
+        std::uint32_t first_cell_z;
+        std::uint32_t cell_columns;
+        std::uint32_t cell_rows;
+    };
+    constexpr std::array expected_chunks{
+        ExpectedChunk{0, 0, 4, 4},
+        ExpectedChunk{4, 0, 4, 4},
+        ExpectedChunk{8, 0, 3, 4},
+        ExpectedChunk{0, 4, 4, 2},
+        ExpectedChunk{4, 4, 4, 2},
+        ExpectedChunk{8, 4, 3, 2},
+    };
+
+    std::vector<std::uint32_t> cell_visits(11U * 6U);
+    std::size_t expected_first_index = 0;
+    for (std::size_t chunk_index = 0;
+         chunk_index < expected_chunks.size();
+         ++chunk_index) {
+        const auto& chunk = layout.chunks[chunk_index];
+        const auto& expected_chunk = expected_chunks[chunk_index];
+        REQUIRE(chunk.first_cell_x ==
+            expected_chunk.first_cell_x);
+        REQUIRE(chunk.first_cell_z ==
+            expected_chunk.first_cell_z);
+        REQUIRE(chunk.cell_columns ==
+            expected_chunk.cell_columns);
+        REQUIRE(chunk.cell_rows ==
+            expected_chunk.cell_rows);
+        REQUIRE(chunk.first_index == expected_first_index);
+        REQUIRE(chunk.index_count ==
+            static_cast<std::size_t>(
+                chunk.cell_columns * chunk.cell_rows) *
+                6U);
+
+        const auto expected_bounds = expected_chunk_bounds(
+            tile,
+            chunk.first_cell_x,
+            chunk.first_cell_z,
+            chunk.cell_columns,
+            chunk.cell_rows);
+        REQUIRE(chunk.bounds == expected_bounds);
+        REQUIRE(chunk.bounds_lines.positions ==
+            expected_bounds_line_positions(expected_bounds));
+        REQUIRE(chunk.bounds_lines.indices ==
+            expected_bounds_line_indices);
+
+        auto current_index = chunk.first_index;
+        for (std::uint32_t local_z = 0;
+             local_z < chunk.cell_rows;
+             ++local_z) {
+            const auto cell_z = chunk.first_cell_z + local_z;
+            for (std::uint32_t local_x = 0;
+                 local_x < chunk.cell_columns;
+                 ++local_x) {
+                const auto cell_x = chunk.first_cell_x + local_x;
+                const auto expected = expected_cell_indices(
+                    cell_x,
+                    cell_z,
+                    tile.sample_columns);
+                for (const auto index : expected) {
+                    REQUIRE(layout.indices[current_index] == index);
+                    ++current_index;
+                }
+                ++cell_visits[
+                    static_cast<std::size_t>(cell_z) * 11U +
+                    cell_x];
+            }
+        }
+        REQUIRE(current_index ==
+            chunk.first_index + chunk.index_count);
+        expected_first_index += chunk.index_count;
+    }
+    REQUIRE(expected_first_index == layout.indices.size());
+    REQUIRE(std::all_of(
+        cell_visits.begin(),
+        cell_visits.end(),
+        [](const std::uint32_t visits) {
+            return visits == 1U;
+        }));
+
+    const auto one_chunk_result =
+        terrain::build_lod0_chunk_layout(tile, 100, 100);
+    const auto mesh_result = terrain::build_lod0_mesh(tile);
+    REQUIRE(one_chunk_result);
+    REQUIRE(mesh_result);
+    REQUIRE(one_chunk_result.value().chunks.size() == 1);
+    REQUIRE(one_chunk_result.value().indices ==
+        mesh_result.value().indices);
+    REQUIRE(one_chunk_result.value().chunks.front().bounds ==
+        mesh_result.value().bounds);
+}
+
+TEST_CASE(
+    "LOD0 chunk layout rejects invalid dimensions and tiles",
+    "[terrain][height-tile][chunks][validation]")
+{
+    using namespace shark;
+
+    SECTION("zero chunk width")
+    {
+        const auto result = terrain::build_lod0_chunk_layout(
+            make_flat_tile(2, 2),
+            0,
+            1);
+        REQUIRE_FALSE(result);
+        REQUIRE(result.error().code() ==
+            core::ErrorCode::invalid_argument);
+    }
+
+    SECTION("zero chunk height")
+    {
+        const auto result = terrain::build_lod0_chunk_layout(
+            make_flat_tile(2, 2),
+            1,
+            0);
+        REQUIRE_FALSE(result);
+        REQUIRE(result.error().code() ==
+            core::ErrorCode::invalid_argument);
+    }
+
+    SECTION("malformed source tile")
+    {
+        auto tile = make_flat_tile(3, 3);
+        tile.height_offsets.pop_back();
+        const auto result =
+            terrain::build_lod0_chunk_layout(tile, 1, 1);
+        REQUIRE_FALSE(result);
+        REQUIRE(result.error().code() ==
+            core::ErrorCode::invalid_argument);
+    }
+
+    SECTION("nonfinite source tile")
+    {
+        auto tile = make_flat_tile(3, 3);
+        tile.height_offsets[4] =
+            std::numeric_limits<float>::quiet_NaN();
+        const auto result =
+            terrain::build_lod0_chunk_layout(tile, 1, 1);
+        REQUIRE_FALSE(result);
+        REQUIRE(result.error().code() ==
+            core::ErrorCode::invalid_argument);
+    }
+
+    SECTION("uint16 vertex capacity")
+    {
+        const auto result = terrain::build_lod0_chunk_layout(
+            make_flat_tile(257, 257),
+            8,
+            8);
+        REQUIRE_FALSE(result);
+        REQUIRE(result.error().code() ==
+            core::ErrorCode::unsupported);
+    }
 }
 
 TEST_CASE(

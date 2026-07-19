@@ -153,6 +153,32 @@ struct HeightTileMesh final {
         const HeightTileMesh&) = default;
 };
 
+struct HeightTileChunk final {
+    std::uint32_t first_cell_x{};
+    std::uint32_t first_cell_z{};
+    std::uint32_t cell_columns{};
+    std::uint32_t cell_rows{};
+    std::size_t first_index{};
+    std::size_t index_count{};
+    Bounds3 bounds;
+    BoundsLineGeometry bounds_lines;
+
+    [[nodiscard]] friend bool operator==(
+        const HeightTileChunk&,
+        const HeightTileChunk&) = default;
+};
+
+// References build_lod0_mesh's canonical global vertex stream. Indices are
+// concatenated chunk by chunk so each record names one contiguous draw range.
+struct HeightTileChunkLayout final {
+    std::vector<std::uint16_t> indices;
+    std::vector<HeightTileChunk> chunks;
+
+    [[nodiscard]] friend bool operator==(
+        const HeightTileChunkLayout&,
+        const HeightTileChunkLayout&) = default;
+};
+
 inline constexpr std::uint32_t deterministic_tile_sample_columns = 33;
 inline constexpr std::uint32_t deterministic_tile_sample_rows = 33;
 inline constexpr float deterministic_tile_sample_spacing = 0.5F;
@@ -172,6 +198,21 @@ inline constexpr std::size_t deterministic_tile_triangle_count =
     2U;
 inline constexpr std::size_t deterministic_tile_index_count =
     deterministic_tile_triangle_count * 3U;
+inline constexpr std::uint32_t deterministic_tile_chunk_cell_columns = 8;
+inline constexpr std::uint32_t deterministic_tile_chunk_cell_rows = 8;
+inline constexpr std::uint32_t deterministic_tile_chunk_columns = 4;
+inline constexpr std::uint32_t deterministic_tile_chunk_rows = 4;
+inline constexpr std::size_t deterministic_tile_chunk_count =
+    static_cast<std::size_t>(deterministic_tile_chunk_columns) *
+    deterministic_tile_chunk_rows;
+inline constexpr std::size_t deterministic_tile_chunk_index_count =
+    static_cast<std::size_t>(
+        deterministic_tile_chunk_cell_columns) *
+    deterministic_tile_chunk_cell_rows * 6U;
+static_assert(
+    deterministic_tile_chunk_count *
+        deterministic_tile_chunk_index_count ==
+    deterministic_tile_index_count);
 inline constexpr Bounds3 deterministic_tile_expected_bounds{
     {-8.0F, -3.171875F, -12.0F},
     {8.0F, -0.09375F, 4.0F},
@@ -186,5 +227,14 @@ inline constexpr Bounds3 deterministic_tile_expected_bounds{
 // the next +X sample and v01 is the next +Z sample.
 [[nodiscard]] core::Result<HeightTileMesh> build_lod0_mesh(
     const HeightTile& tile);
+
+// Partitions the canonical full-resolution cells into row-major chunks (Z,
+// then X). Partial chunks cover the maximum X/Z edges. Every source cell emits
+// its two fixed LOD0 triangles exactly once, while each chunk bounds all samples
+// referenced by those triangles.
+[[nodiscard]] core::Result<HeightTileChunkLayout> build_lod0_chunk_layout(
+    const HeightTile& tile,
+    std::uint32_t chunk_cell_columns,
+    std::uint32_t chunk_cell_rows);
 
 } // namespace shark::terrain

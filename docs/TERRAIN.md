@@ -1,7 +1,12 @@
 # Canonical Terrain-Tile Contract
 
-- **Completed through:** `S-003`
-- **Last verified:** July 18, 2026
+- **Completed through:** `T-004`
+- **Last verified:** July 19, 2026
+
+T-004 verification snapshot: Debug and Release each passed the full `133/133`
+CTest matrix, including all 124 `SharkTests` unit cases, the hardware and
+packaged-WARP 1,000-frame presentation paths, and the focused 120-frame
+packaged-WARP GPU-validation path with exact `16 -> 5` visibility.
 
 S-003 verification snapshot: Debug and Release each passed the full `125/125`
 CTest suite, including hardware and packaged-WARP presentation plus focused
@@ -22,7 +27,10 @@ result as a cyan normal pin on the visible LOD0 surface. T-003 preserves that
 canonical surface and adds the first bounded visual material path: two
 project-owned ground/rock layers blended by deterministic slope and height.
 S-003 preserves every query result while adding shared HDR image-based
-lighting for the terrain and one material-sphere proof.
+lighting for the terrain and one material-sphere proof. T-004 derives a
+full-resolution `4x4` render-chunk layout from the same canonical tile,
+conservatively culls exact chunk AABBs against the current camera frustum, and
+draws only visible chunk surfaces and their magenta diagnostic bounds.
 
 ## Canonical height fixture
 
@@ -39,6 +47,10 @@ vertices                    1,089
 cells                       32 x 32
 triangles                   2,048
 render uint16 indices       6,144
+render chunk grid           4 x 4
+cells per render chunk      8 x 8
+triangles / indices/chunk   128 / 384
+render chunks               16
 world AABB minimum          (-8.0, -3.171875, -12.0) m
 world AABB maximum          ( 8.0, -0.09375,    4.0) m
 ```
@@ -132,8 +144,9 @@ tested edge length and ray-cross-edge length rather than comparing the
 determinant with a fixed world-size threshold. Barycentric edge tolerance
 remains dimensionless. Valid very small tiles are therefore not misclassified
 merely because their edges are short.
-The current single-tile implementation deliberately checks the LOD0 triangles
-directly; acceleration belongs with later chunk/spatial-index work.
+Canonical ray queries still check the LOD0 triangles directly. T-004 render
+chunks are presentation data and are not a query or physics acceleration
+structure; such acceleration requires a separate future increment.
 
 ## Render mesh versus query data
 
@@ -147,6 +160,63 @@ readable under daylight, but they are derived render data only.
 D3D12 resource. Rendering receives derived vertices plus one query-derived
 diagnostic. Future physics and fluid systems must query the canonical surface,
 not recover data from a visual LOD or render mesh.
+
+## Full-resolution chunks and frustum culling
+
+`build_lod0_chunk_layout` partitions the canonical cell grid without creating
+a second surface. It validates the source tile and `uint16` vertex capacity,
+requires positive chunk dimensions, supports partial chunks at the maximum
+`+X/+Z` edges, and emits chunks row-major in `+Z`, then `+X`. Every source cell
+appears exactly once. Its two triangles retain the fixed LOD0 winding and
+diagonal.
+
+The deterministic fixture requests `8x8` cells per chunk. It therefore
+produces 16 chunks in a `4x4` grid. Each chunk owns:
+
+- its first cell and cell extent;
+- one contiguous 384-index range in a chunk-major 6,144-index stream;
+- an exact AABB enclosing all `9x9` canonical samples used by its cells; and
+- eight diagnostic bounds vertices with 24 line-list indices.
+
+All chunk indices reference the one unchanged 1,089-vertex LOD0 stream. Shared
+edge samples are not duplicated. The sandbox passes only each chunk's
+first-index/count and AABB across `RendererConfig`; no D3D12 object enters the
+terrain module.
+
+Renderer startup accepts one through 4,096 chunk records. It requires
+nonempty six-index-aligned ranges that are contiguous and cover the complete
+triangle stream exactly once, finite ordered bounds enclosing every referenced
+LOD0 vertex within `0.00001` meters, and exactly eight bounds vertices plus 24
+local line indices per chunk. Invalid tables fail before resource creation.
+
+Before recording `Terrain`, the renderer extracts six normalized,
+inward-facing planes from the current row-vector `view_projection` and the
+Direct3D clip volume:
+
+```text
+-w <= x <= w
+-w <= y <= w
+ 0 <= z <= w
+```
+
+The `z` half-spaces therefore honor Shark's finite reversed-Z projection
+without special-case near/far assumptions. Scale-first double-precision
+normalization makes plane extraction invariant under positive homogeneous
+matrix scaling, including very small or large finite scales. A support-point
+AABB test rejects a chunk only when it is wholly outside a plane by more than
+the fixed `0.0001`-meter tolerance. Tangent and intersecting boxes remain
+visible. The test is conservative: it may retain a box at a frustum corner,
+but it cannot discard one intersecting the frustum, which is the intersection
+of all six clip half-spaces. Nonfinite or rank-deficient view-projection
+matrices fail the frame before submission.
+
+The initial sandbox pose sees `16 / 16` chunks. The deterministic smoke pose
+resizes to `960x600` and turns to yaw `1.25` radians, leaving `5 / 16`
+visible. The renderer logs
+`Terrain chunks: <visible> / <total> visible` under `renderer.terrain` only
+when the count changes. Culling uses the ordinary
+camera matrix, never the translation-free sky matrix, and never changes
+canonical height, normal, bounds, or ray answers.
 
 ## Query-derived cyan normal pin
 
@@ -166,15 +236,15 @@ terrain line PSO, `LINELIST`, reversed-Z `GREATER_EQUAL`, depth testing, and no
 depth writes. Their diagnostic color is encoded through the negative-`Y`
 normal sentinel and is independent of daylight.
 
-The surface vertices, eight AABB vertices, and six marker vertices occupy one
-immutable terrain vertex buffer. Their 6,144, 24, and six indices occupy one
-immutable terrain index buffer. Packing the marker into those existing two
-buffers preserves four total geometry buffers across the cube and terrain.
-S-003 additionally packs a 266-vertex/1,584-index material sphere after the
-marker in those same terrain buffers. T-003's three material arrays and
-S-003's four HDR environment textures share the one-time static upload,
-raising its initialization transitions to 13 without changing
-geometry-resource count.
+The 1,089 shared surface vertices, 128 chunk-bounds vertices, six marker
+vertices, and 266 material-sphere vertices occupy one immutable terrain vertex
+buffer. Their 6,144, 384, six, and 1,584 indices occupy one immutable terrain
+index buffer in that order. Each visible bounds draw selects one chunk's
+eight-vertex/24-index range; the sphere remains packed after the marker.
+Keeping every chunk range in those existing two resources preserves four total
+geometry buffers across the cube and terrain. T-003's three material arrays
+and S-003's four HDR environment textures share the one-time static upload,
+whose 13 initialization transitions remain unchanged.
 
 ## Layered material fixture
 
@@ -247,11 +317,11 @@ cycles:
 
 ## Frame graph and diagnostics
 
-S-003 extends the renderer-owned production declaration to four passes:
+The renderer-owned production declaration remains four passes:
 
-1. `Terrain` clears color/depth, draws the selected solid or wireframe surface,
-   draws the material sphere, then draws the magenta AABB and cyan query
-   marker.
+1. `Terrain` clears color/depth, draws every visible chunk in the selected
+   solid or wireframe mode, draws the material sphere, then draws each visible
+   chunk's magenta AABB and the cyan query marker.
 2. `TexturedCube` preserves the attachments and draws the checker cube.
 3. `Skybox` reads depth and fills only the far background with procedural
    daylight or HDR radiance.
@@ -287,20 +357,26 @@ emitted transitions     6
 elided transitions      31
 ```
 
-The marker and sphere add no separate graph pass, dependency, barrier, PIX
-scope, or timestamp. `Terrain` contains four indexed draws and its timing
-interval includes all of them. A submitted frame records six indexed draws:
+Chunk culling is CPU work before graph execution. Chunk ranges and bounds share
+the existing two terrain-buffer imports, so culling adds no graph pass,
+dependency, barrier, PIX scope, or timestamp. If `V` chunks are visible,
+`Terrain` contains `2V + 2` indexed draws and its timing interval includes all
+GPU surface, sphere, bounds, and marker commands. A submitted frame contains
+`2V + 4` indexed draws:
 
 ```text
-terrain surface          6,144 indices
+visible terrain chunks      384 * V indices
 material sphere          1,584 indices
-terrain AABB                 24 indices
+visible chunk AABBs           24 * V indices
 terrain query marker          6 indices
 textured cube                 36 indices
 skybox                        36 indices
 ```
 
 `ToneMap` then issues one non-indexed fullscreen-triangle draw.
+At the initial `V=16` pose this is 36 indexed draws and 8,190 submitted
+indices. At the scripted `V=5` pose it is 14 indexed draws and 3,702 submitted
+indices.
 
 The stable PIX hierarchy and timestamp allocation remain:
 
@@ -318,17 +394,52 @@ Frame
 Hardware and normal packaged-WARP presentation smoke paths require 1,000
 successful presents; focused packaged WARP with GPU-based validation requires
 120. Every path exercises both fill modes, all three material views, and both
-environment modes. After shutdown, smoke accounting requires one surface,
-sphere, bounds, marker, cube, sky, and tone-map draw per frame; exact
-corresponding index totals; six marker vertices/indices in static storage;
-`15/4/3/6/31` graph accounting; ten timestamps; four texture-table binds per
-frame; and one static upload producing four geometry buffers, three material
-arrays, and four HDR environment textures. Startup proves two layers, six
-mips, 36 material subresources, 32,760 meaningful material bytes, 79
-environment subresources, 284,608 meaningful environment bytes, and ten
-persistent texture descriptors including the resize-owned HDR scene SRV.
-The minimize interval proves the marker counter, like every other frame-owned
-counter, does not advance while no frame is submitted.
+environment modes. The initial pose exposes 16 chunks; after resize and the
+scripted yaw, five remain visible.
+
+For `F` submitted frames and `V` cumulative visible chunks, smoke accounting
+requires:
+
+```text
+terrain_chunk_count == 16
+terrain_chunks_tested == 16 * F
+terrain_chunks_visible + terrain_chunks_culled
+    == terrain_chunks_tested
+terrain_chunks_visible == terrain_draw_calls == V
+terrain_bounds_draw_calls == V
+terrain_indices == 384 * V
+terrain_bounds_indices == 24 * V
+terrain_solid_draw_calls + terrain_wireframe_draw_calls == V
+terrain_shaded_draw_calls + terrain_material_weight_draw_calls
+    + terrain_shading_normal_draw_calls == V
+
+terrain_visible_chunk_min == 5
+terrain_visible_chunk_max == 16
+terrain_visible_chunk_last == 5
+
+material_sphere_draw_calls == F
+terrain_query_marker_draw_calls == F
+cube_draw_calls == skybox_draw_calls == tone_map_draw_calls == F
+```
+
+The one-per-pass identity uses `pix_terrain_events`, not variable surface draw
+count:
+
+```text
+pix_terrain_events + cube_draw_calls + skybox_draw_calls
+    + tone_map_draw_calls == render_graph_pass_executions
+```
+
+Static accounting requires 1,089 surface vertices, 6,144 surface indices, 128
+chunk-bounds vertices, 384 chunk-bounds indices, and six marker
+vertices/indices. It retains `15/4/3/6/31` graph accounting, ten timestamps,
+four texture-table binds per frame, and one static upload producing four
+geometry buffers, three material arrays, and four HDR environment textures.
+Startup still proves two layers, six mips, 36 material subresources, 32,760
+meaningful material bytes, 79 environment subresources, 284,608 meaningful
+environment bytes, and ten persistent texture descriptors including the
+resize-owned HDR scene SRV. The minimize interval proves all chunk, draw, and
+frame-owned counters remain unchanged while no frame is submitted.
 
 ## Verification
 
@@ -351,6 +462,8 @@ Focused CPU and contract coverage:
 ```powershell
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][query]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][height-tile][chunks]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[renderer][terrain][culling]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][material]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[assets][environment][ibl]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[environment][sphere]"
@@ -367,32 +480,50 @@ origin-on-surface hits, valid misses, invalid rays, large-origin
 float-rounding parity with LOD0 vertices, and scale-relative ray hits on very
 small valid cells.
 
+Chunk-layout coverage locks the deterministic `4x4` partition, row-major
+ordering, contiguous ranges, unchanged global vertex references, exact
+once-only cell coverage, fixed triangle order, sample-derived bounds and
+line geometry, partial edge chunks, a one-chunk fallback, invalid dimensions,
+malformed/nonfinite tiles, and the `uint16` vertex ceiling. Renderer coverage
+locks all six Direct3D clip half-spaces, normalized planes, inside,
+intersecting, tangent, and outside AABBs, rejection of degenerate/nonfinite
+matrices, positive-scale-invariant extraction, ordinary and extreme-far
+reversed-Z ranges, and the exact 16-to-five deterministic smoke poses.
+
 For manual acceptance, run `SharkSandbox` without arguments. Confirm the cyan
-pin begins on the terrain and follows its exact triangle normal, while the
-magenta AABB still encloses the tile. Verify the pin remains depth-tested in
-both solid and `F1` wireframe modes and does not move with the camera. Use `F2`
-to confirm the shaded ground/rock blend, complementary layer weights, and
-world-normal visualization. Use `F3` to compare HDR IBL with procedural
-daylight and confirm the terrain and material sphere switch coherently. Move,
-rotate, resize, minimize, restore, and close; world-space material tiling,
-checker cube, sky, tone mapping, diagnostics, and Direct3D validation must
-remain clean.
+pin begins on the terrain and follows its exact triangle normal. The 16
+magenta chunk AABBs must partition and enclose the visible tile at the initial
+pose, and the log must report `Terrain chunks: 16 / 16 visible`. Rotate away
+from the tile and confirm surface pieces and their matching bounds disappear
+together while the count changes without popping an intersecting chunk. The
+deterministic smoke run must reach `5 / 16`. Verify the pin and visible bounds
+remain depth-tested in both solid and `F1` wireframe modes and do not alter the
+canonical surface. Use `F2` to confirm the shaded ground/rock blend,
+complementary material weights, and world-normal visualization. Use `F3` to
+compare HDR IBL with procedural daylight and confirm terrain and material
+sphere switch coherently. Move, rotate, resize, minimize, restore, and close;
+world-space material tiling, checker cube, sky, tone mapping, diagnostics, and
+Direct3D validation must remain clean.
 
 ## Explicit non-goals and continuation
 
-S-003 adds no terrain collision response, rigid bodies, authored/file-backed
-material assets, stored mesh UVs/tangents, arbitrary layer counts, painting,
-chunks, frustum culling, visual LOD, seams, spatial acceleration, streaming,
-virtual texturing, mesh shaders, shadows, weather interaction, erosion, water,
-editor, dynamic mouse picking, general debug-draw service, or general
-scene/mesh/material resource system. The fixed ray proof, static pin, and
-material sphere are diagnostics, not gameplay or editor selection.
+T-004 adds no terrain collision response, rigid bodies, coarser visual LOD,
+LOD selection, seam repair, skirts, morphing, spatial acceleration for
+canonical queries or physics, streaming, occlusion culling, generalized world
+partition, authored/file-backed material assets, stored mesh UVs/tangents,
+arbitrary layer counts, painting, virtual texturing, mesh shaders, shadows,
+weather interaction, erosion, water, editor, dynamic mouse picking, general
+debug-draw service, or general scene/mesh/material resource system. The fixed
+ray proof, static pin, chunk bounds, and material sphere are diagnostics, not
+gameplay or editor selection.
 
 `HeightTileSurface` remains platform-independent and authoritative; material
 weights, sampled normals, and shading never feed its height, ray, or collision
-answers. S-003 was completed on July 18, 2026 with the exact
-`15/4/3/6/31` graph contract, six indexed scene draws plus the tone-map draw,
-four geometry buffers, three material arrays, four HDR environment textures,
-ten persistent texture descriptors, four per-frame texture-table binds, and
-the expanded PIX/timestamp hierarchy. The upcoming increment is `T-004`,
-terrain chunk culling, followed by `T-005`, bounded visual LOD.
+answers. T-004 was completed on July 19, 2026 with 16 full-resolution chunks,
+conservative frustum culling, visible magenta chunk bounds, explicit
+visibility statistics, and exact 16-to-five smoke coverage. It retains the
+`15/4/3/6/31` graph contract, four geometry buffers, three material arrays,
+four HDR environment textures, ten persistent texture descriptors, four
+per-frame texture-table binds, and the existing PIX/timestamp hierarchy.
+The upcoming increment is `T-005`, one bounded coarser visual LOD with
+crack-free seams while canonical queries remain full resolution.

@@ -47,6 +47,9 @@ TEST_CASE(
         D3D12_COMPARISON_FUNC_GREATER_EQUAL);
     STATIC_REQUIRE(terrain_query_marker_vertex_count == 6);
     STATIC_REQUIRE(terrain_query_marker_index_count == 6);
+    STATIC_REQUIRE(terrain_chunk_bounds_vertex_count == 8);
+    STATIC_REQUIRE(terrain_chunk_bounds_index_count == 24);
+    STATIC_REQUIRE(terrain_maximum_chunk_count == 4'096);
 }
 
 TEST_CASE(

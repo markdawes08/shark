@@ -1,7 +1,7 @@
 # Building Shark
 
-- **Completed through:** `S-003`
-- **Last verified:** July 18, 2026
+- **Completed through:** `T-004`
+- **Last verified:** July 19, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
 14.50 LTS toolset, CMake 4.2 or newer, and Windows SDK 10.0.26100 exactly.
@@ -169,12 +169,14 @@ For the visual acceptance check, run `SharkSandbox` without arguments. A solid
 height tile must show tiled ground and rock materials blended by slope and
 height, mapped surface detail, and direct-sun plus environment response. The
 glossy neutral material sphere must reflect the same environment used by the
-terrain. Its magenta depth-tested bounds overlay must enclose the tile,
-and the cyan query pin must begin on the visible LOD0 surface and extend along
-its exact triangle normal. `F1` must reveal the fixed triangle split in
-wireframe without disconnecting or hiding the pin. `F2` must cycle shaded,
-complementary material-weight, and mapped world-normal views without changing
-the canonical geometry.
+terrain. The initial pose must show 16 magenta depth-tested chunk AABBs and log
+`Terrain chunks: 16 / 16 visible`. Surface chunks and matching bounds must
+disappear together when the camera turns away; the deterministic smoke pose
+must reach `5 / 16`. The cyan query pin must begin on the visible LOD0 surface
+and extend along its exact triangle normal. `F1` must reveal the fixed triangle
+split in wireframe without disconnecting or hiding the pin. `F2` must cycle
+shaded, complementary material-weight, and mapped world-normal views without
+changing the canonical geometry.
 The textured cube must retain correct hidden-surface occlusion and perspective.
 The background must form one continuous HDR daylight environment without
 visible cube-face seams or painted-wall bands. Translation must not move the
@@ -261,24 +263,30 @@ completed; that checkpoint protects all frame constants and the probe
 destination.
 
 Creation records one `StaticSceneUpload` PIX event, one static direct-queue
-upload submission, and one bounded wait for the cube and packed terrain/sphere
-vertex/index buffers, deterministic `8x8` checker, all six faces of the
-app-local `8x8` sRGB DDS cubemap, the three two-layer `32x32` full-mip terrain
+upload submission, and one bounded wait for the cube and packed shared
+terrain/chunk-bounds/marker/sphere vertex/index buffers, deterministic `8x8`
+checker, all six faces of the app-local `8x8` sRGB DDS cubemap, the three
+two-layer `32x32` full-mip terrain
 material arrays, and four derived HDR environment textures. The deterministic
 `64x32` linear-HDR source is CPU-only. Its GPU derivatives are a `32x32`
 six-mip radiance cube, `8x8` one-mip diffuse-irradiance cube, `32x32` six-mip
 GGX-prefiltered specular cube, and `32x32` split-sum BRDF LUT: 79 subresources
-and 284,608 meaningful RGBA32-float bytes. The terrain buffers also pack the
-266-vertex/1,584-index material sphere, so startup still creates four geometry
-buffers. The retained DDS cubemap remains a separate asset/upload proof. The
-startup list ends with 13 initialization barriers.
+and 284,608 meaningful RGBA32-float bytes. The 16 row-major chunks use the
+same 1,089 terrain vertices and 16 contiguous 384-index surface ranges. Their
+128 bounds vertices and 384 bounds indices, the query marker, and the
+266-vertex/1,584-index material sphere remain packed into the same terrain
+buffers, so startup still creates four geometry buffers. The retained DDS
+cubemap remains a separate asset/upload proof. The startup list ends with 13
+initialization barriers.
 
 Every submitted frame records one outer `Frame` event with nested `Terrain`,
 `TexturedCube`, `Skybox`, and `ToneMap` events. Its exact graph has 15 imports,
 four passes, three dependencies, six recorded transitions, and 31 elided
-transitions. It issues six indexed draws: terrain surface, material sphere,
-terrain AABB, terrain query marker, 36-index textured cube, and 36-index
-skybox, followed by one non-indexed fullscreen-triangle tone-map draw. It
+transitions. With `V` visible chunks it issues `2V + 4` indexed draws: `V`
+384-index terrain surfaces, the material sphere, `V` matching 24-index chunk
+bounds, the terrain query marker, 36-index textured cube, and 36-index skybox.
+One non-indexed fullscreen-triangle tone-map draw follows. The fixed smoke
+poses therefore issue 36 indexed draws at `V=16` and 14 at `V=5`. The frame
 retains four texture-table bindings and one reversed-Z depth clear. Terrain
 owns the clear, cube preserves it, sky uses the read-only DSV, and `ToneMap`
 reads the HDR scene target while writing the swap-chain back buffer.
@@ -296,7 +304,8 @@ resize/shutdown drain; timing adds no normal-frame drain.
 The summary reports graph pass/barrier counts, PIX event counts, query
 high-water/capacity, timing sample count, average/maximum frame,
 `Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` milliseconds, terrain
-solid/wireframe/bounds/query-marker counts, all draw/index counts,
+solid/wireframe/bounds/query-marker counts, chunk last/min/max/total and
+tested/visible/culled counts, all draw/index counts,
 scene/sky matrix changes, `depth_clear_count`, depth-resource/read-only-view
 creation counts, other resource creation counts,
 context reuse, blocking reuse waits, queue drains, and upload/descriptor
@@ -316,6 +325,8 @@ GPU timestamp-state unit coverage directly with:
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[daylight]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][query]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][height-tile][chunks]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[renderer][terrain][culling]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][material]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[assets][dds][cubemap]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[assets][environment][ibl]"
@@ -365,10 +376,11 @@ capture acceptance. See [the DDS cubemap contract](DDS_CUBEMAP.md) for the
 tracked fixture, strict loader, app-local deployment, retained startup upload,
 and deliberately absent per-frame sky read. See
 [the terrain contract](TERRAIN.md) for canonical ownership, exact query
-semantics, material fixture, render-mesh separation, and diagnostic rules.
-`S-003` completed the bounded HDR environment-lighting path on July 18, 2026.
-The upcoming increment is `T-004`, terrain chunk culling, followed by `T-005`,
-bounded visual LOD.
+semantics, full-resolution chunks, frustum culling, material fixture,
+render-mesh separation, and diagnostic rules. `T-004` completed terrain chunk
+culling on July 19, 2026. The upcoming increment is `T-005`, one bounded
+coarser terrain LOD with crack-free seams and full-resolution canonical
+queries.
 
 ## Visual Studio
 

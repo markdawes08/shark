@@ -1,7 +1,7 @@
 # DDS Cubemap Asset and Upload Contract
 
-- **Completed through:** `S-003`
-- **Last verified:** July 18, 2026
+- **Completed through:** `T-004`
+- **Last verified:** July 19, 2026
 
 S-001 establishes Shark's first file-backed texture asset. It loads one
 project-owned DDS cubemap into CPU-owned engine records, preserves explicit
@@ -173,10 +173,12 @@ The startup path remains exactly one static submission, one
 `StaticSceneUpload` PIX event, and one bounded initialization wait. The normal
 frame graph now has 15 imports, four ordered
 `Terrain`/`TexturedCube`/`Skybox`/`ToneMap` passes, three dependencies, six
-transitions, 31 elisions, four texture-table binds, six indexed draws plus the
-tone-map draw, and ten timestamps per frame. The query marker and S-003
-material sphere are packed into the existing terrain buffers, preserving four
-total geometry buffers.
+transitions, 31 elisions, four texture-table binds, and ten timestamps per
+frame. With `V` visible terrain chunks it contains `2V + 4` indexed draws plus
+the tone-map draw. T-004's chunk ranges and bounds, the query marker, and the
+S-003 material sphere are packed into the existing terrain buffers, preserving
+four total geometry buffers. The DDS-backed cube/sky draw and upload counts do
+not vary with terrain visibility.
 Cubemap creation/upload counters remain startup invariants, but there is no
 per-frame cubemap read or binding to count.
 Hardware and normal WARP execute 1,000 successful presents; focused WARP with
@@ -200,5 +202,7 @@ longer exposes a public `Presentation` class. T-003 adds three separate
 terrain arrays and descriptors without repurposing or sampling the retained
 cubemap. S-003 was completed on July 18, 2026 and defines its separate
 project-generated environment-lighting asset contract without treating this
-orientation fixture as production content. The next increment is `T-004`,
-terrain chunk culling, followed by `T-005`, bounded visual LOD.
+orientation fixture as production content. T-004 was completed on July 19,
+2026 without changing the DDS contract. The next increment is `T-005`, one
+bounded coarser terrain LOD with crack-free seams and full-resolution
+canonical queries.

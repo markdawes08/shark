@@ -1,7 +1,7 @@
 # Direct3D 12 Device Contract
 
-- **Completed through:** `S-003`
-- **Last verified:** July 18, 2026
+- **Completed through:** `T-004`
+- **Last verified:** July 19, 2026
 
 G-001 establishes adapter discovery, diagnostics, capability reporting, and
 device ownership independently of frame submission. It intentionally creates
@@ -111,8 +111,8 @@ Selection rules are strict:
 verification. `--present-smoke` accepts the normal GPU selectors and optional
 GPU-based validation, creates a real window, presents exactly 1,000 successful
 frames normally or 120 in the focused GPU-validation mode, containing the
-indexed terrain surface, material sphere, bounds, cyan terrain-query marker,
-cube, and skybox plus final tone mapping, verifies
+visible indexed terrain chunks, matching magenta chunk bounds, material sphere,
+cyan terrain-query marker, cube, and skybox plus final tone mapping, verifies
 camera/depth/HDR/resource/graph lifecycles, and exits. The default interactive
 path keeps the device alive while the free-fly camera, IBL-lit terrain and
 query-normal pin, material sphere, textured cube, and HDR sky run as
@@ -196,8 +196,9 @@ reused, every submission compiles and executes exactly four graph passes with
 15 imports, three dependencies, six emitted barriers, and 31 elided
 transitions plus four texture-table bindings, and every submission retires
 during explicit shutdown before frame resources are released. S-003 retains
-four geometry buffers while requiring six indexed draws plus one fullscreen
-tone-map draw and ten timestamps per frame.
+four geometry buffers. T-004 retains that resource count while issuing
+`2V + 4` indexed draws for `V` visible chunks plus one fullscreen tone-map draw
+and ten timestamps per frame. The smoke poses prove `V=16` and `V=5`.
 
 Renderer shutdown explicitly drains and releases its command list, all scene
 and tone-map PSOs/root signatures, descriptor heap, checker/cubemap/material/
@@ -213,10 +214,12 @@ draw path. See [the camera and textured-cube contract](CAMERA_AND_CUBE.md) for
 the G-005 input, math, depth, static-resource, and acceptance rules. See
 [the minimal render-graph contract](RENDER_GRAPH.md) for the G-006
 platform-independent planner and D3D12 legacy-barrier executor.
-See [the terrain contract](TERRAIN.md) for the T-002 canonical query,
-deterministic tile, and diagnostic rendering modes, and
+See [the terrain contract](TERRAIN.md) for the canonical query, deterministic
+full-resolution chunks, frustum culling, and diagnostic rendering modes, and
 [the skybox contract](SKYBOX.md) for the S-003 HDR environment, analytic sun,
 and procedural fallback. T-002 adds no device capability or lifetime policy;
 REN-001, T-003, and S-003 likewise change no device capability or selection
-policy. S-003 was completed on July 18, 2026. The next increment is `T-004`,
-terrain chunk culling, followed by `T-005`, bounded visual LOD.
+policy. T-004 was completed on July 19, 2026 without changing adapter,
+capability, debug-layer, device, or lifetime policy. The next increment is
+`T-005`, one bounded coarser terrain LOD with crack-free seams and
+full-resolution canonical queries.

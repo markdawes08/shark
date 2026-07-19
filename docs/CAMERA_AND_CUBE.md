@@ -1,7 +1,7 @@
 # Camera, Reversed-Z Depth, Cube, and Skybox Contract
 
-- **Completed through:** `S-003`
-- **Last verified:** July 18, 2026
+- **Completed through:** `T-004`
+- **Last verified:** July 19, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
 engine-owned free-fly camera drives a resource-bound cube pipeline, a finite
@@ -42,6 +42,11 @@ The camera and shader share these fixed conventions:
 - vectors are row vectors and HLSL uses `mul(vector, matrix)`; and
 - a model vertex reaches clip space through `world * view * projection`; the
   proof cube uses the identity world transform and uploads `view * projection`.
+
+T-004 also uses that ordinary `view_projection` on the CPU to extract the six
+Direct3D clip half-spaces for terrain-chunk culling. It never uses
+`sky_view_projection`, whose removed translation is valid only for the
+far-depth environment.
 
 DirectXMath supplies the private implementation math. Engine-owned camera and
 frame records remain independent of Win32, DXGI, D3D12, WRL, and COM types.
@@ -213,17 +218,20 @@ automatic hardware and normal packaged WARP. The focused packaged-WARP path
 with GPU-based validation requires 120 successful presents, a 180-second
 internal deadline, and a 240-second CTest timeout. Each run changes from
 `1280x720` to `960x600` at its quarter checkpoint, intentionally changes the
-aspect ratio, and applies scripted yaw at three quarters. Only the normal
-1,000-frame paths minimize/restore at halfway; focused validation intentionally
-skips that already-covered interval.
+aspect ratio, and applies `1.25` radians of scripted yaw at three quarters.
+That camera sequence exposes 16 terrain chunks before the turn and five after
+it. Only the normal 1,000-frame paths minimize/restore at halfway; focused
+validation intentionally skips that already-covered interval.
 
 The permanent accounting contract requires:
 
-- six indexed draws per submitted frame: one terrain surface, one 1,584-index
-  material sphere, one 24-index bounds box, one six-index cyan query marker,
-  one 36-index cube, and one 36-index skybox; plus one fullscreen tone-map
-  draw, four texture-table bindings, one frame-constant upload, and one depth
-  clear;
+- with `V` visible chunks, `V` 384-index terrain draws, one 1,584-index
+  material sphere, `V` 24-index magenta chunk-bounds draws, one six-index cyan
+  query marker, one 36-index cube, and one 36-index skybox; plus one fullscreen
+  tone-map draw, four texture-table bindings, one frame-constant upload, and
+  one depth clear;
+- 16 chunk tests per submitted frame, visible-plus-culled conservation, and
+  exact `16 -> 5` max/min visibility across the deterministic smoke poses;
 - one graph compilation/execution, four pass executions, 15 imports, three
   dependencies, six recorded transitions, and 31 elided transitions per frame;
 - frame submissions equal successful plus occluded present attempts;
@@ -278,18 +286,19 @@ file-backed HDR conversion, arbitrary material graph/system, shadow map,
 atmospheric scattering, cloud, automatic exposure, time of day, terrain
 streaming/LOD, or content database.
 
-The query marker adds no camera state, control, matrix, GPU resource, PSO,
-graph pass, dependency, barrier, PIX event, or timestamp. S-003 establishes 15
-imports, four passes, three dependencies, six barriers, 31 elisions, four
-geometry buffers, and ten timestamps as the current exact contract.
+The query marker and CPU chunk culling add no camera state, control, matrix,
+GPU resource, PSO, graph pass, dependency, barrier, PIX event, or timestamp.
+T-004 retains 15 imports, four passes, three dependencies, six barriers, 31
+elisions, four geometry buffers, and ten timestamps as the current exact
+contract.
 
 It also adds no general mesh/resource/descriptor manager, typed GPU handles,
 placed-resource pool, copy queue, deferred uploader, shader reflection, runtime
 shader compilation, hot reload, PSO cache, scene graph, ECS,
 multiple cameras, controllable entity, physics, animation, shadows, MSAA,
-frustum culling, instancing, raw mouse input, cursor lock, configurable action
-map, gamepad support, fixed simulation clock, pixel readback, or golden-image
-testing.
+coarser terrain LOD, LOD seam repair, instancing, raw mouse input, cursor lock,
+configurable action map, gamepad support, fixed simulation clock, pixel
+readback, or golden-image testing.
 
 The graph remains frame-local and limited to imported whole resources, now
 with ordered `Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` passes. See
@@ -297,7 +306,8 @@ with ordered `Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` passes. See
 [the DDS cubemap contract](DDS_CUBEMAP.md) for the source texture, and
 [the skybox contract](SKYBOX.md) for the HDR environment and procedural
 fallback rules.
-See [the terrain contract](TERRAIN.md) for its separate geometry and
-canonical query/material/diagnostic rendering contract. `S-003` was completed
-on July 18, 2026. The next increment is `T-004`, terrain chunk culling,
-followed by `T-005`, bounded visual LOD.
+See [the terrain contract](TERRAIN.md) for its separate geometry, chunk
+culling, and canonical query/material/diagnostic rendering contract. `T-004`
+was completed on July 19, 2026. The next increment is `T-005`, one bounded
+coarser terrain LOD with crack-free seams and full-resolution canonical
+queries.

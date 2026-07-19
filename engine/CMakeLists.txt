@@ -40,6 +40,8 @@ add_library(SharkEngine STATIC
     renderer/src/d3d12/terrain_scene_data.hpp
     renderer/src/frame_pipeline.cpp
     renderer/src/frame_pipeline.hpp
+    renderer/src/terrain_frustum_culling.cpp
+    renderer/src/terrain_frustum_culling.hpp
     rhi/d3d12/include/shark/rhi/d3d12/device.hpp
     rhi/d3d12/src/device.cpp
     rhi/d3d12/src/device_access.hpp

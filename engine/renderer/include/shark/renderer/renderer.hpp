@@ -84,15 +84,26 @@ struct Texture2DArrayUploadView final {
     std::size_t subresource_count{};
 };
 
-// Terrain, its diagnostic bounds, and its query marker are copied
+struct TerrainChunkUploadView final {
+    std::uint32_t first_index{};
+    std::uint32_t index_count{};
+    math::Float3 bounds_minimum{};
+    math::Float3 bounds_maximum{};
+};
+
+// Terrain chunks, their diagnostic bounds, and the query marker are copied
 // synchronously during create(). Every vertex stream uses interleaved float3
-// POSITION / float3 NORMAL data; every index stream uses uint16_t.
+// POSITION / float3 NORMAL data; every index stream uses uint16_t. Chunk
+// index ranges must be contiguous and cover the full triangle index stream.
+// Bounds contain exactly eight vertices and 24 local indices per chunk.
 struct TerrainMeshUploadView final {
     const void* vertices{};
     std::size_t vertex_count{};
     std::size_t vertex_stride{};
     const std::uint16_t* indices{};
     std::size_t index_count{};
+    const TerrainChunkUploadView* chunks{};
+    std::size_t chunk_count{};
     const void* bounds_vertices{};
     std::size_t bounds_vertex_count{};
     std::size_t bounds_vertex_stride{};
@@ -276,6 +287,13 @@ struct RendererStats final {
     std::uint64_t terrain_query_marker_draw_calls{};
     std::uint64_t material_sphere_draw_calls{};
     std::uint64_t tone_map_draw_calls{};
+    std::uint64_t terrain_chunk_count{};
+    std::uint64_t terrain_chunks_tested{};
+    std::uint64_t terrain_chunks_visible{};
+    std::uint64_t terrain_chunks_culled{};
+    std::uint64_t terrain_visible_chunk_min{};
+    std::uint64_t terrain_visible_chunk_max{};
+    std::uint64_t terrain_visible_chunk_last{};
     std::uint64_t terrain_indices{};
     std::uint64_t terrain_bounds_indices{};
     std::uint64_t terrain_query_marker_indices{};

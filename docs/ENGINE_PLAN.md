@@ -2,9 +2,9 @@
 
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
-- **Last updated:** July 18, 2026
-- **Latest completed:** `S-003` - HDR image-based environment lighting
-- **Next increment:** `T-004` - terrain chunk culling
+- **Last updated:** July 19, 2026
+- **Latest completed:** `T-004` - terrain chunk culling
+- **Next increment:** `T-005` - bounded terrain LOD
 
 ## 1. Project direction
 
@@ -293,9 +293,11 @@ REN-001 completes the first durable renderer boundary. The public move-only
 D3D12 `Presentation` class. Presentation and swap-chain operations continue in
 the private `engine/renderer/src/d3d12` backend.
 
-The renderer-owned production `frame_pipeline` composes the exact ten
-imports and `Terrain -> TexturedCube -> Skybox` passes. Cube, daylight, skybox,
-and terrain scene helpers also live under the private renderer D3D12 backend.
+The renderer-owned production `frame_pipeline` composes the exact 15 imports
+and `Terrain -> TexturedCube -> Skybox -> ToneMap` passes. Cube, daylight,
+skybox, terrain, and tone-map scene helpers also live under the private
+renderer D3D12 backend.
+
 The renderer D3D12 backend owns the fixed scene-named timestamp query layout
 and accumulator. The D3D12 RHI retains device access, generic frame-resource
 state, and legacy transition recording without owning scene policy.
@@ -307,6 +309,10 @@ and the query-derived diagnostic pin cross into `Renderer`. T-003's separate
 platform-independent `MaterialPalette` produces two bounded visual layers and
 three full-mip arrays. Material weights and sampled normals remain derived
 presentation data and never alter canonical terrain queries.
+T-004 adds a derived row-major `4x4` render layout over that same LOD0 surface:
+16 `8x8`-cell chunks reference the unchanged 1,089-vertex stream through
+contiguous 384-index ranges and carry exact sample-derived AABBs. The renderer
+frustum-culls those AABBs without changing canonical query ownership.
 
 ### Non-negotiable ownership rules
 
@@ -681,7 +687,7 @@ the debug layer and readable in a PIX capture.
 | `REN-001` | - | Complete: move scene-pass configuration, statistics, helpers, and production orchestration behind the public `Renderer` boundary without changing pixels or smoke accounting | `refactor(render): separate renderer orchestration from D3D12 RHI` |
 | `T-003` | V | Complete: blend two project-owned ground/rock layers from matching `32x32`, six-mip albedo/normal/roughness texture arrays by deterministic slope and height; add world-XZ tiling, tangent-free normal mapping, direct-sun dielectric GGX, and material-weight/world-normal views | `feat(terrain): add layered PBR materials` |
 | `S-003` | V | Complete: generate a deterministic `64x32` linear-HDR daylight source; derive a `32x32` six-mip radiance cube, `8x8` irradiance cube, `32x32` six-mip GGX specular cube, and `32x32` split-sum BRDF LUT; light terrain and one material sphere through an HDR scene target and final tone map; retain an `F3` procedural fallback | `feat(sky): add image-based environment lighting` |
-| `T-004` | V | Split the full-resolution terrain into several chunks and add frustum culling with visible bounds/counts | `feat(terrain): add chunk culling` |
+| `T-004` | V | Complete: split the full-resolution fixture into 16 row-major `8x8`-cell chunks over one shared 1,089-vertex stream; conservatively frustum-cull their exact AABBs, draw one 384-index surface plus one 24-index magenta bound per visible chunk, and expose visible/total statistics | `feat(terrain): add chunk culling` |
 | `T-005` | V | Add one coarser derived LOD with crack-free seams and a measured geometric-error bound; collision remains full resolution | `feat(terrain): add bounded terrain LOD` |
 
 **M3 exit:** the user can fly over a textured outdoor terrain whose renderer and
@@ -859,30 +865,32 @@ online architecture is not implied.
 ## 14. Immediate next increment
 
 The San Andreas-class scope amendment does not change the current goalpost.
-After `S-003` is reviewed and committed by the owner, implement only `T-004`:
+After `T-004` is reviewed and committed by the owner, implement only `T-005`:
 
-- divide the existing full-resolution canonical terrain fixture into several
-  render chunks without changing its authoritative query surface;
-- frustum-cull chunks from the current camera and expose visible/total chunk
-  counts plus inspectable bounds;
-- retain the S-003 HDR/IBL, procedural fallback, diagnostics, material views,
-  and exact LOD0 query agreement; and
-- stop before coarser visual LOD, seam repair, streaming, occlusion culling,
-  spatial acceleration for physics, or a generalized world partition.
+- derive one coarser visual LOD for the existing 16 render chunks while keeping
+  the canonical `HeightTileSurface` and all collision/query answers at full
+  resolution;
+- define a measured geometric-error bound and select the LOD without changing
+  simulation state;
+- keep neighboring chunk edges crack-free across equal and mixed LOD choices;
+- retain T-004 frustum culling, visible bounds/counts, S-003 HDR/IBL,
+  procedural fallback, diagnostics, and all material views; and
+- stop before additional LOD levels, terrain streaming, occlusion culling,
+  virtual texturing, mesh shaders, physics acceleration, or generalized world
+  partition.
 
-`S-003` completed the bounded HDR environment path on July 18, 2026. Its
-deterministic `64x32` linear source derives 79 RGBA32-float subresources
-containing 284,608 meaningful bytes: a `32x32` six-mip radiance cube, `8x8`
-irradiance cube, `32x32` six-mip GGX specular cube, and `32x32` split-sum BRDF
-LUT. Terrain and one glossy dielectric sphere share that IBL, the scene renders
-to `R16G16B16A16_FLOAT`, and `ToneMap` produces the final back-buffer image.
-The bounded convolution excludes the analytic directional sun to avoid blocky
-and double-counted sun energy, and the shader applies the Lambert `1/pi`
-normalization to diffuse irradiance. `F3` keeps the procedural-daylight path
-available for direct comparison.
-`T-004` is next; `T-005` follows with one bounded coarser visual LOD. These
-remain independent modern Direct3D 12 implementations inside the San
-Andreas-class feature ceiling.
+`T-004` completed the bounded full-resolution chunk path on July 19, 2026.
+The deterministic `32x32`-cell fixture is partitioned row-major in `+Z`, then
+`+X`, into a `4x4` grid of 16 `8x8`-cell chunks. Every chunk owns one contiguous
+384-index range into the unchanged 1,089-vertex stream and one exact
+sample-derived AABB. Conservative Direct3D frustum tests keep tangent and
+intersecting bounds visible. Each visible chunk produces one surface draw and
+one magenta 24-index bounds draw; the normal smoke poses expose 16 and then
+five visible chunks. The graph, resource, HDR, and canonical-query contracts
+remain unchanged.
+
+`T-005` is next with one bounded coarser visual LOD. It remains a modern
+Direct3D 12 implementation inside the San Andreas-class feature ceiling.
 
 ## 15. Primary technical references
 

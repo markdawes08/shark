@@ -21,6 +21,7 @@ TEST_CASE(
     STATIC_REQUIRE(std::is_standard_layout_v<Texture2DArrayUploadView>);
     STATIC_REQUIRE(std::is_standard_layout_v<Texture2DUploadView>);
     STATIC_REQUIRE(std::is_standard_layout_v<TerrainMaterialUploadView>);
+    STATIC_REQUIRE(std::is_standard_layout_v<TerrainChunkUploadView>);
     STATIC_REQUIRE(
         std::is_standard_layout_v<EnvironmentLightingUploadView>);
 
@@ -31,6 +32,8 @@ TEST_CASE(
     REQUIRE(config.terrain_materials.albedo.subresources == nullptr);
     REQUIRE(config.terrain_materials.normal.subresources == nullptr);
     REQUIRE(config.terrain_materials.roughness.subresources == nullptr);
+    REQUIRE(config.terrain_mesh.chunks == nullptr);
+    REQUIRE(config.terrain_mesh.chunk_count == 0);
     REQUIRE(
         config.environment_lighting.radiance.subresources == nullptr);
     REQUIRE(
@@ -91,5 +94,8 @@ TEST_CASE(
     REQUIRE(changed != baseline);
     changed = baseline;
     changed.material_sphere_draw_calls = 1;
+    REQUIRE(changed != baseline);
+    changed = baseline;
+    changed.terrain_chunks_visible = 1;
     REQUIRE(changed != baseline);
 }

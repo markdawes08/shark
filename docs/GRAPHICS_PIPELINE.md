@@ -1,6 +1,6 @@
 # HLSL Graphics Pipeline Contract
 
-- **Completed through:** `PHY-001`
+- **Completed through:** `PHY-002`
 - **Last verified:** July 19, 2026
 
 Shark compiles all production HLSL at build time with a pinned retail DXC and
@@ -315,7 +315,7 @@ water texture, persistent descriptor, or simulated state. Terrain retains the
 exact `0/93 -> 0/72 -> 1/60` smoke schedule. Rain remains deferred and the San
 Andreas-class ceiling is unchanged.
 
-PHY-001 adds the material-sphere `b2` translation without adding a shader
-stage, PSO, descriptor, geometry buffer, graph pass, water state, or fluid
-coupling. The next increment is `PHY-002`, sphere contact with canonical
-terrain.
+PHY-001 added the material-sphere `b2` translation. PHY-002 drives that same
+translation from a terrain-supported simulation snapshot and retargets the
+existing static cyan pin; it adds no shader stage, PSO, descriptor, geometry
+buffer, graph pass, water state, or fluid coupling.

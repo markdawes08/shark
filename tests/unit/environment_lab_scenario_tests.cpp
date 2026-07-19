@@ -250,6 +250,8 @@ TEST_CASE(
         second.spawn_ground_position);
     REQUIRE(first.ballistic_body_spawn_position ==
         second.ballistic_body_spawn_position);
+    REQUIRE(first.ballistic_body_radius ==
+        second.ballistic_body_radius);
     REQUIRE(first.spawn_camera.transform.position ==
         second.spawn_camera.transform.position);
     const auto coarse =
@@ -329,6 +331,10 @@ TEST_CASE(
         math::Float3{-128.0F, 1.34375F, -20.0F});
     REQUIRE(first.ballistic_body_spawn_position.x == -128.0F);
     REQUIRE(first.ballistic_body_spawn_position.z == -44.0F);
+    REQUIRE(first.ballistic_body_radius ==
+        world::environment_lab_ballistic_body_radius);
+    REQUIRE(first.ballistic_body_radius ==
+        renderer::d3d12::detail::material_sphere_radius);
     REQUIRE(first.spawn_camera.transform.position ==
         math::Float3{-128.0F, 3.34375F, -20.0F});
     REQUIRE(first.spawn_camera.transform.yaw_radians == 0.0F);

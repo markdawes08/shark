@@ -1,7 +1,7 @@
 # Camera, Reversed-Z Depth, Cube, and Skybox Contract
 
 - **Camera/cube capability completed through:** `G-005`
-- **Renderer integration verified through:** `PHY-001`
+- **Renderer integration verified through:** `PHY-002`
 - **Last verified:** July 19, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
@@ -27,8 +27,9 @@ position for terrain specular evaluation; it does not change the camera,
 controller, matrix, cube, depth, or sky-motion contracts. S-003 preserves
 those conventions while adding HDR IBL, a material sphere, and final tone
 mapping; `F3` switches the environment mode without changing camera state.
-PHY-001 preserves the camera and cube contracts while driving the existing
-material sphere from an interpolated fixed-step body position.
+PHY-001 preserved the camera and cube contracts while driving the existing
+material sphere from an interpolated fixed-step body position. PHY-002 leaves
+those conventions unchanged while stopping that sphere on canonical terrain.
 
 This remains a deliberately narrow proof. It establishes conventions and
 lifetime rules that later sky, terrain, rain, and water passes can reuse; it is
@@ -304,11 +305,11 @@ exact geometric normal; press it again and verify both disappear. Resize,
 minimize/restore, and shutdown must remain clean.
 The validation cube must remain outside the analytic basin support, above the
 `-4`-meter future waterline, and unburied. The material sphere must meet those
-conditions at its initial paused spawn; after `F5`, PHY-001 deliberately lets
-it fall through terrain because contact is not implemented yet. T-008 adds the
-dry indentation and metadata but creates no water. The scenario-owned camera
-must begin on dry ground overlooking the basin without changing the sky under
-translation.
+conditions at its initial paused spawn; after `F5`, PHY-002 makes it fall and
+settle on the visible canonical LOD0 face without hover or penetration. T-008
+adds the dry indentation and metadata but creates no water. The scenario-owned
+camera must begin on dry ground overlooking the basin without changing the sky
+under translation.
 When running `--present-smoke`, its final reported state must be 61 visible
 chunks at `LOD0=1, coarse=60`; this final near pose is not an interactive camera
 default.
@@ -334,11 +335,12 @@ file-backed HDR conversion, arbitrary material graph/system, shadow map,
 atmospheric scattering, cloud, automatic exposure, time of day, terrain
 streaming, additional LOD levels, or content database.
 
-The query marker, CPU chunk culling, stateless LOD choice, F4 diagnostic gate,
-and PHY-001 sphere translation add no camera matrix, GPU resource, PSO, graph
-pass, dependency, barrier, PIX event, or timestamp. W-001 retains 15 imports,
-five passes, five dependencies, six barriers, 34 elisions, four geometry
-buffers, and 12 timestamps as the current exact contract.
+The support-sample marker, CPU chunk culling, stateless LOD choice, F4
+diagnostic gate, and PHY-001/PHY-002 sphere translation add no camera matrix,
+GPU resource, PSO, graph pass, dependency, barrier, PIX event, or timestamp.
+W-001 retains 15 imports, five passes, five dependencies, six barriers, 34
+elisions, four geometry buffers, and 12 timestamps as the current exact
+contract.
 
 It also adds no general mesh/resource/descriptor manager, typed GPU handles,
 placed-resource pool, copy queue, deferred uploader, shader reflection, runtime
@@ -369,8 +371,9 @@ evidence remains historical.
 `T-008` publishes the interactive spawn and basin metadata without changing
 cube geometry, sky motion, depth, input, or the deterministic smoke schedule.
 `W-001` adds only presentation-time water input and preserves those camera and
-cube contracts. `PHY-001` adds only the independently interpolated sphere
-translation; see [the simulation contract](SIMULATION.md). This component page
+cube contracts. `PHY-002` retains the independently interpolated sphere
+translation and adds only CPU terrain support; see
+[the simulation contract](SIMULATION.md). This component page
 no longer duplicates the rolling project
 queue; [ENGINE_PLAN.md](ENGINE_PLAN.md) is the roadmap source of truth. Rain
 remains deferred under the San Andreas-class ceiling.

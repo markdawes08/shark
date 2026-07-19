@@ -1,6 +1,6 @@
 # Building Shark
 
-- **Completed through:** `PHY-001`
+- **Completed through:** `PHY-002`
 - **Last verified:** July 19, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
@@ -125,11 +125,12 @@ passes it to `Renderer::create` only at the composition root. Press `F1` to
 toggle terrain fill between solid and wireframe. Press `F2` to cycle shaded,
 ground/rock weight, and mapped world-normal views. Press `F3` to toggle between
 HDR image-based lighting and the retained procedural-daylight fallback. Press
-`F4` to toggle the query-derived cyan normal pin and magenta chunk bounds,
-which are off by default. The collision-free material sphere starts paused at
-its scenario-owned spawn. Press `F6` to advance it by exactly one 60 Hz
+`F4` to toggle the proof sphere's canonical support-normal preview and magenta
+chunk bounds, which are off by default. The preview is available while the
+sphere is airborne; it is not an active-contact indicator. The sphere starts
+paused at its scenario-owned spawn. Press `F6` to advance it by exactly one 60 Hz
 simulation tick while paused, or press `F5` to resume/pause continuous
-fixed-step motion. Use
+fixed-step motion; it now settles on canonical LOD0 terrain. Use
 `W`/`S` along the
 camera forward axis, `A`/`D` to strafe, `Q`/`E` to move down/up, hold `Shift`
 to move faster, and hold the right mouse button while dragging to look around.
@@ -545,7 +546,7 @@ global `R16_UINT` indices. Its historical construction timings and graphics
 evidence are recorded above.
 See [the fixed-step simulation contract](SIMULATION.md) for the 60 Hz clock,
 pause/single-step controls, semi-implicit ballistic state, immutable render
-interpolation, and the intentional absence of collision in PHY-001.
+interpolation, and PHY-002's canonical one-sample sphere support.
 
 W-001 consumes that scenario-owned waterline in a dedicated transparent pass
 after `Skybox`. The vertex shader expands a six-vertex quad from `SV_VertexID`
@@ -562,9 +563,10 @@ Debug hardware/WARP/GBV presentation gates plus a Release hardware smoke for
 ordinary pass/shader work; reserve the full Debug/Release graphics matrix for
 RHI, synchronization, lifetime, or milestone changes.
 
-PHY-001 leaves the W-001 lake presentation-only and adds no water resource,
-fluid state, or coupling. The next increment is `PHY-002`: make the existing
-sphere contact and rest on canonical LOD0 terrain. Rain remains deferred.
+PHY-002 leaves the W-001 lake presentation-only and adds no water resource,
+fluid state, or coupling. It also changes no render pass, descriptor, geometry
+buffer, or per-frame upload budget. Rain remains deferred; the active
+increment queue is maintained in [ENGINE_PLAN.md](ENGINE_PLAN.md).
 
 ## Visual Studio
 

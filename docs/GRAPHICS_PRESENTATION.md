@@ -1,6 +1,6 @@
 # Renderer and Direct3D 12 Presentation/Frame-Resource Contract
 
-- **Completed through:** `PHY-001`
+- **Completed through:** `PHY-002`
 - **Last verified:** July 19, 2026
 
 `shark::renderer::Renderer` owns Shark's focused D3D12 scene/presentation
@@ -364,7 +364,8 @@ or static upload. The frame now has 15 imports, five passes, five dependencies,
 six transitions, 34 elisions, and five texture bindings. Sky renders before
 premultiplied transparent water; canonical-terrain depth testing determines the
 visible shoreline. Terrain remains unchanged and no fluid simulation is
-claimed. PHY-001 uses three root constants to translate the existing sphere
-without changing frame-resource or presentation accounting. Rain remains
+claimed. PHY-002 feeds a supported simulation position through the existing
+three sphere-translation root constants without changing frame-resource or
+presentation accounting. Rain remains
 deferred under the San Andreas-class ceiling. See
 [ENGINE_PLAN.md](ENGINE_PLAN.md) for the active increment queue.

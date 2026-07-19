@@ -18,6 +18,7 @@ add_executable(SharkTests
     unit/logging_tests.cpp
     unit/math_tests.cpp
     unit/physics_ballistic_body_tests.cpp
+    unit/physics_sphere_terrain_contact_tests.cpp
     unit/render_graph_tests.cpp
     unit/renderer_contract_tests.cpp
     unit/renderer_d3d12_cube_scene_data_tests.cpp

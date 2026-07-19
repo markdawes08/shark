@@ -165,6 +165,8 @@ make_environment_lab_scenario()
             .spawn_ground_position = spawn_ground,
             .ballistic_body_spawn_position =
                 ballistic_body_spawn,
+            .ballistic_body_radius =
+                environment_lab_ballistic_body_radius,
             .spawn_camera = spawn_camera,
         });
 }

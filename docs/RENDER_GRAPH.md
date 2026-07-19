@@ -1,7 +1,7 @@
 # Minimal Render-Graph Contract
 
 - **Completed through:** `W-001`
-- **Renderer integration verified through:** `PHY-001`
+- **Renderer integration verified through:** `PHY-002`
 - **Last updated:** July 19, 2026
 
 Shark's render graph is a small platform-independent planner with a Direct3D
@@ -248,6 +248,7 @@ The procedural `SV_VertexID` quad therefore adds no import or GPU resource.
 Color and depth hazards produce five dependencies, while the six physical
 transitions stay unchanged and three additional accesses elide, yielding the
 exact active `15/5/5/6/34` contract. Rain remains deferred under the San
-Andreas-class ceiling. PHY-001 translates the existing sphere inside
-`Terrain` and preserves this graph exactly. This component page no longer
+Andreas-class ceiling. PHY-002 supplies the existing sphere with a
+terrain-supported position inside `Terrain` and preserves this graph exactly.
+This component page no longer
 duplicates the active queue; [ENGINE_PLAN.md](ENGINE_PLAN.md) is authoritative.

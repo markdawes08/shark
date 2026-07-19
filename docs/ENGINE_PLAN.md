@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 19, 2026
-- **Latest completed:** `PHY-001` - deterministic fixed-step motion
-- **Next increment:** `PHY-002` - sphere contact with canonical terrain
+- **Latest completed:** `PHY-002` - sphere contact with canonical terrain
+- **Next increment:** `PHY-003` - sphere body collisions
 
 ## 1. Project direction
 
@@ -604,15 +604,18 @@ easy to verify. Add analytic primitive contacts, sequential impulses, friction,
 and restitution before considering arbitrary convex shapes, GJK/EPA, CCD,
 islands, or sleeping.
 
-PHY-001 completes the timing and motion foundation: an initially paused fixed
+PHY-001 completed the timing and motion foundation: an initially paused fixed
 60 Hz clock supports `F5` pause/resume and `F6` single-step, one collision-free
 body advances under gravity with semi-implicit Euler, and rendering consumes an
 immutable interpolation of previous/current snapshots through the existing
-material sphere's `b2` translation. The visual lake remains presentation-only.
+material sphere's `b2` translation.
 
-The next physics proof is simple: that sphere contacts the displayed canonical
-terrain and rests without hovering, penetrating, or changing behavior when the
-render frame rate changes.
+PHY-002 completes the first contact proof: that sphere now consumes the exact
+canonical LOD0 face below its center, corrects plane penetration without
+changing X/Z ownership, and settles through a deliberately limited sticking
+response independent of render-rate partitioning. That response is explicitly
+the temporary infinite-friction endpoint projection documented for PHY-002,
+not the later contact solver. The visual lake remains presentation-only.
 
 ### Water and fluids
 
@@ -793,7 +796,7 @@ M5.
 | ID | Level | Increment and acceptance gate | Suggested commit |
 |---|---:|---|---|
 | `PHY-001` | S | Complete: add an initially paused fixed 60 Hz clock, `F5` pause/resume, `F6` single-step, standard gravity, semi-implicit collision-free motion invariant across render rates, immutable previous/current interpolation, and a three-constant `b2` translation for the existing material sphere | `feat(physics): add deterministic fixed-step motion` |
-| `PHY-002` | S | Add sphere-versus-canonical-terrain contact; the sphere rests without hovering or penetration and normals are debug-drawn | `feat(physics): add sphere terrain contact` |
+| `PHY-002` | S | Complete: give the scenario-owned one-meter sphere a transactional one-sample face-plane response against `HeightTileSurface`; correct vertically without changing canonical X/Z ownership, settle through an explicit temporary infinite-friction endpoint projection, retain exact triangle metadata, retarget the bounded `F4` cyan pin to its fixed support sample, and prove real-scenario support, flat rest, slope clearance/normal, tolerance, diagonal/edge ownership, invalid input, and 30/60/120/144 Hz invariance | `feat(physics): add sphere terrain contact` |
 | `PHY-003` | S | Add multiple spheres, brute-force pair generation, normal impulses, and restitution with analytic tests | `feat(physics): add sphere body collisions` |
 | `PHY-004` | S | Add orientation, angular velocity, inertia, torque, and angular integration with a torque-response test | `feat(physics): add angular rigid-body state` |
 | `PHY-005` | S | Add capsule contacts against terrain, spheres, and capsules with focused closest-feature tests | `feat(physics): add capsule collision` |
@@ -859,7 +862,7 @@ this section competes with the coupled-environment critical path through M7.
 ### Deferred visual-weather track
 
 The owner deferred these effects on July 19, 2026. They remain approved but
-have no position on the active `PHY-002 -> PHY-003`
+have no position on the active `PHY-003 -> PHY-004`
 path. Resuming one requires a small plan update; skipping them does not remove
 the numerical precipitation rate used by later hydrology.
 
@@ -962,17 +965,21 @@ online architecture is not implied.
 
 ## 14. Immediate next increment
 
-After PHY-001 is reviewed and committed by the owner, implement only `PHY-002`:
+After PHY-002 is reviewed and committed by the owner, implement only `PHY-003`:
 
-- give the existing ballistic sphere a terrain-contact radius;
-- query height and geometric normal from the canonical LOD0 terrain surface,
-  never from render LOD or a D3D12 resource;
-- resolve penetration and normal velocity so the sphere falls and rests on the
-  displayed surface at the same fixed 60 Hz rate;
-- expose a bounded contact-normal diagnostic and test flat, sloped, boundary,
-  and render-rate-independent resting cases; and
-- stop before body/body collision, friction/restitution beyond the minimum
-  terrain response, angular state, buoyancy, or any water coupling.
+- introduce an exact capacity of four sphere bodies in stable index order,
+  with fixed previous/current snapshot arrays at 60 Hz;
+- generate sphere pairs by deterministic brute-force iteration;
+- resolve analytic sphere overlap with normal impulses and an explicit
+  restitution value; retain PHY-002's primary terrain-supported proof while
+  keeping the first pair-collision proof airborne so the sticking terrain
+  response cannot erase pair impulses;
+- render at most four draws of the existing sphere mesh by rebinding `b2`,
+  without another geometry buffer, descriptor, or pass, and test separated,
+  head-on, unequal-velocity, overlap, stable ordering, exact draw bounds, and
+  render-rate-invariant cases; and
+- stop before angular state, friction, persistent manifolds, broad phase,
+  sleeping, arbitrary convex shapes, buoyancy, or water coupling.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -1035,8 +1042,16 @@ and a 12-query timing layout. The exact graph is `15/5/5/6/34` for
 imports/passes/dependencies/transitions/elisions. It adds no water GPU
 resource, descriptor, geometry buffer, terrain mutation, or simulation state.
 
-The active queue is `PHY-002` sphere versus canonical-terrain contact, then
-`PHY-003` sphere body collisions. `R-001` through `R-004` remain deferred.
+PHY-002 now makes the scenario-owned one-meter sphere settle against the exact
+canonical LOD0 face below its predicted center. Debug and Release pass all
+`161/161` unit cases. The 1,000-frame presentation smoke passes on Debug
+hardware, Debug WARP, and Release hardware and now requires the final sphere
+snapshot to contain its exact support sample, zero velocity, and one-radius
+plane clearance. No render pass, descriptor, geometry buffer, or per-frame
+upload was added.
+
+The active queue is `PHY-003` sphere body collisions, then `PHY-004` angular
+rigid-body state. `R-001` through `R-004` remain deferred.
 
 ## 15. Primary technical references
 

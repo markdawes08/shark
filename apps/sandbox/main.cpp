@@ -4,6 +4,7 @@
 #include <shark/core/logging.hpp>
 #include <shark/core/result.hpp>
 #include <shark/physics/ballistic_body.hpp>
+#include <shark/physics/sphere_terrain_contact.hpp>
 #include <shark/platform/application.hpp>
 #include <shark/platform/events.hpp>
 #include <shark/rhi/d3d12/device.hpp>
@@ -997,8 +998,10 @@ void log_platform_event(const shark::platform::Event& event)
             chunk.bounds_lines.indices.end());
     }
 
-    constexpr float query_marker_world_x = -5.125F;
-    constexpr float query_marker_world_z = -3.25F;
+    const auto query_marker_world_x =
+        environment_scenario.ballistic_body_spawn_position.x;
+    const auto query_marker_world_z =
+        environment_scenario.ballistic_body_spawn_position.z;
     const auto query_marker_sample =
         terrain_surface.sample_lod0_surface(
             query_marker_world_x,
@@ -1011,8 +1014,13 @@ void log_platform_event(const shark::platform::Event& event)
             "canonical LOD0 surface",
         });
     }
-    constexpr terrain::Ray3 query_marker_ray{
-        {query_marker_world_x, 50.0F, query_marker_world_z},
+    const terrain::Ray3 query_marker_ray{
+        {
+            query_marker_world_x,
+            environment_scenario.ballistic_body_spawn_position.y +
+                50.0F,
+            query_marker_world_z,
+        },
         {0.0F, -1.0F, 0.0F},
     };
     auto query_marker_hit_result =
@@ -1068,7 +1076,8 @@ void log_platform_event(const shark::platform::Event& event)
         -1.0F,
         1.0F,
     };
-    constexpr float query_marker_length = 1.0F;
+    const auto query_marker_length =
+        environment_scenario.ballistic_body_radius + 1.0F;
     constexpr float query_marker_cross_radius = 0.20F;
     const math::Float3 query_marker_tip{
         marker_sample.position.x +
@@ -1556,7 +1565,8 @@ void log_platform_event(const shark::platform::Event& event)
               "and tone mapping initialized; F1 toggles "
               "solid/wireframe, F2 cycles terrain material views, and "
               "F3 toggles HDR IBL/procedural daylight, and F4 toggles "
-              "terrain chunk/query diagnostics; F5 resumes/pauses the "
+              "terrain chunk/support-normal diagnostics; F5 "
+              "resumes/pauses the "
               "fixed 60 Hz ballistic simulation and F6 advances one "
               "tick while paused");
 
@@ -1584,8 +1594,13 @@ void log_platform_event(const shark::platform::Event& event)
         .position =
             environment_scenario.ballistic_body_spawn_position,
     };
+    const physics::SphereCollider ballistic_sphere_collider{
+        .radius = environment_scenario.ballistic_body_radius,
+    };
     auto previous_ballistic_body = initial_ballistic_body;
     auto current_ballistic_body = initial_ballistic_body;
+    std::optional<physics::SphereTerrainContact>
+        current_terrain_contact;
     const renderer::DaylightSettings daylight{};
     sandbox::CameraController camera_controller{
         sandbox::CameraControllerConfig{
@@ -1697,8 +1712,10 @@ void log_platform_event(const shark::platform::Event& event)
                         core::LogLevel::info,
                         "terrain.diagnostics",
                         terrain_diagnostics_enabled
-                            ? "Terrain chunk bounds and query marker: on"
-                            : "Terrain chunk bounds and query marker: off");
+                            ? "Terrain chunk bounds and sphere support "
+                              "normal preview: on"
+                            : "Terrain chunk bounds and sphere support "
+                              "normal preview: off");
                 }
                 if (key != nullptr &&
                     key->virtual_key == VK_F5 &&
@@ -2029,14 +2046,18 @@ void log_platform_event(const shark::platform::Event& event)
              ++step) {
             previous_ballistic_body = current_ballistic_body;
             auto physics_result =
-                physics::advance_ballistic_body(
+                physics::advance_sphere_against_terrain(
                     current_ballistic_body,
+                    ballistic_sphere_collider,
+                    terrain_surface,
                     physics::standard_gravity,
                     simulation_clock.fixed_delta_seconds());
             if (!physics_result) {
                 return core::Result<void>::failure(
                     std::move(physics_result).error());
             }
+            current_terrain_contact =
+                physics_result.value().contact;
         }
         auto interpolated_body_result =
             physics::interpolate_ballistic_body(
@@ -2065,6 +2086,12 @@ void log_platform_event(const shark::platform::Event& event)
                         current_ballistic_body.position.y) + ", " +
                     std::to_string(
                         current_ballistic_body.position.z) + ")");
+            if (current_terrain_contact.has_value()) {
+                core::log_message(
+                    core::LogLevel::info,
+                    "physics",
+                    "Canonical terrain contact: active");
+            }
         }
 
         const auto render_extent = renderer_instance.extent();
@@ -2117,6 +2144,23 @@ void log_platform_event(const shark::platform::Event& event)
 
     if (smoke_mode) {
         const auto& stats = renderer_instance.stats();
+        if (!current_terrain_contact.has_value() ||
+            current_ballistic_body.linear_velocity != math::Float3{} ||
+            current_ballistic_body.position.x !=
+                current_terrain_contact->surface.position.x ||
+            current_ballistic_body.position.z !=
+                current_terrain_contact->surface.position.z ||
+            std::abs(
+                (current_ballistic_body.position.y -
+                 current_terrain_contact->surface.position.y) *
+                    current_terrain_contact->surface.normal.y -
+                ballistic_sphere_collider.radius) >
+                0.00001F) {
+            return core::Result<void>::failure(
+                renderer_smoke_error(
+                    "The presentation smoke did not finish with the "
+                    "sphere supported by canonical terrain"));
+        }
         if (stats.presented_frames != required_smoke_frames ||
             simulation_clock.total_step_count() !=
                 stats.frame_submissions ||

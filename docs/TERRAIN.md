@@ -1,6 +1,6 @@
 # Canonical Terrain-Tile Contract
 
-- **Completed through:** `PHY-001`
+- **Completed through:** `PHY-002`
 - **Last verified:** July 19, 2026
 
 T-008 composes the untouched T-007 rolling-height oracle with a bounded
@@ -18,11 +18,11 @@ contains 530 canonical samples.
 
 The scenario publishes dry spawn ground at `(-128,1.34375,-20)` and a camera eye
 at `(-128,3.34375,-20)` with pitch `-0.1`; sampled support-boundary distance is
-about 58.496138 meters. PHY-001 also publishes a collision-free body spawn at
-`(-128,-44)` exactly 12 meters above its canonical LOD0 ground sample. Cube and
-body sphere remain outside the water support and initially unburied. W-001
-consumes the basin metadata without changing any canonical terrain sample,
-query, topology, resource, or descriptor.
+about 58.496138 meters. The scenario also publishes the PHY-002 proof-sphere
+spawn at `(-128,-44)` exactly 12 meters above its canonical LOD0 ground sample.
+Cube and body sphere remain outside the water support and initially unburied.
+W-001 consumes the basin metadata without changing any canonical terrain
+sample, query, topology, resource, or descriptor.
 
 Focused Debug verification passes 56,792 lake-basin assertions across three
 cases, 4,732 scenario assertions across three cases, 23 culling assertions
@@ -531,16 +531,17 @@ ranges live while compact and focused selector tests retain broader LOD
 coverage. Frustum visibility remains independent of LOD choice, and the same
 exact full-resolution AABB is tested for both ranges.
 
-## Query-derived cyan normal pin
+## Sphere-support cyan normal preview
 
-At startup the sandbox samples world `X=-5.125`, `Z=-3.25` directly, then casts
-a downward ray from `Y=50` with a 100-meter limit. Startup fails unless the
+At startup the sandbox samples the proof sphere's fixed X/Z contact site
+`(-128,-44)` directly, then casts a downward ray from 50 meters above its body
+spawn with a 100-meter limit. Startup fails unless the
 sample and ray agree within `0.00001` on position, exact geometric normal,
 cell, triangle, barycentrics, and metric distance.
 
 The resulting static marker contains six vertices and six `uint16` indices:
 
-- one 1-meter line from the exact surface hit along its geometric normal; and
+- one 2-meter line from the exact surface hit along its geometric normal; and
 - two 0.4-meter crossed lines centered at the normal tip.
 
 Its first endpoint is the exact query position, so the pin rests on the visible
@@ -550,7 +551,9 @@ depth writes. Their diagnostic color is encoded through the negative-`Y`
 normal sentinel and is independent of daylight. Bounds and the marker are
 disabled in ordinary interactive frames; `F4` toggles both together. Smoke
 tests deliberately enable them for their first 30 submitted frames and then
-disable them.
+disable them. The marker previews the proof sphere's fixed support sample and
+normal even while the sphere is airborne; it is not an active-contact
+indicator or the slope-shifted physical tangent point.
 
 The active immutable geometry resources pack these exact logical ranges:
 
@@ -957,17 +960,18 @@ and 1,500-meter far plane make the full footprint navigable. Move, rotate,
 resize, minimize, restore, and close; world-space material tiling, checker
 cube, sky, tone mapping, diagnostics, and Direct3D validation must remain
 clean. The validation cube must remain dry and unburied; the material sphere
-must begin dry and unburied while paused, then is expected to pass through
-terrain once PHY-001 motion runs.
+must begin dry and unburied while paused, then fall and remain supported by
+the displayed canonical terrain once PHY-002 motion runs. The cyan preview
+marks that sphere's fixed supporting sample and exact triangle normal.
 Fly around the complete basin rim and confirm the broad natural terrain resumes
 smoothly outside the bounded shaping support. The spawn must remain on dry
 ground overlooking the basin.
 
 ## Explicit non-goals and continuation
 
-T-008 adds no terrain collision response, rigid bodies, additional visual LOD
-levels, hysteresis, skirts, morphing, spatial acceleration for canonical
-queries or physics, streaming, occlusion culling, generalized world
+T-008 itself adds no terrain collision response, rigid bodies, additional
+visual LOD levels, hysteresis, skirts, morphing, spatial acceleration for
+canonical queries or physics, streaming, occlusion culling, generalized world
 partition, authored/file-backed material assets, stored mesh UVs/tangents,
 arbitrary layer counts, painting, virtual texturing, mesh shaders, shadows,
 weather interaction, erosion, water rendering or simulation, editor, dynamic
@@ -1010,6 +1014,11 @@ transmission/tint, analytic depth-proxy absorption, Fresnel, bounded environment
 reflection/refraction, animated normal-only waves, and sun glint provide a
 visual surface without canonical terrain mutation or simulated fluid state.
 
-PHY-001 adds only the scenario-owned body spawn; ballistic integration never
-queries or mutates terrain. Canonical contact is therefore future work; the
-active queue remains centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).
+PHY-002 consumes `HeightTileSurface` directly after each ballistic prediction.
+It uses the exact LOD0 point and geometric triangle normal, applies a vertical
+one-sample face-plane correction without mutating terrain, and never reads the
+coarse visual LOD or a D3D12 resource. A center on the maximum tile edge is
+supported; a center immediately outside has no contact even when its radius
+overlaps the edge. Closest-feature edge collision, continuous collision, and
+general friction/restitution remain outside this proof. The active queue
+remains centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).

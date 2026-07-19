@@ -1,21 +1,20 @@
-# Fixed-Step Simulation and Ballistic Motion Contract
+# Fixed-Step Simulation and Sphere-Terrain Contact Contract
 
-- **Completed through:** `PHY-001`
+- **Completed through:** `PHY-002`
 - **Last verified:** July 19, 2026
-- **Next increment:** `PHY-002` - sphere contact with canonical terrain
 
-PHY-001 establishes Shark's first simulation path: one collision-free body
-advances under gravity on a fixed clock while rendering remains free to run at
-a different rate. This is a deliberately small foundation for later terrain
-contact, not a general rigid-body engine.
+PHY-001 established Shark's fixed-clock ballistic path. PHY-002 gives that one
+sphere a one-meter collider and a deterministic contact response against the
+canonical LOD0 terrain. This is a focused resting proof, not a general
+rigid-body solver.
 
 ## Ownership and data flow
 
 The boundaries are intentionally narrow:
 
 - `Simulation` owns fixed-step time accounting, pause state, and step requests;
-- `Physics` owns the ballistic body state, semi-implicit integration, and
-  interpolation operation;
+- `Physics` owns ballistic state, the sphere collider, semi-implicit
+  integration, canonical-terrain response, and interpolation;
 - `World` publishes the scenario-owned body spawn beside the lake basin;
 - the sandbox composition root sequences input, fixed ticks, immutable
   previous/current snapshots, and render interpolation; and
@@ -23,7 +22,8 @@ The boundaries are intentionally narrow:
 
 Neither the clock nor ballistic body includes Win32 or Direct3D types. The
 platform continues to publish raw events, and the renderer cannot advance or
-mutate simulation state.
+mutate simulation state. Physics depends on the platform-independent
+`HeightTileSurface` query contract; Terrain has no dependency on Physics.
 
 ## Fixed clock
 
@@ -66,10 +66,42 @@ snapshot and then advances the current snapshot. Rendering linearly
 interpolates those two read-only states using the clock alpha. Interpolation
 returns a separate value and never modifies either authoritative snapshot.
 
-PHY-001 intentionally has no collision. The sphere will pass through terrain
-and the presentation-only lake after enough steps; that visible behavior is
-not a contact failure. `PHY-002` replaces it with the first canonical-terrain
-contact proof.
+## Canonical terrain contact
+
+After each ballistic prediction, Physics samples
+`HeightTileSurface::sample_lod0_surface` exactly once at the predicted center's
+X/Z position. The returned position, exact geometric triangle normal, cell,
+triangle, and barycentrics are the contact source. Smooth render normals,
+coarse visual LOD, render meshes, and GPU resources never participate.
+
+For predicted center `C`, canonical point `P`, unit face normal `N`, and radius
+`r`, the signed sphere/plane separation is:
+
+```text
+separation = dot(C - P, N) - r
+```
+
+A separation above the 0.00001-meter contact tolerance remains ballistic. At
+or below the tolerance, the solver changes only center Y:
+
+```text
+supportedCenterY = P.y + r / N.y
+```
+
+This places the sphere exactly one radius from the selected triangle plane
+without changing X/Z and therefore without switching query ownership during
+resolution. The corrected state is committed only after every calculation
+succeeds. A center outside the tile continues ballistically with no contact;
+the maximum X/Z edges retain the terrain query's inclusive ownership.
+
+PHY-002 gives the single proof sphere a temporary infinite-friction endpoint
+projection: every linear-velocity component becomes zero at contact. That
+deliberately feature-limited rule makes the sphere settle on the Environment
+Lab terrain without bounce, penetration, or drift; its correction/impulse
+magnitude is not a general bounded material law. It is not the later
+restitution/friction/contact-constraint model. Each fixed tick republishes an
+optional contact containing the untouched canonical sample, pre-resolution
+separation, and penetration depth.
 
 ## Rendering boundary
 
@@ -80,8 +112,17 @@ center from the interpolated world position and binds that translation for the
 single sphere draw in `Terrain`.
 
 This adds no geometry buffer, descriptor, texture, graph pass, water resource,
-or upload-buffer allocation for the transform. The same sphere remains the HDR
-lighting proof; only its world translation changes.
+or upload-buffer allocation. A composition-level contract test validates the
+renderer fixture's one-meter visual radius against the scenario-owned
+one-meter collider radius.
+
+`F4` retains the existing bounded six-vertex/six-index cyan normal pin and
+magenta visible-chunk bounds. The pin is now built at the proof sphere's fixed
+support sample and extends two meters from the canonical surface along the
+exact face normal, so its tip remains visible after the sphere settles. It is
+a support-normal preview, not an active-contact indicator: `F4` also shows it
+while the sphere is airborne. No per-frame diagnostic upload or additional
+draw was added.
 
 ## Verification
 
@@ -91,8 +132,14 @@ Permanent CPU coverage checks:
 - pause, resume, accumulator reset, and one-shot single-step behavior;
 - bounded elapsed-time acceptance and invalid-input rejection;
 - semi-implicit ballistic motion under standard gravity;
-- the same authoritative trajectory across different render rates; and
-- interpolation endpoints, intermediate values, and finite-state validation.
+- the same authoritative trajectory across different render rates;
+- interpolation endpoints, intermediate values, and finite-state validation;
+- flat-terrain fall, exact long-term support, and zero resting velocity;
+- exact sloped-face plane clearance and geometric normal ownership;
+- diagonal, maximum-edge, immediately-outside, and separating transitions;
+- transactional rejection of invalid radii, state, deltas, and overflow; and
+- bit-identical resting state/contact count across 30/60/120/144 Hz render
+  partitions.
 
 After defining `$cmake` and `$ctest` with the discovery block in
 [Building Shark](BUILDING.md#fresh-command-line-build), build and run all
@@ -104,15 +151,28 @@ discovered unit cases with:
 ```
 
 For manual acceptance, launch `SharkSandbox`. The sphere must remain still at
-startup, advance by one small deterministic amount for each `F6` press, fall
-continuously after `F5`, and freeze without a catch-up jump when `F5` pauses it
-again. Camera motion and the animated visual-water surface remain independent.
+startup, advance by one deterministic amount for each `F6` press, fall after
+`F5`, contact the visible terrain, and remain at rest without hover or
+penetration. Pause/resume must not create a catch-up jump. Press `F4` and
+confirm the cyan preview begins at the fixed canonical support sample and
+follows its normal; it is intentionally available before and after contact.
+Camera motion and animated presentation-only water remain independent.
+
+The completed PHY-002 validation passed all `161/161` unit cases in both Debug
+and Release. The 1,000-frame presentation smoke passed on Debug hardware,
+Debug WARP, and Release hardware; each path now fails unless its final
+simulation snapshot contains the exact canonical support contact with zero
+velocity and one-radius face-plane clearance.
 
 ## Explicit non-goals
 
-PHY-001 adds no collider, terrain contact, resting constraint, body/body pair,
-angular state, torque, friction, restitution, broad phase, sleeping, buoyancy,
-water displacement, reset control, entity system, or general action map.
-The lake remains W-001 presentation-only water, and `R-001` through `R-004`
-remain deferred. These limits preserve the approved San Andreas-class product
-scope while establishing modern deterministic simulation timing.
+PHY-002 adds no body/body pair, arbitrary closest-feature sphere/triangle
+collision, edge collision when the center is outside the tile, continuous
+collision detection, generalized friction/restitution, angular state, torque,
+broad phase, sleeping, buoyancy, water displacement, reset control, entity
+system, or general debug-draw service. Its one-sample face support is intended
+for the current one-meter-radius, four-meter-cell, slope-bounded Environment
+Lab heightfield proof; it is not a general promise for arbitrary radius/cell
+ratios or near-vertical faces. The lake remains W-001
+presentation-only water, and `R-001` through `R-004` remain deferred. The
+active queue is centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).

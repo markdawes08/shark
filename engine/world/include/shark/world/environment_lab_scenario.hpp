@@ -28,6 +28,8 @@ inline constexpr float
     environment_lab_water_render_half_extent_x = 64.0F;
 inline constexpr float
     environment_lab_water_render_half_extent_z = 56.0F;
+inline constexpr float
+    environment_lab_ballistic_body_radius = 1.0F;
 
 struct EnvironmentLabScenario final {
     terrain::HeightTile terrain;
@@ -35,6 +37,7 @@ struct EnvironmentLabScenario final {
     math::Float3 lake_core_position;
     math::Float3 spawn_ground_position;
     math::Float3 ballistic_body_spawn_position;
+    float ballistic_body_radius{};
     Camera spawn_camera;
 };
 

@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 19, 2026
-- **Latest completed:** `T-006` - bounded large-terrain capacity
-- **Next increment:** `T-007` - natural rolling landscape
+- **Latest completed:** `T-007` - natural rolling landscape
+- **Next increment:** `T-008` - dry spawn and lake-basin shaping
 
 ## 1. Project direction
 
@@ -337,10 +337,16 @@ stay inside the global `R16_UINT` vertex-index domain. The surface payload is
 2,473,944 bytes (2.359 MiB); the complete packed terrain resources are
 2,537,652 logical bytes and require 2,621,440 bytes of committed D3D12
 allocation. The current `33x33` fixture remains the permanent compact analytic
-regression oracle. T-007 replaces the capacity fixture's deliberately simple
-heights with bounded deterministic natural shaping, and T-008 adds
-scenario-owned spawn and lake-basin metadata plus the dry terrain indentation.
-Only W-001 adds water pixels.
+regression oracle. T-007 replaces only the capacity fixture's deliberately
+simple heights with five fixed-point value-noise bands. The resulting
+project-owned landscape has 25.82421875 meters of relief, all 115,200 LOD0
+triangles at or below 12 degrees, an 11.251308698-degree maximum slope, and a
+0.1171875-meter maximum coarse error without changing topology or resource
+budgets. Its four-phase presentation smoke preserves the interactive overview
+while finishing from a smoke-only near pose with one LOD0 and 60 coarse chunks,
+so both packed D3D12 index ranges stay live. T-008 adds scenario-owned spawn and
+lake-basin metadata plus the dry terrain indentation. Only W-001 adds water
+pixels.
 
 ### Non-negotiable ownership rules
 
@@ -562,8 +568,10 @@ across resources or frames.
    geometry/startup budgets, and `F4` chunk/query diagnostics that are off by
    default.
 7. Shape that region with deterministic project-owned, multi-scale rolling
-   terrain. T-007 will keep the land mostly flat through documented relief and
-   slope limits while avoiding periodic seams, spikes, external assets, and
+   terrain. T-007 completes this with five fixed-point value-noise bands seeded
+   by `0x4FFB0830`, Q8 output, a locked `0xC0FB1097EBCB8B7B` height checksum,
+   25.82421875 meters of relief, and all 115,200 triangles below the 12-degree
+   acceptance limit. It avoids periodic seams, spikes, external assets, and
    unbounded procedural work.
 8. Add a deterministic dry spawn and closed lake-like indentation near it.
    T-008 will publish the future waterline and footprint as scenario metadata,
@@ -750,7 +758,7 @@ presentation stays within the documented continuous vertical-error limit.
 | ID | Level | Increment and acceptance gate | Suggested commit |
 |---|---:|---|---|
 | `T-006` | V | Complete: add a separate bounded resident capacity region with `241x241` samples at four-meter spacing (`960x960` meters), 225 `16x16`-cell chunks, 58,081 shared vertices, 345,600 LOD0 indices, and 194,400 boundary-preserving coarse indices; retain the compact fixture as the regression oracle, stay on global `R16_UINT`, scale the camera/smoke contract, and verify a 2,473,944-byte surface payload, 2,621,440-byte committed D3D12 allocation, and 6,049.240/82.738-ms Debug/Release CPU build | `feat(terrain): add bounded large terrain region` |
-| `T-007` | V | Replace the capacity region's simple heights with fixed-seed, project-owned multi-scale rolling terrain; lock sample anchors/checksum, finite bounds, and visual captures, keep at least 90% of triangles at or below 12 degrees, keep every triangle at or below 30 degrees, bound total relief to 40 meters, and add no lake, erosion, vegetation, roads, or external height asset | `feat(terrain): generate natural rolling landscape` |
+| `T-007` | V | Complete: replace the capacity region's checker heights with five fixed-point, fixed-seed, project-owned value-noise bands; lock exact sample anchors and FNV-1a checksum `0xC0FB1097EBCB8B7B`, bound offsets to `-12.30078125..13.5234375` meters and relief to `25.82421875` meters, keep all 115,200 triangles at or below 12 degrees with an `11.251308698`-degree maximum, retain T-006 topology/resources, and finish the smoke at a `61 (1/60)` near pose so both D3D12 index ranges remain exercised; add no lake, erosion, vegetation, roads, or external height asset | `feat(terrain): generate natural rolling landscape` |
 | `T-008` | V | Add a scenario-owned dry spawn overlooking a nearby smoothly irregular 80-120-meter lake indentation; publish its footprint and future waterline, place the basin core at least six meters below that level and its complete flood-fill rim at least one meter above it, keep spawn at least two meters above and 20 meters outside the shoreline with validation props dry, and render no water | `feat(terrain): add spawn-side lake basin` |
 | `W-001` | V | Render a bounded static surface at the T-008 lake waterline with Fresnel response, depth tint/absorption, reflection/refraction approximation, and animated normal waves; change no terrain height and claim no fluid simulation | `feat(water): render a visual lake surface` |
 
@@ -833,7 +841,7 @@ this section competes with the coupled-environment critical path through M7.
 ### Deferred visual-weather track
 
 The owner deferred these effects on July 19, 2026. They remain approved but
-have no position on the active `T-006 -> T-007 -> T-008 -> W-001 -> PHY-001`
+have no position on the active `T-008 -> W-001 -> PHY-001`
 path. Resuming one requires a small plan update; skipping them does not remove
 the numerical precipitation rate used by later hydrology.
 
@@ -936,38 +944,43 @@ online architecture is not implied.
 
 ## 14. Immediate next increment
 
-After T-006 is reviewed and committed by the owner, implement only `T-007`:
+After T-007 is reviewed and committed by the owner, implement only `T-008`:
 
-- replace only the active capacity fixture's alternating diagnostic heights
-  with a fixed-seed, project-owned multi-scale rolling-height generator;
-- preserve the `241x241` samples, four-meter spacing, `960x960`-meter
-  footprint, 225 `16x16`-cell chunks, global `R16_UINT` indices, canonical
-  query ownership, coarse-LOD construction, renderer resources, and camera
-  scale proven by T-006;
-- make the landscape natural and mostly flat: at least 90 percent of triangles
-  must be at or below 12 degrees, every triangle must be at or below 30
-  degrees, and total relief must not exceed 40 meters;
-- eliminate obvious periodic seams, spikes, and abrupt boundary artifacts, and
-  lock determinism with selected sample anchors plus a whole-heightfield
-  checksum;
-- add numeric terrain-shape tests and reproducible comparison captures while
-  keeping the existing capacity, culling, LOD, memory, hardware, WARP, and GPU
-  validation gates clean; and
-- stop before the lake indentation or spawn scenario, water rendering, rain,
-  erosion, vegetation, roads, external height assets, streaming, wider
-  indices, physics, or fluid state.
+- preserve the T-007 natural generator, `241x241` samples, four-meter spacing,
+  `960x960`-meter footprint, 225 chunks, global `R16_UINT` indices, canonical
+  query ownership, LOD construction, resource budgets, and compact oracle;
+- add scenario-owned metadata for a dry spawn overlooking one nearby, smoothly
+  irregular lake indentation whose shoreline spans 80-120 meters;
+- publish the future waterline and the complete lake footprint without
+  rendering water;
+- place the basin core at least six meters below the future waterline and prove
+  the complete flood-fill rim remains at least one meter above it;
+- keep the spawn at least two meters above and 20 meters outside the shoreline,
+  and keep the existing validation cube and material sphere dry; and
+- stop before water pixels, fluid state, rain, erosion, vegetation, roads,
+  external terrain assets, streaming, wider indices, or physics.
 
-`T-006` completed the bounded resident-capacity proof on July 19, 2026. The
-active diagnostic region has 58,081 shared vertices, 225 chunks, 540,000
-surface indices, and a 0.5-meter maximum coarse error. The 1,000-frame hardware,
-600-frame packaged-WARP, and 120-frame GPU-validation paths exercised both
-LODs and ended with zero D3D12 errors and zero live child objects. The graph,
-shader, PSO, HDR-lighting, canonical-query, and crack-free boundary contracts
-remain unchanged.
+T-007 completed the deterministic natural-height contract on July 19, 2026.
+Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
+checksum `0xC0FB1097EBCB8B7B`, 25.82421875 meters of relief, a
+11.251308698-degree maximum LOD0 slope, and a 0.1171875-meter maximum coarse
+error. T-006's capacity topology, resource sizes, camera scale, canonical
+queries, graph, shader, PSO, HDR-lighting, and crack-free boundary contracts
+remain unchanged. Measured construction times are `8098.750` ms on Debug
+hardware, `87.203` ms on Release
+hardware, and `7699.463` ms on Debug WARP. The active smoke uses eighth-sized
+phases with `A/B/C/D = 93/93/72/61` visible chunks and ends at
+`61 (LOD0=1, coarse=60)` without changing the ordinary interactive start.
+Debug hardware passed all 1,000 frames with exact
+`225000/86375/138625` tested/visible/culled accounting, both index ranges,
+zero corruption/errors, and zero live children. Release hardware passed the
+same 1,000-frame accounting; normal WARP passed 600 frames and focused
+WARP+GBV passed 120 with their scaled exact totals and the same clean Direct3D
+state. Final Debug and Release `SharkTests` each passed 135 cases and 303,048
+assertions.
 
-The active queue after T-007 is `T-008` dry spawn and lake-basin shaping,
-`W-001` visual lake water, then `PHY-001` fixed-step physics. `R-001` through
-`R-004` remain deferred.
+The active queue after T-008 is `W-001` visual lake water, then `PHY-001`
+fixed-step physics. `R-001` through `R-004` remain deferred.
 
 ## 15. Primary technical references
 

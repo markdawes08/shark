@@ -1,13 +1,13 @@
 # HLSL Graphics Pipeline Contract
 
-- **Completed through:** `T-006`
+- **Completed through:** `T-007`
 - **Last verified:** July 19, 2026
 
 Shark compiles all production HLSL at build time with a pinned retail DXC and
-creates immutable Direct3D 12 pipeline state during renderer startup. T-006
-retains the existing cube, terrain, sky, material-sphere, and tone-map programs
-while scaling CPU chunk/LOD selection to the bounded 225-chunk capacity
-fixture. The pipeline still includes S-003's shared image-based-lighting helpers,
+creates immutable Direct3D 12 pipeline state during renderer startup. T-007
+retains T-006's cube, terrain, sky, material-sphere, and tone-map programs while
+changing only the CPU-generated heights in the bounded 225-chunk fixture. The
+pipeline still includes S-003's shared image-based-lighting helpers,
 material-sphere proof, linear-HDR scene target, and final tone-map program.
 This remains a focused scene contract, not a general shader asset,
 material-graph, or pipeline-cache system.
@@ -236,8 +236,9 @@ and coarse terrain indices occupy `0..345,599` and `345,600..539,999`; bounds,
 marker, and sphere begin at 540,000, 545,400, and 545,406. The sphere remains
 in those terrain buffers, so the normal `V + 3` indexed draws and optional
 `F4` diagnostic draws still use four geometry buffers. Initial/resized smoke
-poses select `V0/Vc=3/90`; the turned pose selects `4/67`. Exact per-frame graph
-accounting remains
+poses select `V0/Vc=0/93`; the turned overview selects `0/72`; and the final
+smoke-only `(16, -1, 0)` near pose selects `1/60` with unchanged yaw/pitch.
+Both packed terrain index ranges are therefore live. Exact per-frame graph accounting remains
 15 imports, four passes, three dependencies, six transitions, and 31 elisions.
 Diagnostics retain ten timestamps per context: frame begin/end plus begin/end
 for each pass.
@@ -246,11 +247,15 @@ for each pass.
 
 The hardware smoke path requires 1,000 successful presents, normal packaged
 WARP requires 600, and focused packaged WARP with GPU-based validation requires
-120. They exercise both terrain fill modes, both terrain LODs, the exact
-`3/90 -> 4/67`
-LOD split, all three terrain material views, both environment modes, resize,
-camera rotation, frame retirement, and clean DirectX validation. The smoke
-validates resources, commands, counts, and lifetime; it does not compare pixels.
+120. They exercise both terrain fill modes, the exact
+`0/93 -> 0/72 -> 1/60` schedule, both D3D12 terrain index ranges, all three
+terrain material views, both environment modes, resize, camera rotation,
+translation-only near motion, and frame retirement; compact/focused CPU tests
+retain broader mixed-LOD coverage. Hardware Debug/Release, normal WARP, and
+focused GBV validation passed. The focused path alone uses
+`640x360 -> 480x300`; normal paths retain `1280x720 -> 960x600`, with identical
+aspect changes. The smoke validates resources, commands, counts, and lifetime;
+it does not compare pixels.
 
 Manual acceptance requires coherent environment response on terrain and the
 glossy sphere, a translation-invariant HDR sky, clean `F3` switching to the
@@ -264,8 +269,11 @@ exposure, HDR display output, or image-comparison testing. Those omissions
 preserve the bounded San Andreas-class product scope while allowing modern HDR
 implementation quality.
 
-`T-006` was completed on July 19, 2026 without adding or changing HLSL, root
-signatures, or PSOs. Hardware, WARP, and focused GPU-validation presentation
-runs completed with zero Direct3D errors and zero live child objects. The next
-increment is `T-007`: replace the shallow alternating capacity heights with
-fixed-seed, mostly flat natural rolling terrain; no lake is added yet.
+T-006 historically completed its hardware, WARP, and focused GPU-validation
+presentation gates without adding or changing HLSL, root signatures, or PSOs.
+`T-007` completed the fixed-seed natural-height contract on July 19, 2026 and
+also changes none of those pipeline objects. Hardware Debug/Release, normal
+WARP, and focused GBV passed the active four-phase graphics-validation
+contract. The next increment is `T-008`: add a dry spawn and
+validated 80-120-meter lake indentation with future waterline metadata, but
+render no water.

@@ -1,6 +1,6 @@
 # Camera, Reversed-Z Depth, Cube, and Skybox Contract
 
-- **Completed through:** `T-006`
+- **Completed through:** `T-007`
 - **Last verified:** July 19, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
@@ -102,8 +102,9 @@ clamped below vertical to preserve a finite orthonormal basis. Key-repeat
 records do not multiply a held action, and releasing a key or right mouse
 button ends that action.
 
-T-006 scales the default translation speed to `32 m/s` with the existing `4x`
-Shift multiplier; mouse sensitivity remains `0.0025` radians per pixel.
+T-006 historically scaled the default translation speed to `32 m/s` with the
+existing `4x` Shift multiplier; T-007 retains it. Mouse sensitivity remains
+`0.0025` radians per pixel.
 Movement is scaled by elapsed render time and clamps one update to at most
 `0.1 s`, preventing a long minimize or debugger stall from producing a large
 camera jump. `F4` diagnostics are off at startup. `WindowFocusChangedEvent`
@@ -222,14 +223,18 @@ draw or clear. A restore carrying the existing extent is a no-op.
 
 The fixed presentation smoke requires 1,000 successful presents on automatic
 hardware, 600 on normal packaged WARP, and 120 on the focused packaged-WARP path
-with GPU-based validation. Each run changes from
-`1280x720` to `960x600` at its quarter checkpoint, intentionally changes the
-aspect ratio, and applies `1.25` radians of scripted yaw at three quarters.
+with GPU-based validation. Hardware and normal WARP change from `1280x720` to
+`960x600`; focused GPU validation alone uses `640x360 -> 480x300`. Both
+sequences intentionally change aspect from `16:9` to `1.6`, and each applies
+`1.25` radians of scripted yaw at three quarters.
 The camera starts at `(0, 28, 112)` with pitch `-0.25` radians and a 1,500-meter
-far plane. Initial and resized views expose 93 terrain chunks at a `3/90`
-LOD0/coarse split; the turned view exposes 71 at `4/67`. Hardware and normal
-WARP minimize/restore at halfway; focused validation intentionally skips that
-already-covered interval.
+far plane. Initial and resized views expose 93 terrain chunks at a `0/93`
+LOD0/coarse split. The turned overview exposes 72 at `0/72` from three quarters
+through seven eighths. For the final eighth, presentation smoke alone moves to
+`(16, -1, 0)` with the same yaw/pitch and exposes 61 at `1/60`, keeping both
+terrain index ranges live without changing the ordinary interactive start.
+Hardware and normal WARP minimize/restore at halfway; focused validation
+intentionally skips that already-covered interval.
 
 The permanent accounting contract requires:
 
@@ -240,8 +245,8 @@ The permanent accounting contract requires:
   marker; plus one fullscreen tone-map draw, four texture-table bindings, one
   frame-constant upload, and one depth clear;
 - 225 chunk tests per submitted frame, visible-plus-culled conservation, exact
-  `93 -> 71` visibility, and exact `3/90 -> 4/67` LOD0/coarse splits across the
-  deterministic smoke poses;
+  `93 -> 72 -> 61` visibility, and exact `0/93 -> 0/72 -> 1/60` LOD0/coarse
+  splits across the deterministic smoke poses;
 - one graph compilation/execution, four pass executions, 15 imports, three
   dependencies, six recorded transitions, and 31 elided transitions per frame;
 - frame submissions equal successful plus occluded present attempts;
@@ -255,9 +260,9 @@ The permanent accounting contract requires:
   `resize_count + 1`;
 - minimized intervals prove no query-marker or other draw, texture bind,
   frame-constant upload, graph work, or depth clear occurs while minimized;
-- scene and sky matrix-change counts are each at least three, covering the
-  initial matrix, aspect-changing resize, and scripted yaw at the
-  three-quarter checkpoint;
+- exact scene/sky matrix-change counts of `4/3`: both cover the initial matrix,
+  aspect-changing resize, and scripted yaw, while only the scene matrix changes
+  for the final translation-only near pose;
 - upload accounting requires `upload_allocations == frame_submissions`,
   256 bytes written per allocation, and `upload_high_water_bytes == 256`;
 - descriptor accounting requires one allocation per submitted frame and
@@ -275,6 +280,11 @@ after resize. Press `F4` and verify the magenta bounds and cyan terrain pin
 appear, with the pin anchored to the displayed surface and pointing along its
 exact geometric normal; press it again and verify both disappear. Resize,
 minimize/restore, and shutdown must remain clean.
+The validation cube and material sphere must remain above the natural surface,
+dry, and unburied; T-007 adds no lake or water.
+When running `--present-smoke`, its final reported state must be 61 visible
+chunks at `LOD0=1, coarse=60`; this final near pose is not an interactive camera
+default.
 No cube face, edge, or corner may appear as a painted wall. See
 [the sky procedure](SKYBOX.md#manual-acceptance).
 
@@ -299,7 +309,7 @@ streaming, additional LOD levels, or content database.
 
 The query marker, CPU chunk culling, stateless LOD choice, and F4 diagnostic
 gate add no camera matrix, GPU resource, PSO, graph pass, dependency, barrier,
-PIX event, or timestamp. T-006 retains 15 imports, four passes, three
+PIX event, or timestamp. T-007 retains 15 imports, four passes, three
 dependencies, six barriers, 31 elisions, four geometry buffers, and ten
 timestamps as the current exact contract.
 
@@ -319,9 +329,12 @@ with ordered `Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` passes. See
 fallback rules.
 See [the terrain contract](TERRAIN.md) for its separate geometry, chunk
 culling, bounded LOD, and canonical query/material/diagnostic rendering
-contract. `T-006` was completed on July 19, 2026 with a scaled camera start,
-1,500-meter far plane, and 32 m/s navigation for the bounded `960x960`-meter
-fixture; cube, sky motion, depth, and canonical query conventions remain
-unchanged. The next increment is `T-007`: replace the shallow alternating
-capacity heights with fixed-seed, mostly flat natural rolling terrain; no lake
-is added yet.
+contract. T-006's camera start, 1,500-meter far plane, and 32 m/s navigation
+remain the historical capacity-scale foundation. `T-007` completed the
+fixed-seed natural rolling surface on July 19, 2026 without changing cube, sky
+motion, depth, or canonical query conventions. Its active smoke adds only a
+final translation-only near pose to exercise both terrain index ranges;
+Debug/Release hardware, normal WARP, and focused GBV validation passed. The
+next increment is `T-008`: add a dry spawn and validated
+80-120-meter lake indentation with future waterline metadata, but no water
+pixels.

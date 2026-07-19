@@ -1,11 +1,11 @@
 # Minimal Render-Graph Contract
 
-- **Completed through:** `T-006`
-- **Renderer integration verified through:** `T-006`
+- **Completed through:** `T-007`
+- **Renderer integration verified through:** `T-007`
 - **Last updated:** July 19, 2026
 
 Shark's render graph is a small platform-independent planner with a Direct3D
-12 legacy-barrier executor. T-006 keeps the existing frame-local,
+12 legacy-barrier executor. T-007 keeps the existing frame-local,
 whole-resource HDR composer introduced by S-003:
 `Terrain -> TexturedCube -> Skybox -> ToneMap`. It does not add graph-owned
 resources, subresource tracking, or multi-queue scheduling.
@@ -106,7 +106,7 @@ null native bindings fail even for an import whose transitions were elided.
 The renderer cross-checks compiled, executed, and recorded counts before
 submission.
 
-## T-006 frame graph
+## T-007 frame graph
 
 Every non-minimized frame imports:
 
@@ -174,9 +174,11 @@ The graph pass callbacks own commands, not graph policy:
 If `V` of the 225 chunks are visible, normal `Terrain` contains `V + 1`
 indexed draws and the frame contains `V + 3` indexed draws plus one tone-map
 draw. `F4` adds `V + 1` diagnostic draws without changing the graph. The
-initial/resized and scripted smoke poses expose 93 and 71 chunks; their
-`3/90` and `4/67` LOD0/coarse splits submit 82,368 and 64,032 terrain-surface
-indices. These variable draws inside `Terrain` do not add passes or resources.
+initial/resized and scripted-overview smoke poses expose 93 and 72 chunks;
+their `0/93` and `0/72` LOD0/coarse splits submit 80,352 and 62,208
+terrain-surface indices. The final smoke-only near pose exposes 61 chunks at
+`1/60` and submits 53,376 indices, keeping both packed D3D12 terrain ranges
+live. These variable draws inside `Terrain` do not add passes or resources.
 CPU frustum extraction, AABB tests, distance measurement, and LOD selection
 occur before graph execution and likewise add no graph declaration.
 
@@ -215,7 +217,7 @@ per frame context.
 
 ## Explicit non-goals
 
-T-006 adds no graph-owned/transient resource creation, placed-resource pool,
+T-007 adds no graph-owned/transient resource creation, placed-resource pool,
 lifetime/aliasing analysis, resource pooling, subresource tracking, UAV state,
 automatic RTV/DSV binding, render-pass load/store policy, pass
 culling/merging, parallel recording, queue preference, copy/compute queue,
@@ -227,9 +229,12 @@ keeps the implementation proportional to Shark's approved San Andreas-class
 scope while leaving later renderer infrastructure possible when a measured
 need appears.
 
-`T-006` was completed on July 19, 2026 without changing the exact
-`15/4/3/6/31` graph contract. Debug and Release hardware and Debug WARP/
-GPU-validation runs retained four passes, three dependencies, six barriers,
-and 31 elisions per submitted frame with clean Direct3D validation. The next
-increment is `T-007`: replace the shallow alternating capacity heights with
-fixed-seed, mostly flat natural rolling terrain; no lake is added yet.
+T-006 historically completed clean hardware, WARP, and GPU-validation runs
+without changing the exact `15/4/3/6/31` graph contract. `T-007` completed the
+fixed-seed natural-height contract on July 19, 2026 and changes no graph
+declaration or callback structure. Its active four-phase schedule changes draw
+ranges within `Terrain`, not graph topology. Hardware Debug/Release, normal
+WARP, and focused GBV graph/Direct3D validation passed. The next increment is `T-008`:
+add a dry spawn and validated
+80-120-meter lake indentation with future waterline metadata, but render no
+water.

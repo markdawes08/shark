@@ -275,7 +275,7 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "large capacity smoke poses exercise terrain chunk culling",
+    "large natural terrain smoke poses exercise chunk culling",
     "[renderer][terrain][culling][frustum][smoke]")
 {
     using namespace shark;
@@ -320,5 +320,9 @@ TEST_CASE(
 
     auto culling_pose = initial;
     culling_pose.transform.yaw_radians = 1.25F;
-    REQUIRE(visible_count(culling_pose, 960.0F / 600.0F) == 71);
+    REQUIRE(visible_count(culling_pose, 960.0F / 600.0F) == 72);
+
+    auto near_pose = culling_pose;
+    near_pose.transform.position = {16.0F, -1.0F, 0.0F};
+    REQUIRE(visible_count(near_pose, 960.0F / 600.0F) == 61);
 }

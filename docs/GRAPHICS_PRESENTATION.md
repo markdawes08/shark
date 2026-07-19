@@ -1,13 +1,13 @@
 # Renderer and Direct3D 12 Presentation/Frame-Resource Contract
 
-- **Completed through:** `T-006`
+- **Completed through:** `T-007`
 - **Last verified:** July 19, 2026
 
 `shark::renderer::Renderer` owns Shark's focused D3D12 scene/presentation
-backend. T-006 preserves the triple-buffered fence-gated HDR lifecycle while
-scaling the resident terrain proof to 225 chunks and making bounds/query
-diagnostics default-off behind `F4`. Normal frames still submit and present
-without an unconditional post-frame queue drain.
+backend. T-007 preserves T-006's triple-buffered fence-gated HDR lifecycle,
+225-chunk capacity, and default-off `F4` diagnostics while replacing only the
+CPU-generated height values. Normal frames still submit and present without an
+unconditional post-frame queue drain.
 
 ## Public boundary and ownership
 
@@ -116,16 +116,18 @@ eight-vertex/24-index bounds ranges, the query marker, and the
 266-vertex/1,584-index material sphere. The maximum surface index is 58,080;
 the complete vertex buffer contains 60,153 vertices. Index offsets are 0 for
 LOD0, 345,600 for coarse, 540,000 for bounds, 545,400 for the marker, and
-545,406 for the sphere, for 546,990 total indices. The sphere remains packed
-after the marker; T-006 adds no fifth geometry buffer.
+545,406 for the sphere, for 546,990 total indices. T-006 historically
+established that packing; T-007 adds no fifth geometry buffer.
 
 Meaningful surface payload is 1,393,944 vertex bytes plus 1,080,000 index
 bytes. Bounds/query diagnostics add 54,156 bytes, while the packed
 vertex/index resource widths including the sphere are
 1,443,672/1,093,980 bytes. Their logical total is 2,537,652 bytes and the two
 committed allocations total 2,621,440 bytes. The separately logged CPU-build
-boundary covers fixture construction through LOD/query proof; latest hardware
-measurements were 6,049.240 ms in Debug and 82.738 ms in Release.
+boundary covers fixture construction through LOD/query proof. T-006
+historically measured 6,049.240 ms in Debug and 82.738 ms in Release; T-007
+measured 8,098.750 ms on Debug hardware, 87.203 ms on Release hardware,
+7,699.463 ms on Debug WARP, and 6,008.669 ms on focused WARP+GBV.
 
 ## Frame acquisition, recording, and present
 
@@ -183,8 +185,10 @@ skybox                        36 indices
 
 `ToneMap` adds `DrawInstanced(3, 1, 0, 0)`. Per frame there is one depth clear
 and four texture-table binds: terrain/IBL, checker, sky radiance, and HDR scene
-color. The fixed smoke poses produce `V0/Vc=3/90`, then `4/67`, for 82,368 and
-64,032 terrain-surface indices. Bounds/query diagnostics are off by default.
+color. The fixed smoke poses produce `V0/Vc=0/93`, then `0/72`, then `1/60`,
+for 80,352, 62,208, and 53,376 terrain-surface indices. The final split occurs
+only in the smoke-only near phase and keeps both packed terrain index ranges
+live. Bounds/query diagnostics are off by default.
 
 The 256-byte frame record remains:
 
@@ -274,16 +278,22 @@ Run:
 Hardware requires 1,000 successful presents, normal WARP requires 600, and
 focused GPU-validated WARP requires 120. The paths:
 
-- resize `1280x720` to `960x600`;
-- start with 93 of 225 terrain chunks visible at a `3/90` LOD0/coarse split,
-  then script yaw `1.25` radians so 71 remain visible at a `4/67` split;
+- resize hardware/normal WARP from `1280x720` to `960x600`; focused GBV alone
+  uses `640x360 -> 480x300`, preserving the same aspect sequence;
+- start with 93 of 225 terrain chunks visible at a `0/93` LOD0/coarse split,
+  retain that after resize, then script yaw `1.25` radians so 72 remain visible
+  at a `0/72` split from three quarters through seven eighths, then move only
+  the smoke camera to `(16, -1, 0)` with the same yaw/pitch for the final
+  eighth so 61 remain at `1/60`;
 - exercise all three contexts;
 - exercise both terrain fill modes, all three material views, and both
   environment modes;
 - prove `225 * frame_submissions` chunk tests, visible-plus-culled conservation,
   actual LOD0/coarse surface and bounds draws/indices, min/max/last visibility,
-  exact `0.5`-meter maximum geometric error, graph, texture-binding, upload,
+  exact `0.1171875`-meter maximum geometric error, graph, texture-binding, upload,
   descriptor, and timestamp accounting;
+- prove scene/sky matrix-change counts `4/3`, because the final translation
+  changes the scene matrix but not the translation-free sky matrix;
 - prove the default-off F4 diagnostics through exactly 2,790 bounds draws and
   30 query-marker draws;
 - prove one static upload, four geometry buffers, three material arrays, four
@@ -295,15 +305,20 @@ focused GPU-validated WARP requires 120. The paths:
 - report zero D3D12/DXGI corruption/errors and no live children.
 
 Hardware and normal WARP also minimize/restore and compare the complete
-statistics snapshot to prove no counter changes while minimized. Debug and
-Release hardware runs completed the exact 1,000-frame contract; Debug WARP
-completed 600 frames and focused GPU validation completed 120. Every run
-reported zero D3D12/DXGI errors and zero live children. Smoke checks commands
-and accounting, not pixels.
+statistics snapshot to prove no counter changes while minimized. T-006
+historically completed Debug/Release hardware, Debug WARP, and focused GPU
+validation with clean Direct3D state. T-007's active four-phase schedule uses
+`Q=F/8` and `Q * (2*A + 4*B + C + D)`, with
+`A/B/C/D=93/93/72/61`. Its hardware/WARP/GBV paths produced
+86,375/51,825/10,365 visible chunks, including 125/75/15 LOD0 draws and
+86,250/51,750/10,350 coarse draws. Their total terrain surface-index counts
+were 74,712,000/44,827,200/8,965,440. Hardware Debug/Release, normal WARP, and
+focused GBV passed exact accounting with zero corruption/errors and zero live
+child objects. Smoke checks commands and accounting, not pixels.
 
 ## Explicit non-goals
 
-T-006 does not expose a public/general upload allocator, global upload ring,
+T-007 does not expose a public/general upload allocator, global upload ring,
 persistent descriptor allocator, generic deferred-destruction service, or
 image readback. Its fixed scene, ten-slot heap, query storage, HDR target, and
 environment maps are focused infrastructure, not a general scene/material/
@@ -315,8 +330,12 @@ parallel recording, copy queue, async compute, enhanced barriers, automatic
 exposure, HDR display output, or texture streaming.
 
 This modern chunked HDR implementation does not broaden Shark beyond its
-approved San Andreas-class local-sandbox feature ceiling. `T-006` was completed
-on July 19, 2026 with a bounded `241x241`-sample, `960x960`-meter resident
-fixture and unchanged canonical queries. Its shallow alternating
-`+/-0.25`-meter heights are diagnostic. The next increment is `T-007`: replace
-them with fixed-seed, mostly flat natural rolling terrain; no lake is added yet.
+approved San Andreas-class local-sandbox feature ceiling. T-006 historically
+completed the bounded `241x241`-sample, `960x960`-meter capacity fixture.
+`T-007` completed its fixed-seed natural rolling heights on July 19, 2026 with
+unchanged topology, resources, and canonical queries. Its final near-pose phase
+keeps both terrain index ranges live; hardware Debug/Release, normal WARP, and
+focused GBV validation passed. The next increment is `T-008`:
+add a dry
+spawn and validated 80-120-meter lake indentation with future waterline
+metadata, but render no water.

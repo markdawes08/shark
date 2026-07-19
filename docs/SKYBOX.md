@@ -1,8 +1,8 @@
 # Sky and HDR Environment-Lighting Contract
 
-- **Completed through:** `T-006`
+- **Completed through:** `T-007`
 - **Last verified:** July 19, 2026
-- **Next planned increment:** `T-007` - natural rolling terrain
+- **Next planned increment:** `T-008` - dry spawn and lake-basin shaping
 
 Shark still uses a skybox as the background rasterization technique: a cube is
 drawn around the camera with a translation-free view matrix and forced to the
@@ -230,6 +230,12 @@ Verify:
    procedural fallback. Both modes remain finite and visually usable.
 5. `F1`/`F2`, resize, minimize/restore, and clean shutdown preserve depth,
    material diagnostics, tone mapping, and Direct3D validation.
+6. The T-007 landscape reads as broad natural rolling ground under both
+   lighting modes; the cube and material sphere remain dry and unburied.
+7. `--present-smoke` ends at the smoke-only `(16, -1, 0)` near pose with the
+   preceding yaw/pitch unchanged. Its exact scene/sky matrix-change counts are
+   `4/3`: translation changes terrain visibility to `61 (1/60)` without
+   changing the translation-free sky matrix.
 
 ## Explicit non-goals and continuation
 
@@ -245,9 +251,12 @@ mip zero, and material roughness uses the separately GGX-prefiltered specular
 cube, so that limitation is not on the visible S-003 path.
 
 It does not broaden Shark beyond the approved San Andreas-class local-sandbox
-ceiling. `T-006` completed the bounded `241x241`-sample resident terrain
-capacity fixture on July 19, 2026 without changing sky pixels, resources,
-shaders, or the one-draw sky policy. Hardware, WARP, and focused
-GPU-validation smokes remained clean. The next increment is `T-007`: replace
-the shallow alternating capacity heights with fixed-seed, mostly flat natural
-rolling terrain; no lake is added yet.
+ceiling. T-006 historically completed the bounded `241x241`-sample resident
+terrain capacity while preserving sky pixels, resources, shaders, and the
+one-draw sky policy. `T-007` completed its fixed-seed natural rolling heights
+on July 19, 2026; its final near-pose smoke phase keeps both terrain index
+ranges live without changing those sky contracts. Hardware Debug/Release,
+normal WARP, and focused GBV validation passed. The next increment is `T-008`:
+add a dry spawn and
+validated 80-120-meter lake indentation with future waterline metadata, but
+render no water.

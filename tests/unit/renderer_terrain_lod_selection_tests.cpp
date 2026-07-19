@@ -238,7 +238,7 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "large capacity smoke poses select both terrain LODs",
+    "large natural terrain smoke poses exercise both LODs",
     "[renderer][terrain][lod][smoke]")
 {
     using namespace shark;
@@ -303,12 +303,17 @@ TEST_CASE(
     initial.transform.pitch_radians = -0.25F;
     initial.lens.far_plane = 1'500.0F;
     REQUIRE(counts(initial, 16.0F / 9.0F) ==
-        std::array<std::size_t, 3>{93, 3, 90});
+        std::array<std::size_t, 3>{93, 0, 93});
     REQUIRE(counts(initial, 960.0F / 600.0F) ==
-        std::array<std::size_t, 3>{93, 3, 90});
+        std::array<std::size_t, 3>{93, 0, 93});
 
     auto culling_pose = initial;
     culling_pose.transform.yaw_radians = 1.25F;
     REQUIRE(counts(culling_pose, 960.0F / 600.0F) ==
-        std::array<std::size_t, 3>{71, 4, 67});
+        std::array<std::size_t, 3>{72, 0, 72});
+
+    auto near_pose = culling_pose;
+    near_pose.transform.position = {16.0F, -1.0F, 0.0F};
+    REQUIRE(counts(near_pose, 960.0F / 600.0F) ==
+        std::array<std::size_t, 3>{61, 1, 60});
 }

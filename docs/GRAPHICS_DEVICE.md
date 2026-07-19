@@ -1,6 +1,6 @@
 # Direct3D 12 Device Contract
 
-- **Completed through:** `T-006`
+- **Completed through:** `T-007`
 - **Last verified:** July 19, 2026
 
 G-001 establishes adapter discovery, diagnostics, capability reporting, and
@@ -195,12 +195,16 @@ The presentation smoke additionally verifies all three frame contexts are
 reused, every submission compiles and executes exactly four graph passes with
 15 imports, three dependencies, six emitted barriers, and 31 elided
 transitions plus four texture-table bindings, and every submission retires
-during explicit shutdown before frame resources are released. T-006 retains
-four geometry buffers and ten timestamps per frame while scaling the active
-terrain to 225 chunks. Each visible surface selects a 1,536-index LOD0 or
+during explicit shutdown before frame resources are released. T-006
+historically established four geometry buffers, ten timestamps per frame, and
+the active 225-chunk capacity; T-007 retains them. Each visible surface selects a
+1,536-index LOD0 or
 864-index coarse range; default frames omit bounds/query diagnostics, while
-`F4` adds them without another resource. The smoke poses prove `V=93` and
-`V=71`, with LOD0/coarse splits of `3/90` and `4/67`.
+`F4` adds them without another resource. The T-007 smoke poses expect `V=93`
+and `V=72` for the overview phases, with LOD0/coarse splits of `0/93` and
+`0/72`. Its final smoke-only near phase moves to `(16, -1, 0)` with the same
+yaw/pitch and expects `V=61` at `1/60`, keeping both packed terrain index ranges
+live without changing resources or the interactive start.
 
 The packed terrain buffer widths are 1,443,672 vertex bytes and 1,093,980 index
 bytes; D3D12 reports 2,621,440 committed bytes for the two resources. Renderer
@@ -224,10 +228,13 @@ rendering modes, and
 [the skybox contract](SKYBOX.md) for the S-003 HDR environment, analytic sun,
 and procedural fallback. T-002 adds no device capability or lifetime policy;
 REN-001, T-003, and S-003 likewise change no device capability or selection
-policy. T-006 was completed on July 19, 2026 without changing adapter,
-capability, debug-layer, device, or lifetime policy. Debug and Release hardware
-smokes each completed 1,000 frames with zero Direct3D errors and zero live child
-objects; Debug WARP and focused GPU-validation paths were likewise clean. The
-next increment is `T-007`: replace the bounded fixture's shallow alternating
-heights with fixed-seed, mostly flat natural rolling terrain; no lake is added
-yet.
+policy. T-006 historically completed its Debug/Release hardware, WARP, and
+focused GPU-validation gates without changing adapter, debug-layer, device, or
+lifetime policy. `T-007` completed the natural-height contract on July 19,
+2026 and likewise introduces no device-policy change. Active hardware
+Debug/Release, normal WARP, and focused GBV validation passed the four-phase
+smoke with zero corruption/errors and zero live child objects. The next
+increment is `T-008`:
+add a dry spawn
+and validated 80-120-meter lake indentation with future waterline metadata, but
+render no water.

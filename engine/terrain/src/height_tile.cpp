@@ -185,14 +185,188 @@ struct CellCoordinate final {
         static_cast<float>(basin) / 64.0F;
 }
 
-[[nodiscard]] constexpr float large_capacity_height_offset(
+struct RollingTerrainOctave final {
+    std::uint32_t sample_period{};
+    std::int32_t amplitude_meters{};
+    std::uint32_t phase_x{};
+    std::uint32_t phase_z{};
+    bool diagonal{};
+};
+
+inline constexpr std::array rolling_terrain_octaves{
+    RollingTerrainOctave{128U, 10, 37U, 71U, false},
+    RollingTerrainOctave{91U, 6, 19U, 53U, true},
+    RollingTerrainOctave{32U, 3, 11U, 23U, false},
+    RollingTerrainOctave{23U, 2, 7U, 13U, true},
+    RollingTerrainOctave{8U, 1, 3U, 5U, false},
+};
+inline constexpr std::uint32_t rolling_terrain_seed_step =
+    0x9E37'79B9U;
+inline constexpr std::int64_t rolling_terrain_fade_scale =
+    std::int64_t{1} << 30U;
+inline constexpr std::int64_t rolling_terrain_lattice_scale =
+    std::int64_t{1} << 23U;
+inline constexpr std::int64_t rolling_terrain_q23_to_q8_scale =
+    std::int64_t{1} << 15U;
+
+[[nodiscard]] constexpr std::uint32_t rolling_terrain_hash(
+    const std::uint32_t x,
+    const std::uint32_t z,
+    const std::uint32_t seed) noexcept
+{
+    auto value =
+        x * 0x8DA6'B343U ^
+        z * 0xD816'3841U ^
+        seed;
+    value ^= value >> 16U;
+    value *= 0x7FEB'352DU;
+    value ^= value >> 15U;
+    value *= 0x846C'A68BU;
+    value ^= value >> 16U;
+    return value;
+}
+
+[[nodiscard]] constexpr std::int32_t rolling_terrain_lattice_value_q23(
+    const std::uint32_t x,
+    const std::uint32_t z,
+    const std::uint32_t seed) noexcept
+{
+    return static_cast<std::int32_t>(
+        rolling_terrain_hash(x, z, seed) >> 8U) -
+        static_cast<std::int32_t>(rolling_terrain_lattice_scale);
+}
+
+[[nodiscard]] constexpr std::int64_t multiply_q30(
+    const std::int64_t first,
+    const std::int64_t second) noexcept
+{
+    return first * second / rolling_terrain_fade_scale;
+}
+
+[[nodiscard]] constexpr std::int64_t quintic_fade_q30(
+    const std::uint32_t remainder,
+    const std::uint32_t period) noexcept
+{
+    const auto value =
+        static_cast<std::int64_t>(remainder) *
+        rolling_terrain_fade_scale /
+        static_cast<std::int64_t>(period);
+    const auto squared_value = multiply_q30(value, value);
+    const auto cubed_value = multiply_q30(squared_value, value);
+    const auto fourth_power = multiply_q30(cubed_value, value);
+    const auto fifth_power = multiply_q30(fourth_power, value);
+    return 6 * fifth_power -
+        15 * fourth_power +
+        10 * cubed_value;
+}
+
+[[nodiscard]] constexpr std::int32_t linear_interpolation_q23(
+    const std::int32_t first,
+    const std::int32_t second,
+    const std::int64_t amount_q30) noexcept
+{
+    const auto delta =
+        static_cast<std::int64_t>(second) -
+        static_cast<std::int64_t>(first);
+    return static_cast<std::int32_t>(
+        static_cast<std::int64_t>(first) +
+        delta * amount_q30 / rolling_terrain_fade_scale);
+}
+
+[[nodiscard]] constexpr std::pair<std::uint32_t, std::uint32_t>
+rolling_terrain_sample_coordinates(
+    const std::uint32_t x,
+    const std::uint32_t z,
+    const RollingTerrainOctave& octave) noexcept
+{
+    if (octave.diagonal) {
+        return {
+            x + z + octave.phase_x,
+            x +
+                (large_capacity_tile_sample_rows - 1U) -
+                z +
+                octave.phase_z,
+        };
+    }
+    return {
+        x + octave.phase_x,
+        z + octave.phase_z,
+    };
+}
+
+[[nodiscard]] constexpr std::int32_t rolling_terrain_value_noise_q23(
+    const std::uint32_t x,
+    const std::uint32_t z,
+    const RollingTerrainOctave& octave,
+    const std::uint32_t seed) noexcept
+{
+    const auto [sample_x, sample_z] =
+        rolling_terrain_sample_coordinates(x, z, octave);
+    const auto cell_x = sample_x / octave.sample_period;
+    const auto cell_z = sample_z / octave.sample_period;
+    const auto blend_x = quintic_fade_q30(
+        sample_x % octave.sample_period,
+        octave.sample_period);
+    const auto blend_z = quintic_fade_q30(
+        sample_z % octave.sample_period,
+        octave.sample_period);
+
+    const auto near_row = linear_interpolation_q23(
+        rolling_terrain_lattice_value_q23(cell_x, cell_z, seed),
+        rolling_terrain_lattice_value_q23(
+            cell_x + 1U,
+            cell_z,
+            seed),
+        blend_x);
+    const auto far_row = linear_interpolation_q23(
+        rolling_terrain_lattice_value_q23(
+            cell_x,
+            cell_z + 1U,
+            seed),
+        rolling_terrain_lattice_value_q23(
+            cell_x + 1U,
+            cell_z + 1U,
+            seed),
+        blend_x);
+    return linear_interpolation_q23(
+        near_row,
+        far_row,
+        blend_z);
+}
+
+[[nodiscard]] float large_rolling_height_offset(
     const std::uint32_t x,
     const std::uint32_t z) noexcept
 {
-    // This intentionally visible but shallow checker is a capacity probe, not
-    // natural terrain. Every value is exactly representable, and omitted
-    // 2x2-patch midpoints give the coarse LOD a fixed 0.5-meter error.
-    return ((x + z) & 1U) == 0U ? 0.25F : -0.25F;
+    std::int64_t height_q23 = 0;
+    for (std::size_t index = 0;
+         index < rolling_terrain_octaves.size();
+         ++index) {
+        const auto& octave = rolling_terrain_octaves[index];
+        const auto seed =
+            large_capacity_tile_generation_seed +
+            static_cast<std::uint32_t>(index) *
+                rolling_terrain_seed_step;
+        height_q23 +=
+            static_cast<std::int64_t>(octave.amplitude_meters) *
+            rolling_terrain_value_noise_q23(
+                x,
+                z,
+                octave,
+                seed);
+    }
+
+    // Round once, symmetrically, from Q23 to Q8 meters. Every authored height
+    // is therefore exact in binary float and stable across build modes.
+    const auto magnitude_q23 =
+        height_q23 >= 0 ? height_q23 : -height_q23;
+    const auto magnitude_q8 =
+        (magnitude_q23 + rolling_terrain_q23_to_q8_scale / 2) /
+        rolling_terrain_q23_to_q8_scale;
+    const auto height_q8 =
+        height_q23 >= 0 ? magnitude_q8 : -magnitude_q8;
+    return static_cast<float>(height_q8) *
+        large_capacity_tile_height_quantum;
 }
 
 [[nodiscard]] constexpr math::Float3 subtract(
@@ -937,7 +1111,7 @@ HeightTile make_large_capacity_height_tile()
              x < large_capacity_tile_sample_columns;
              ++x) {
             tile.height_offsets.push_back(
-                large_capacity_height_offset(x, z));
+                large_rolling_height_offset(x, z));
         }
     }
     return tile;

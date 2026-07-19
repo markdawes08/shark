@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -56,6 +57,67 @@ namespace {
     return value.x * value.x +
         value.y * value.y +
         value.z * value.z;
+}
+
+[[nodiscard]] std::uint64_t height_checksum(
+    const std::vector<float>& heights) noexcept
+{
+    constexpr std::uint64_t fnv_offset_basis =
+        0xCBF2'9CE4'8422'2325ULL;
+    constexpr std::uint64_t fnv_prime = 0x0000'0100'0000'01B3ULL;
+
+    auto result = fnv_offset_basis;
+    for (const auto height : heights) {
+        const auto bits = std::bit_cast<std::uint32_t>(height);
+        for (std::uint32_t shift = 0; shift < 32U; shift += 8U) {
+            result ^= (bits >> shift) & 0xFFU;
+            result *= fnv_prime;
+        }
+    }
+    return result;
+}
+
+struct TerrainSlopeSummary final {
+    std::size_t at_or_below_12_degrees{};
+    std::size_t at_or_below_30_degrees{};
+    double maximum_degrees{};
+};
+
+[[nodiscard]] TerrainSlopeSummary summarize_geometric_slopes(
+    const shark::terrain::HeightTileMesh& mesh)
+{
+    constexpr double radians_to_degrees =
+        57.2957795130823208768;
+    TerrainSlopeSummary result;
+    for (std::size_t index = 0;
+         index < mesh.indices.size();
+         index += 3U) {
+        const auto& first = mesh.positions.at(mesh.indices[index]);
+        const auto& second =
+            mesh.positions.at(mesh.indices[index + 1U]);
+        const auto& third =
+            mesh.positions.at(mesh.indices[index + 2U]);
+        const auto first_edge = subtract(second, first);
+        const auto second_edge = subtract(third, first);
+        const auto normal = cross(first_edge, second_edge);
+        const auto horizontal =
+            std::hypot(
+                static_cast<double>(normal.x),
+                static_cast<double>(normal.z));
+        const auto slope_degrees =
+            std::atan2(
+                horizontal,
+                std::abs(static_cast<double>(normal.y))) *
+            radians_to_degrees;
+        result.at_or_below_12_degrees +=
+            static_cast<std::size_t>(slope_degrees <= 12.0);
+        result.at_or_below_30_degrees +=
+            static_cast<std::size_t>(slope_degrees <= 30.0);
+        result.maximum_degrees = std::max(
+            result.maximum_degrees,
+            slope_degrees);
+    }
+    return result;
 }
 
 constexpr void add_assign(
@@ -368,8 +430,8 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "the bounded large terrain fixture stays inside its resident budget",
-    "[terrain][height-tile][capacity][contract]")
+    "the bounded rolling terrain is natural repeatable and resident",
+    "[terrain][height-tile][capacity][natural][contract]")
 {
     using namespace shark;
 
@@ -421,14 +483,111 @@ TEST_CASE(
     const auto [minimum, maximum] = std::minmax_element(
         first.height_offsets.begin(),
         first.height_offsets.end());
-    REQUIRE(*minimum == -0.25F);
-    REQUIRE(*maximum == 0.25F);
+    REQUIRE(*minimum ==
+        terrain::large_capacity_tile_minimum_height_offset);
+    REQUIRE(*maximum ==
+        terrain::large_capacity_tile_maximum_height_offset);
+    REQUIRE(static_cast<std::size_t>(
+                std::distance(
+                    first.height_offsets.begin(),
+                    minimum)) ==
+        sample_index(0, 91, first.sample_columns));
+    REQUIRE(std::count(
+                first.height_offsets.begin(),
+                first.height_offsets.end(),
+                *minimum) == 1);
+    REQUIRE(static_cast<std::size_t>(
+                std::distance(
+                    first.height_offsets.begin(),
+                    maximum)) ==
+        sample_index(126, 229, first.sample_columns));
+    REQUIRE(std::count(
+                first.height_offsets.begin(),
+                first.height_offsets.end(),
+                *maximum) == 2);
+    REQUIRE(*maximum - *minimum ==
+        terrain::large_capacity_tile_height_relief);
+    REQUIRE(*maximum - *minimum <= 40.0F);
     REQUIRE(std::all_of(
         first.height_offsets.begin(),
         first.height_offsets.end(),
         [](const float height) {
             return std::isfinite(height);
         }));
+    REQUIRE(std::all_of(
+        first.height_offsets.begin(),
+        first.height_offsets.end(),
+        [](const float height) {
+            return height * 256.0F ==
+                std::trunc(height * 256.0F);
+        }));
+    REQUIRE(height_checksum(first.height_offsets) ==
+        terrain::large_capacity_tile_height_checksum);
+
+    const auto height_at = [&first](
+                               const std::uint32_t x,
+                               const std::uint32_t z) {
+        return first.height_offsets[sample_index(
+            x,
+            z,
+            first.sample_columns)];
+    };
+    const std::array anchors{
+        std::pair{std::pair{0U, 0U}, -4.1875F},
+        std::pair{std::pair{240U, 0U}, -5.40625F},
+        std::pair{std::pair{0U, 240U}, -1.1796875F},
+        std::pair{std::pair{240U, 240U}, -1.01171875F},
+        std::pair{std::pair{120U, 120U}, -1.92578125F},
+        std::pair{std::pair{120U, 148U}, 0.6953125F},
+        std::pair{std::pair{30U, 197U}, -2.1328125F},
+        std::pair{std::pair{87U, 42U}, -2.9609375F},
+        std::pair{std::pair{176U, 203U}, -2.22265625F},
+    };
+    for (const auto& [coordinate, expected_height] : anchors) {
+        REQUIRE(height_at(coordinate.first, coordinate.second) ==
+            expected_height);
+    }
+
+    std::size_t opposite_row_mismatches = 0;
+    std::size_t opposite_column_mismatches = 0;
+    float maximum_x_step = 0.0F;
+    float maximum_z_step = 0.0F;
+    for (std::uint32_t index = 0;
+         index < first.sample_columns;
+         ++index) {
+        opposite_row_mismatches += static_cast<std::size_t>(
+            height_at(index, 0) !=
+            height_at(index, first.sample_rows - 1U));
+        opposite_column_mismatches += static_cast<std::size_t>(
+            height_at(0, index) !=
+            height_at(first.sample_columns - 1U, index));
+    }
+    for (std::uint32_t z = 0; z < first.sample_rows; ++z) {
+        for (std::uint32_t x = 0;
+             x < first.sample_columns;
+             ++x) {
+            if (x + 1U < first.sample_columns) {
+                maximum_x_step = std::max(
+                    maximum_x_step,
+                    std::abs(
+                        height_at(x + 1U, z) -
+                        height_at(x, z)));
+            }
+            if (z + 1U < first.sample_rows) {
+                maximum_z_step = std::max(
+                    maximum_z_step,
+                    std::abs(
+                        height_at(x, z + 1U) -
+                        height_at(x, z)));
+            }
+        }
+    }
+    REQUIRE(opposite_row_mismatches >=
+        first.sample_columns * 95U / 100U);
+    REQUIRE(opposite_column_mismatches >=
+        first.sample_rows * 95U / 100U);
+    REQUIRE(maximum_x_step == 0.79296875F);
+    REQUIRE(maximum_z_step == 0.6875F);
 
     const auto surface = terrain::HeightTileSurface::create(first);
     const auto mesh = terrain::build_lod0_mesh(first);
@@ -455,6 +614,36 @@ TEST_CASE(
         terrain::large_capacity_tile_vertex_count);
     REQUIRE(mesh.value().indices.size() ==
         terrain::large_capacity_tile_index_count);
+    const auto slopes = summarize_geometric_slopes(mesh.value());
+    REQUIRE(slopes.at_or_below_12_degrees ==
+        terrain::
+            large_capacity_tile_triangles_at_or_below_12_degrees);
+    REQUIRE(slopes.at_or_below_12_degrees >=
+        terrain::large_capacity_tile_triangle_count * 9U / 10U);
+    REQUIRE(slopes.at_or_below_30_degrees ==
+        terrain::large_capacity_tile_triangle_count);
+    REQUIRE(slopes.maximum_degrees ==
+        Catch::Approx(
+            terrain::
+                large_capacity_tile_maximum_lod0_slope_degrees)
+            .margin(0.000001));
+
+    for (const auto world_x : {-1.0F, 0.0F, 1.0F}) {
+        for (const auto world_z : {-1.0F, 0.0F, 1.0F}) {
+            const auto sample =
+                surface.value().sample_lod0_height(world_x, world_z);
+            REQUIRE(sample);
+            REQUIRE(*sample < -1.0F);
+        }
+    }
+    const auto material_sphere_ground =
+        surface.value().sample_lod0_height(3.0F, -1.0F);
+    REQUIRE(material_sphere_ground);
+    REQUIRE(*material_sphere_ground < 0.25F);
+    const auto smoke_near_camera_ground =
+        surface.value().sample_lod0_height(16.0F, 0.0F);
+    REQUIRE(smoke_near_camera_ground);
+    REQUIRE(*smoke_near_camera_ground < -1.0F);
     REQUIRE(lod0.value().indices.size() ==
         terrain::large_capacity_tile_index_count);
     REQUIRE(lod0.value().chunks.size() ==
@@ -467,6 +656,7 @@ TEST_CASE(
         terrain::
             large_capacity_tile_coarse_maximum_geometric_error);
 
+    bool observed_global_coarse_error = false;
     for (std::size_t index = 0;
          index < lod0.value().chunks.size();
          ++index) {
@@ -480,10 +670,17 @@ TEST_CASE(
             terrain::large_capacity_tile_chunk_index_count);
         REQUIRE(coarse_chunk.index_count ==
             terrain::large_capacity_tile_coarse_chunk_index_count);
-        REQUIRE(coarse_chunk.maximum_geometric_error ==
+        REQUIRE(coarse_chunk.maximum_geometric_error <=
             terrain::
                 large_capacity_tile_coarse_maximum_geometric_error);
+        REQUIRE(coarse_chunk.maximum_geometric_error >= 0.0);
+        observed_global_coarse_error =
+            observed_global_coarse_error ||
+            coarse_chunk.maximum_geometric_error ==
+                terrain::
+                    large_capacity_tile_coarse_maximum_geometric_error;
     }
+    REQUIRE(observed_global_coarse_error);
 
     REQUIRE(*std::max_element(
                 lod0.value().indices.begin(),

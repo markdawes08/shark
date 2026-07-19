@@ -259,6 +259,10 @@ inline constexpr Bounds3 deterministic_tile_expected_bounds{
 inline constexpr std::uint32_t large_capacity_tile_sample_columns = 241;
 inline constexpr std::uint32_t large_capacity_tile_sample_rows = 241;
 inline constexpr float large_capacity_tile_sample_spacing = 4.0F;
+inline constexpr std::uint32_t large_capacity_tile_generation_seed =
+    0x4FFB'0830U;
+inline constexpr float large_capacity_tile_height_quantum =
+    1.0F / 256.0F;
 inline constexpr math::Float3 large_capacity_tile_origin{
     -480.0F,
     -2.0F,
@@ -302,11 +306,27 @@ inline constexpr std::size_t large_capacity_tile_surface_index_count =
     large_capacity_tile_index_count +
     large_capacity_tile_coarse_index_count;
 inline constexpr double
-    large_capacity_tile_coarse_maximum_geometric_error = 0.5;
+    large_capacity_tile_coarse_maximum_geometric_error = 0.1171875;
+inline constexpr float large_capacity_tile_minimum_height_offset =
+    -12.30078125F;
+inline constexpr float large_capacity_tile_maximum_height_offset =
+    13.5234375F;
+inline constexpr float large_capacity_tile_height_relief =
+    large_capacity_tile_maximum_height_offset -
+    large_capacity_tile_minimum_height_offset;
 inline constexpr Bounds3 large_capacity_tile_expected_bounds{
-    {-480.0F, -2.25F, -480.0F},
-    {480.0F, -1.75F, 480.0F},
+    {-480.0F, -14.30078125F, -480.0F},
+    {480.0F, 11.5234375F, 480.0F},
 };
+// 64-bit FNV-1a over every row-major IEEE-754 float height, encoded least
+// significant byte first. The encoding is explicit and host-endian neutral.
+inline constexpr std::uint64_t
+    large_capacity_tile_height_checksum = 0xC0FB'1097'EBCB'8B7BULL;
+inline constexpr std::size_t
+    large_capacity_tile_triangles_at_or_below_12_degrees = 115'200;
+inline constexpr double
+    large_capacity_tile_maximum_lod0_slope_degrees =
+        11.251308698164618;
 static_assert(large_capacity_tile_vertex_count == 58'081);
 static_assert(large_capacity_tile_vertex_count <= 65'536);
 static_assert(large_capacity_tile_chunk_count == 225);
@@ -314,9 +334,9 @@ static_assert(large_capacity_tile_index_count == 345'600);
 static_assert(large_capacity_tile_coarse_index_count == 194'400);
 static_assert(large_capacity_tile_surface_index_count == 540'000);
 
-// Returns T-006's bounded resident capacity fixture. Its shallow alternating
-// offsets deliberately exercise coarse-LOD error accounting without claiming
-// to be the final natural landscape introduced by T-007.
+// Returns T-007's fixed-seed, project-owned rolling landscape over T-006's
+// bounded resident capacity. Five smooth value-noise scales are quantized to
+// 1/256 meter without runtime random state, external content, or tiling.
 [[nodiscard]] HeightTile make_large_capacity_height_tile();
 
 // Builds the exact LOD0 render surface. Every cell uses the diagonal from v00

@@ -186,6 +186,20 @@ public:
     return output.str();
 }
 
+[[nodiscard]] std::string format_hexadecimal(
+    const std::uint64_t value,
+    const int digit_count)
+{
+    std::ostringstream output;
+    output << "0x"
+           << std::uppercase
+           << std::hex
+           << std::setfill('0')
+           << std::setw(digit_count)
+           << value;
+    return output.str();
+}
+
 [[nodiscard]] constexpr shark::renderer::RenderExtent
 to_render_extent(
     const shark::platform::WindowExtent extent) noexcept
@@ -670,12 +684,24 @@ void log_platform_event(const shark::platform::Event& event)
     const auto minimize_after_frames = required_smoke_frames / 2;
     const auto change_camera_after_frames =
         required_smoke_frames * 3 / 4;
+    const auto change_to_near_pose_after_frames =
+        required_smoke_frames * 7 / 8;
     const auto diagnostic_smoke_frames =
         std::min<std::uint64_t>(
             30,
             required_smoke_frames / 4);
     constexpr float smoke_culling_yaw_radians = 1.25F;
-    constexpr platform::WindowExtent smoke_resize_extent{960, 600};
+    constexpr math::Float3 smoke_near_camera_position{
+        16.0F,
+        -1.0F,
+        0.0F,
+    };
+    const auto initial_smoke_extent = focused_gpu_validation
+        ? platform::WindowExtent{640, 360}
+        : platform::WindowExtent{1280, 720};
+    const auto smoke_resize_extent = focused_gpu_validation
+        ? platform::WindowExtent{480, 300}
+        : platform::WindowExtent{960, 600};
     const auto smoke_deadline_duration =
         focused_gpu_validation
         ? std::chrono::seconds{180}
@@ -684,6 +710,9 @@ void log_platform_event(const shark::platform::Event& event)
             : std::chrono::seconds{75});
 
     platform::ApplicationConfig application_config;
+    if (smoke_mode && focused_gpu_validation) {
+        application_config.client_extent = initial_smoke_extent;
+    }
     application_config.visible = !smoke_mode;
     auto application_result = platform::Application::create(
         application_config);
@@ -1278,7 +1307,7 @@ void log_platform_event(const shark::platform::Event& event)
         core::LogLevel::info,
         "terrain",
         std::string{
-            "Built bounded two-level capacity terrain: samples="} +
+            "Built bounded fixed-seed rolling terrain: samples="} +
             std::to_string(terrain_tile.sample_columns) + "x" +
             std::to_string(terrain_tile.sample_rows) +
             ", spacing=" +
@@ -1307,6 +1336,33 @@ void log_platform_event(const shark::platform::Event& event)
             std::to_string(terrain_mesh.bounds.maximum.x) + ", " +
             std::to_string(terrain_mesh.bounds.maximum.y) + ", " +
             std::to_string(terrain_mesh.bounds.maximum.z) + ")]");
+
+    core::log_message(
+        core::LogLevel::info,
+        "terrain.shape",
+        std::string{"Natural terrain contract: seed="} +
+            format_hexadecimal(
+                terrain::large_capacity_tile_generation_seed,
+                8) +
+            ", height-checksum=" +
+            format_hexadecimal(
+                terrain::large_capacity_tile_height_checksum,
+                16) +
+            ", relief=" +
+            std::to_string(
+                terrain::large_capacity_tile_height_relief) +
+            "m, LOD0-triangles-at-or-below-12-degrees=" +
+            std::to_string(
+                terrain::
+                    large_capacity_tile_triangles_at_or_below_12_degrees) +
+            "/" +
+            std::to_string(
+                terrain::large_capacity_tile_triangle_count) +
+            ", maximum-LOD0-slope=" +
+            std::to_string(
+                terrain::
+                    large_capacity_tile_maximum_lod0_slope_degrees) +
+            " degrees");
 
     core::log_message(
         core::LogLevel::info,
@@ -1443,6 +1499,7 @@ void log_platform_event(const shark::platform::Event& event)
     bool observed_close_request = false;
     bool observed_closed = false;
     bool smoke_camera_pose_changed = false;
+    bool smoke_near_pose_changed = false;
     bool debug_state_validated = false;
     renderer::RendererStats stats_when_minimized{};
 
@@ -1701,7 +1758,8 @@ void log_platform_event(const shark::platform::Event& event)
                          !observed_minimized_iteration ||
                          !observed_restored ||
                          !observed_restore_resize)) ||
-                    !smoke_camera_pose_changed) {
+                    !smoke_camera_pose_changed ||
+                    !smoke_near_pose_changed) {
                     return core::Result<void>::failure(
                         renderer_smoke_error(
                             "The presentation smoke lifecycle was incomplete"));
@@ -1752,6 +1810,13 @@ void log_platform_event(const shark::platform::Event& event)
                 0.0F,
                 1.0F);
             smoke_camera_pose_changed = true;
+        }
+        else if (!smoke_near_pose_changed &&
+                 renderer_instance.stats().presented_frames >=
+                     change_to_near_pose_after_frames) {
+            camera.transform.position =
+                smoke_near_camera_position;
+            smoke_near_pose_changed = true;
         }
         if (smoke_mode) {
             const auto presented_frames =
@@ -1846,24 +1911,42 @@ void log_platform_event(const shark::platform::Event& event)
             (std::uint32_t{1} << expected_context_count) - 1;
         constexpr std::uint64_t frame_probe_bytes = 256;
         constexpr std::uint64_t timestamp_queries_per_frame = 10;
-        constexpr std::uint64_t initial_lod0_chunks = 3;
-        constexpr std::uint64_t initial_coarse_chunks = 90;
-        constexpr std::uint64_t final_lod0_chunks = 4;
-        constexpr std::uint64_t final_coarse_chunks = 67;
-        constexpr auto initial_visible_chunks =
-            initial_lod0_chunks + initial_coarse_chunks;
+        constexpr std::uint64_t initial_window_lod0_chunks = 0;
+        constexpr std::uint64_t initial_window_coarse_chunks = 93;
+        constexpr std::uint64_t resized_window_lod0_chunks = 0;
+        constexpr std::uint64_t resized_window_coarse_chunks = 93;
+        constexpr std::uint64_t turned_lod0_chunks = 0;
+        constexpr std::uint64_t turned_coarse_chunks = 72;
+        constexpr std::uint64_t near_lod0_chunks = 1;
+        constexpr std::uint64_t near_coarse_chunks = 60;
+        constexpr auto initial_window_visible_chunks =
+            initial_window_lod0_chunks +
+            initial_window_coarse_chunks;
+        constexpr auto near_visible_chunks =
+            near_lod0_chunks + near_coarse_chunks;
         constexpr auto expected_maximum_geometric_error =
             terrain::
                 large_capacity_tile_coarse_maximum_geometric_error;
-        const auto initial_lod_frames = change_camera_after_frames;
-        const auto final_lod_frames =
-            required_smoke_frames - change_camera_after_frames;
+        const auto initial_window_frames = resize_after_frames;
+        const auto resized_window_frames =
+            change_camera_after_frames - resize_after_frames;
+        const auto turned_frames =
+            change_to_near_pose_after_frames -
+            change_camera_after_frames;
+        const auto near_frames =
+            required_smoke_frames -
+            change_to_near_pose_after_frames;
         const auto expected_lod0_draw_calls =
-            initial_lod_frames * initial_lod0_chunks +
-            final_lod_frames * final_lod0_chunks;
+            initial_window_frames * initial_window_lod0_chunks +
+            resized_window_frames * resized_window_lod0_chunks +
+            turned_frames * turned_lod0_chunks +
+            near_frames * near_lod0_chunks;
         const auto expected_coarse_draw_calls =
-            initial_lod_frames * initial_coarse_chunks +
-            final_lod_frames * final_coarse_chunks;
+            initial_window_frames * initial_window_coarse_chunks +
+            resized_window_frames *
+                resized_window_coarse_chunks +
+            turned_frames * turned_coarse_chunks +
+            near_frames * near_coarse_chunks;
         const auto expected_lod0_indices =
             expected_lod0_draw_calls *
             terrain::large_capacity_tile_chunk_index_count;
@@ -1873,7 +1956,8 @@ void log_platform_event(const shark::platform::Event& event)
         const auto expected_diagnostic_frames =
             diagnostic_smoke_frames;
         const auto expected_bounds_draw_calls =
-            expected_diagnostic_frames * initial_visible_chunks;
+            expected_diagnostic_frames *
+            initial_window_visible_chunks;
         const auto attempted_presents =
             stats.presented_frames + stats.occluded_frames;
         if (stats.frame_context_count != expected_context_count ||
@@ -1983,17 +2067,15 @@ void log_platform_event(const shark::platform::Event& event)
                 stats.terrain_draw_calls ||
             stats.terrain_bounds_draw_calls !=
                 expected_bounds_draw_calls ||
-            stats.terrain_visible_chunk_min >=
-                stats.terrain_chunk_count ||
-            stats.terrain_visible_chunk_max <=
-                stats.terrain_visible_chunk_min ||
-            stats.terrain_visible_chunk_max >
-                stats.terrain_chunk_count ||
-            stats.terrain_visible_chunk_last >
-                stats.terrain_chunk_count ||
-            stats.terrain_lod0_chunks_last != final_lod0_chunks ||
+            stats.terrain_visible_chunk_min !=
+                near_visible_chunks ||
+            stats.terrain_visible_chunk_max !=
+                initial_window_visible_chunks ||
+            stats.terrain_visible_chunk_last !=
+                near_visible_chunks ||
+            stats.terrain_lod0_chunks_last != near_lod0_chunks ||
             stats.terrain_coarse_chunks_last !=
-                final_coarse_chunks ||
+                near_coarse_chunks ||
             stats.terrain_lod0_chunks_last +
                     stats.terrain_coarse_chunks_last !=
                 stats.terrain_visible_chunk_last ||
@@ -2058,7 +2140,7 @@ void log_platform_event(const shark::platform::Event& event)
                 stats.frame_submissions ||
             stats.camera_constant_updates !=
                 stats.frame_submissions ||
-            stats.camera_matrix_changes < 3 ||
+            stats.camera_matrix_changes < 4 ||
             stats.skybox_matrix_changes < 3 ||
             stats.depth_clear_count != stats.frame_submissions ||
             stats.depth_resource_creations !=

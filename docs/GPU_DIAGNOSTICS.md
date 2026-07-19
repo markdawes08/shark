@@ -1,6 +1,6 @@
 # Direct3D 12 GPU Diagnostics Contract
 
-- **Completed through:** `T-005`
+- **Completed through:** `T-006`
 - **Last verified:** July 19, 2026
 
 Shark's GPU diagnostics use fixed-capacity PIX events and direct-queue
@@ -8,9 +8,9 @@ timestamps whose readback is delayed until the owning frame-context fence
 completes. T-004 retains the exact four-pass, 15-import, six-transition,
 31-elision, four-texture-bind, ten-timestamp frame contract while making
 terrain surface and bounds draw counts proportional to visible chunks. It adds
-no normal-frame queue drain. T-005 preserves those boundaries while exposing
-the selected LOD0/coarse draws and indices plus the measured maximum geometric
-error.
+no normal-frame queue drain. T-006 preserves those boundaries while scaling
+the terrain counters to 225 chunks, recording payload/resource budgets, and
+gating bounds/query draws behind the default-off `F4` diagnostic toggle.
 
 ## PIX marker contract
 
@@ -176,48 +176,57 @@ terrain_material_bindings == frame_submissions
 Scene and resource invariants include:
 
 ```text
-terrain_chunk_count == 16
-terrain_chunks_tested == frame_submissions * 16
+terrain_chunk_count == 225
+terrain_chunks_tested == frame_submissions * 225
 terrain_chunks_visible + terrain_chunks_culled
     == terrain_chunks_tested
 terrain_draw_calls == terrain_chunks_visible
 terrain_lod0_draw_calls + terrain_coarse_draw_calls
     == terrain_draw_calls
-terrain_bounds_draw_calls == terrain_chunks_visible
-terrain_lod0_indices == terrain_lod0_draw_calls * 384
-terrain_coarse_indices == terrain_coarse_draw_calls * 240
+terrain_lod0_indices == terrain_lod0_draw_calls * 1536
+terrain_coarse_indices == terrain_coarse_draw_calls * 864
 terrain_indices == terrain_lod0_indices + terrain_coarse_indices
-terrain_bounds_indices == terrain_chunks_visible * 24
 terrain_solid_draw_calls + terrain_wireframe_draw_calls
     == terrain_draw_calls
 terrain_shaded_draw_calls + terrain_material_weight_draw_calls
     + terrain_shading_normal_draw_calls == terrain_draw_calls
 
-terrain_visible_chunk_min == 5
-terrain_visible_chunk_max == 16
-terrain_visible_chunk_last == 5
-terrain_lod0_chunks_last == 3
-terrain_coarse_chunks_last == 2
+terrain_visible_chunk_min == 71
+terrain_visible_chunk_max == 93
+terrain_visible_chunk_last == 71
+terrain_lod0_chunks_last == 4
+terrain_coarse_chunks_last == 67
 
 material_sphere_draw_calls == frame_submissions
-terrain_query_marker_draw_calls == frame_submissions
-terrain_query_marker_indices == frame_submissions * 6
+terrain_bounds_draw_calls == 2790
+terrain_bounds_indices == 66960
+terrain_query_marker_draw_calls == 30
+terrain_query_marker_indices == 180
 cube_draw_calls == frame_submissions
 skybox_draw_calls == frame_submissions
 tone_map_draw_calls == frame_submissions
 
-terrain_vertex_count == 1089
-terrain_index_count == 9984
-terrain_lod0_index_count == 6144
-terrain_coarse_index_count == 3840
-terrain_maximum_geometric_error == 0.140625
-terrain_bounds_vertex_count == 128
-terrain_bounds_index_count == 384
+terrain_vertex_count == 58081
+terrain_index_count == 540000
+terrain_lod0_index_count == 345600
+terrain_coarse_index_count == 194400
+terrain_maximum_geometric_error == 0.5
+terrain_bounds_vertex_count == 1800
+terrain_bounds_index_count == 5400
 terrain_query_marker_vertex_count == 6
 terrain_query_marker_index_count == 6
 material_sphere_vertex_count == 266
 material_sphere_index_count == 1584
 material_sphere_indices == frame_submissions * 1584
+
+terrain_surface_vertex_payload_bytes == 1393944
+terrain_surface_index_payload_bytes == 1080000
+terrain_diagnostic_vertex_payload_bytes == 43344
+terrain_diagnostic_index_payload_bytes == 10812
+terrain_vertex_resource_bytes == 1443672
+terrain_index_resource_bytes == 1093980
+terrain_geometry_resource_bytes == 2537652
+terrain_geometry_committed_bytes == 2621440
 
 environment_texture_creations == 4
 environment_srv_creations == 4
@@ -232,42 +241,63 @@ hdr_scene_color_rtv_creations == resize_count + 1
 hdr_scene_color_srv_creations == resize_count + 1
 ```
 
-Each smoke starts with all 16 chunks visible at an `8/8` LOD0/coarse split and
-reaches five at a `3/2` split after its scripted `1.25`-radian yaw. The same
-counts are locked by focused frustum and LOD-selection tests. At the two poses,
-surface indices are 4,992 and 1,632; complete indexed scene counts are 7,038
-and 3,414. `terrain_draw_calls`, LOD/fill/material-view counters, and
-`terrain_bounds_draw_calls` count actual D3D12 draws, not one logical Terrain
-pass per frame. The one-per-pass identity therefore uses `pix_terrain_events`:
+Each smoke starts and resizes with 93 visible chunks at a `3/90` LOD0/coarse
+split and reaches 71 at `4/67` after its scripted `1.25`-radian yaw. The same
+counts are locked by focused frustum and LOD-selection tests. Surface index
+counts are 82,368 and 64,032 at those poses. `terrain_draw_calls` and
+LOD/fill/material-view counters count actual D3D12 draws, not one logical
+Terrain pass per frame. Bounds and the query marker are off by default; the
+smoke enables them for one 30-frame interval, producing 2,790 and 30 draws.
+The one-per-pass identity therefore uses `pix_terrain_events`:
 
 ```text
 pix_terrain_events + cube_draw_calls + skybox_draw_calls
     + tone_map_draw_calls == render_graph_pass_executions
 ```
 
-The normal 1,000-frame paths require:
+The Debug and Release 1,000-frame hardware paths require:
 
 ```text
-terrain_lod0_draw_calls == 6750
-terrain_coarse_draw_calls == 6500
-terrain_lod0_indices == 2592000
-terrain_coarse_indices == 1560000
-terrain_indices == 4152000
+terrain_chunks_tested/visible/culled == 225000/87500/137500
+terrain_lod0_draw_calls == 3250
+terrain_coarse_draw_calls == 84250
+terrain_lod0_indices == 4992000
+terrain_coarse_indices == 72792000
+terrain_indices == 77784000
 ```
 
-The focused 120-frame GPU-validation path requires:
+The Debug 600-frame WARP path requires:
 
 ```text
-terrain_lod0_draw_calls == 810
-terrain_coarse_draw_calls == 780
-terrain_lod0_indices == 311040
-terrain_coarse_indices == 187200
-terrain_indices == 498240
+terrain_chunks_tested/visible/culled == 135000/52500/82500
+terrain_lod0_draw_calls == 1950
+terrain_coarse_draw_calls == 50550
+terrain_lod0_indices == 2995200
+terrain_coarse_indices == 43675200
+terrain_indices == 46670400
+```
+
+The focused Debug 120-frame GPU-validation path requires:
+
+```text
+terrain_chunks_tested/visible/culled == 27000/10500/16500
+terrain_lod0_draw_calls == 390
+terrain_coarse_draw_calls == 10110
+terrain_lod0_indices == 599040
+terrain_coarse_indices == 8735040
+terrain_indices == 9334080
 ```
 
 The statistics field named `environment_source_bytes_uploaded` counts
 meaningful bytes of the four derived GPU uploads, not the CPU-only 32,768-byte
 latitude-longitude source. D3D12 row-pitch padding is excluded.
+
+The terrain byte fields distinguish meaningful surface and diagnostic payloads,
+logical committed-resource widths, and the allocator-reported committed size.
+The startup log separately measures the CPU boundary from capacity-fixture
+construction through chunk/LOD generation and query proof. The latest hardware
+runs measured 6,049.240 ms in Debug and 82.738 ms in Release; those values are
+evidence, not portable performance thresholds.
 
 Both environment modes must run at least once and sum to frame submissions:
 
@@ -305,10 +335,10 @@ without partial mutation, fixed-capacity allocation, fence retirement, and
 high-water accounting. Terrain-frustum tests separately lock Direct3D clip
 half-spaces, conservative tangent/intersection behavior,
 positive-scale-invariant extraction, ordinary and extreme-far reversed-Z
-ranges, invalid matrices, and the 16-to-five smoke poses. Terrain-LOD tests
+ranges, invalid matrices, and the 93-to-71 smoke poses. Terrain-LOD tests
 lock shortest 3D camera-to-closed-AABB distance, the inclusive
 `error <= 0.008 * distance` threshold, invalid-input rejection, and the
-`8/8 -> 3/2` LOD split. The production frame-pipeline test locks 15 imports,
+`3/90 -> 4/67` LOD split. The production frame-pipeline test locks 15 imports,
 four access sets, three dependencies, six transitions, 31 elisions, and exact
 callback order.
 
@@ -320,24 +350,24 @@ Run the runtime paths with:
 & .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe --present-smoke --warp --gpu-validation
 ```
 
-Hardware and normal WARP require 1,000 successful presents. Focused WARP GPU
-validation requires 120, with a 180-second application deadline and
-240-second CTest timeout.
+Hardware requires 1,000 successful presents, normal WARP requires 600, and
+focused WARP GPU validation requires 120.
 
 For manual PIX acceptance:
 
 1. Capture a hardware frame and confirm one `Frame` with sequential nested
    `Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` scopes.
-2. At the initial pose, confirm `Terrain` contains eight 384-index LOD0 draws,
-   eight 240-index coarse draws, one sphere, 16 matching 24-index bounds draws,
-   and one marker. At the scripted pose, confirm those surface draws become
-   three LOD0 and two coarse with five matching bounds. Cube and sky each
-   retain one indexed draw; `ToneMap` retains one fullscreen non-indexed draw.
+2. At the initial pose, confirm `Terrain` contains three 1,536-index LOD0 draws,
+   90 864-index coarse draws, and one sphere. Toggle `F4` and confirm 93 matching
+   24-index bounds draws plus one marker; they are absent when the toggle is
+   off. At the scripted pose, confirm four LOD0 and 67 coarse draws. Cube and
+   sky each retain one indexed draw; `ToneMap` retains one fullscreen
+   non-indexed draw.
 3. Confirm all six graph transitions occur inside `Frame` but outside the
    applicable pass intervals.
 4. Confirm material/environment resources remain in pixel-shader-read state.
 5. In a startup-inclusive capture, confirm one `StaticSceneUpload` containing
-   the packed 6,144-index LOD0 prefix, 3,840-index coarse suffix, 16 chunk
+   the packed 345,600-index LOD0 prefix, 194,400-index coarse suffix, 225 chunk
    bounds, environment copies, and 13 initialization barriers.
 6. Confirm the log reports `10/30`, one timing sample per retired frame, and
    finite frame plus four-pass aggregates.
@@ -345,13 +375,15 @@ For manual PIX acceptance:
 
 ## Explicit non-goals
 
-T-005 adds no live HUD, Dear ImGui, automated PIX capture, capture-file
+T-006 adds no live HUD, Dear ImGui, automated PIX capture, capture-file
 management, CPU profiler, pipeline-statistics or occlusion queries, static
 upload timing, dynamic pass profiler, query-heap growth, graph-wide automatic
 instrumentation, cross-queue clock calibration, stable-power-state control,
 multi-queue timing, or performance threshold.
 
 The diagnostics remain proportional to Shark's bounded San Andreas-class
-local-sandbox goal. `T-005` was completed on July 19, 2026. The next increment
-is `R-001`, seeded, bounded GPU rain driven by adjustable precipitation rate
-and wind.
+local-sandbox goal. `T-006` was completed on July 19, 2026 with a bounded
+`241x241`-sample capacity fixture, explicit memory/startup evidence, and clean
+hardware, WARP, and GPU-validation runs. The next increment is `T-007`: replace
+the shallow alternating capacity heights with fixed-seed, mostly flat natural
+rolling terrain; no lake is added yet.

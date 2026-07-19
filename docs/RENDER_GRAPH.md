@@ -1,11 +1,11 @@
 # Minimal Render-Graph Contract
 
-- **Completed through:** `T-005`
-- **Renderer integration verified through:** `T-005`
+- **Completed through:** `T-006`
+- **Renderer integration verified through:** `T-006`
 - **Last updated:** July 19, 2026
 
 Shark's render graph is a small platform-independent planner with a Direct3D
-12 legacy-barrier executor. T-005 keeps the existing frame-local,
+12 legacy-barrier executor. T-006 keeps the existing frame-local,
 whole-resource HDR composer introduced by S-003:
 `Terrain -> TexturedCube -> Skybox -> ToneMap`. It does not add graph-owned
 resources, subresource tracking, or multi-queue scheduling.
@@ -106,7 +106,7 @@ null native bindings fail even for an import whose transitions were elided.
 The renderer cross-checks compiled, executed, and recorded counts before
 submission.
 
-## T-005 frame graph
+## T-006 frame graph
 
 Every non-minimized frame imports:
 
@@ -164,20 +164,21 @@ uploads and per-frame diagnostic `CopyBufferRegion` remain outside the graph.
 
 The graph pass callbacks own commands, not graph policy:
 
-- `Terrain` clears scene/depth and issues one selected LOD0/coarse surface and
-  one magenta-bounds draw per visible chunk plus the material-sphere and
-  query-marker draws;
+- `Terrain` clears scene/depth and issues one selected LOD0/coarse surface per
+  visible chunk plus the material sphere; default-off `F4` diagnostics add one
+  magenta-bounds draw per visible chunk and the query marker;
 - `TexturedCube` issues one checker-cube indexed draw;
 - `Skybox` binds read-only depth and issues one far-depth indexed draw; and
 - `ToneMap` issues one non-indexed fullscreen-triangle draw.
 
-If `V` of the 16 chunks are visible, `Terrain` contains `2V + 2` indexed draws
-and the frame contains `2V + 4` indexed draws plus one tone-map draw. The
-initial and scripted smoke poses therefore contain 36 and 14 indexed draws.
-With LOD0/coarse splits of `8/8` and `3/2`, those poses submit 7,038 and 3,414
-indexed scene indices. These variable draws inside `Terrain` do not add passes
-or resources. CPU frustum extraction, AABB tests, distance measurement, and LOD
-selection occur before graph execution and likewise add no graph declaration.
+If `V` of the 225 chunks are visible, normal `Terrain` contains `V + 1`
+indexed draws and the frame contains `V + 3` indexed draws plus one tone-map
+draw. `F4` adds `V + 1` diagnostic draws without changing the graph. The
+initial/resized and scripted smoke poses expose 93 and 71 chunks; their
+`3/90` and `4/67` LOD0/coarse splits submit 82,368 and 64,032 terrain-surface
+indices. These variable draws inside `Terrain` do not add passes or resources.
+CPU frustum extraction, AABB tests, distance measurement, and LOD selection
+occur before graph execution and likewise add no graph declaration.
 
 ## Diagnostics and verification
 
@@ -197,7 +198,7 @@ pix_terrain_events + cube_draw_calls + skybox_draw_calls
 ```
 
 `terrain_draw_calls` counts actual visible chunk draws, each selecting its
-384-index LOD0 or 240-index coarse range, so it is deliberately not a
+1,536-index LOD0 or 864-index coarse range, so it is deliberately not a
 graph-pass proxy.
 
 The production composer test locks all 15 IDs, each pass's exact access set,
@@ -214,7 +215,7 @@ per frame context.
 
 ## Explicit non-goals
 
-T-005 adds no graph-owned/transient resource creation, placed-resource pool,
+T-006 adds no graph-owned/transient resource creation, placed-resource pool,
 lifetime/aliasing analysis, resource pooling, subresource tracking, UAV state,
 automatic RTV/DSV binding, render-pass load/store policy, pass
 culling/merging, parallel recording, queue preference, copy/compute queue,
@@ -226,6 +227,9 @@ keeps the implementation proportional to Shark's approved San Andreas-class
 scope while leaving later renderer infrastructure possible when a measured
 need appears.
 
-`T-005` was completed on July 19, 2026 without changing the exact
-`15/4/3/6/31` graph contract. The next increment is `R-001`, seeded, bounded
-GPU rain driven by adjustable precipitation rate and wind.
+`T-006` was completed on July 19, 2026 without changing the exact
+`15/4/3/6/31` graph contract. Debug and Release hardware and Debug WARP/
+GPU-validation runs retained four passes, three dependencies, six barriers,
+and 31 elisions per submitted frame with clean Direct3D validation. The next
+increment is `T-007`: replace the shallow alternating capacity heights with
+fixed-seed, mostly flat natural rolling terrain; no lake is added yet.

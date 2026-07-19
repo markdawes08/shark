@@ -185,6 +185,16 @@ struct CellCoordinate final {
         static_cast<float>(basin) / 64.0F;
 }
 
+[[nodiscard]] constexpr float large_capacity_height_offset(
+    const std::uint32_t x,
+    const std::uint32_t z) noexcept
+{
+    // This intentionally visible but shallow checker is a capacity probe, not
+    // natural terrain. Every value is exactly representable, and omitted
+    // 2x2-patch midpoints give the coarse LOD a fixed 0.5-meter error.
+    return ((x + z) & 1U) == 0U ? 0.25F : -0.25F;
+}
+
 [[nodiscard]] constexpr math::Float3 subtract(
     const math::Float3 left,
     const math::Float3 right) noexcept
@@ -906,6 +916,28 @@ HeightTile make_deterministic_height_tile()
              ++x) {
             tile.height_offsets.push_back(
                 deterministic_height_offset(x, z));
+        }
+    }
+    return tile;
+}
+
+HeightTile make_large_capacity_height_tile()
+{
+    HeightTile tile{
+        .sample_columns = large_capacity_tile_sample_columns,
+        .sample_rows = large_capacity_tile_sample_rows,
+        .sample_spacing = large_capacity_tile_sample_spacing,
+        .origin = large_capacity_tile_origin,
+    };
+    tile.height_offsets.reserve(large_capacity_tile_vertex_count);
+    for (std::uint32_t z = 0;
+         z < large_capacity_tile_sample_rows;
+         ++z) {
+        for (std::uint32_t x = 0;
+             x < large_capacity_tile_sample_columns;
+             ++x) {
+            tile.height_offsets.push_back(
+                large_capacity_height_offset(x, z));
         }
     }
     return tile;

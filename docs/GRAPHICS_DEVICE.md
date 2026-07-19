@@ -1,6 +1,6 @@
 # Direct3D 12 Device Contract
 
-- **Completed through:** `T-005`
+- **Completed through:** `T-006`
 - **Last verified:** July 19, 2026
 
 G-001 establishes adapter discovery, diagnostics, capability reporting, and
@@ -195,14 +195,16 @@ The presentation smoke additionally verifies all three frame contexts are
 reused, every submission compiles and executes exactly four graph passes with
 15 imports, three dependencies, six emitted barriers, and 31 elided
 transitions plus four texture-table bindings, and every submission retires
-during explicit shutdown before frame resources are released. S-003 retains
-four geometry buffers. T-004 retains that resource count while issuing
-`2V + 4` indexed draws for `V` visible chunks plus one fullscreen tone-map draw
-and ten timestamps per frame. T-005 retains the same resource/draw count while
-each visible surface selects a 384-index LOD0 or 240-index coarse range. The
-smoke poses prove `V=16` and `V=5`, with LOD0/coarse splits of `8/8` and `3/2`.
+during explicit shutdown before frame resources are released. T-006 retains
+four geometry buffers and ten timestamps per frame while scaling the active
+terrain to 225 chunks. Each visible surface selects a 1,536-index LOD0 or
+864-index coarse range; default frames omit bounds/query diagnostics, while
+`F4` adds them without another resource. The smoke poses prove `V=93` and
+`V=71`, with LOD0/coarse splits of `3/90` and `4/67`.
 
-Renderer shutdown explicitly drains and releases its command list, all scene
+The packed terrain buffer widths are 1,443,672 vertex bytes and 1,093,980 index
+bytes; D3D12 reports 2,621,440 committed bytes for the two resources. Renderer
+shutdown explicitly drains and releases its command list, all scene
 and tone-map PSOs/root signatures, descriptor heap, checker/cubemap/material/
 environment textures, HDR scene target, cube/terrain vertex/index buffers,
 depth texture/DSVs, swap-chain resources, and frame contexts before
@@ -222,7 +224,10 @@ rendering modes, and
 [the skybox contract](SKYBOX.md) for the S-003 HDR environment, analytic sun,
 and procedural fallback. T-002 adds no device capability or lifetime policy;
 REN-001, T-003, and S-003 likewise change no device capability or selection
-policy. T-005 was completed on July 19, 2026 without changing adapter,
-capability, debug-layer, device, or lifetime policy. The next increment is
-`R-001`, seeded, bounded GPU rain driven by adjustable precipitation rate and
-wind.
+policy. T-006 was completed on July 19, 2026 without changing adapter,
+capability, debug-layer, device, or lifetime policy. Debug and Release hardware
+smokes each completed 1,000 frames with zero Direct3D errors and zero live child
+objects; Debug WARP and focused GPU-validation paths were likewise clean. The
+next increment is `T-007`: replace the bounded fixture's shallow alternating
+heights with fixed-seed, mostly flat natural rolling terrain; no lake is added
+yet.

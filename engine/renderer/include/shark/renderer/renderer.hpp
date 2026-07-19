@@ -216,6 +216,7 @@ struct RenderFrameData final {
         TerrainMaterialView::shaded};
     EnvironmentLightingMode environment_lighting_mode{
         EnvironmentLightingMode::image_based};
+    bool terrain_diagnostics_enabled{false};
 };
 
 enum class RenderStatus : std::uint8_t {
@@ -337,6 +338,14 @@ struct RendererStats final {
     std::uint64_t terrain_material_bindings{};
     std::uint64_t static_upload_submissions{};
     std::uint64_t geometry_buffer_creations{};
+    std::uint64_t terrain_surface_vertex_payload_bytes{};
+    std::uint64_t terrain_surface_index_payload_bytes{};
+    std::uint64_t terrain_diagnostic_vertex_payload_bytes{};
+    std::uint64_t terrain_diagnostic_index_payload_bytes{};
+    std::uint64_t terrain_vertex_resource_bytes{};
+    std::uint64_t terrain_index_resource_bytes{};
+    std::uint64_t terrain_geometry_resource_bytes{};
+    std::uint64_t terrain_geometry_committed_bytes{};
     std::uint64_t checker_texture_creations{};
     std::uint64_t cubemap_texture_creations{};
     std::uint64_t texture_srv_creations{};

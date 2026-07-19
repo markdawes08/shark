@@ -3,27 +3,34 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 19, 2026
-- **Latest completed:** `T-005` - bounded terrain LOD
-- **Next increment:** `R-001` - wind-driven GPU rain
+- **Latest completed:** `T-006` - bounded large-terrain capacity
+- **Next increment:** `T-007` - natural rolling landscape
 
 ## 1. Project direction
 
 Shark will be a Windows-first 3D graphics and physics simulation engine built
 directly on modern Direct3D 12. It will not become a general-purpose or
 RAGE-scale engine. The near-term product is an **Environment Lab**: a small
-executable in which we can fly a camera through a sky, inspect textured terrain,
-turn rain on and off, collide objects with the terrain, and evolve visually
-convincing water into a physically meaningful surface-water simulation.
+executable in which we can fly a camera through a sky, explore a large natural
+terrain region, begin beside a dry lake basin, add visually convincing water,
+collide objects with the terrain, and evolve that water into a physically
+meaningful surface-water simulation.
 
 The first vertical slice, **Environment Lab 0.1**, will contain:
 
 - a controllable free-fly camera;
 - a basic procedural daylight fallback plus deterministic HDR
   image-based lighting;
-- heightmapped terrain with physically based textures;
-- bounded, wind-driven GPU rain with splashes and visual wetness;
-- a visually convincing water surface;
+- one bounded, resident, mostly flat natural heightfield with physically based
+  textures;
+- a deterministic dry spawn overlooking a closed lake-like basin;
+- a visually convincing static lake surface;
 - diagnostics output with frame and GPU timings.
+
+The previously planned visual-rain track (`R-001` through `R-004`) remains
+approved but is deliberately deferred. It does not block the terrain, visual
+lake, physics, or fluid sequence. Later physical precipitation is driven by
+measured `WeatherState` rates and never depends on visual particle count.
 
 The next slice, **Simulation Lab 0.2**, will add:
 
@@ -76,8 +83,10 @@ game-specific technology and content pipelines over middleware. Shark will not
 seek RenderWare, Rockstar, or *Grand Theft Auto* source, asset, binary, plug-in,
 save, map, or mod compatibility.
 
-The current goalpost is unchanged. Every milestone through M7, including the
-bounded shallow-water and coupling work, remains approved. Those systems may be
+The current goalpost is unchanged, although the active order now places a
+larger resident terrain and visual lake ahead of physics while visual rain is
+deferred. Every milestone through M7, including the bounded shallow-water and
+coupling work, remains approved. Those systems may be
 more physically honest internally than their historical visual counterparts,
 and the M6-M7 fluid depth is an explicitly retained Shark specialization even
 where it exceeds the shipped game's simulation depth. It stays bounded to the
@@ -320,6 +329,19 @@ variants. Exact continuous vertical deviation is bounded at `0.140625` meters
 for the fixture, and a stateless relative-error proxy selects coarse only when
 `error <= 0.008 * camera_distance_to_closed_AABB`.
 
+T-006 scales this design without introducing streaming. It adds a separate
+bounded resident capacity fixture with `241x241` samples at four-meter spacing:
+a `960x960`-meter region containing 58,081 shared vertices and 225
+`16x16`-cell render chunks. Its 345,600 LOD0 indices and 194,400 coarse indices
+stay inside the global `R16_UINT` vertex-index domain. The surface payload is
+2,473,944 bytes (2.359 MiB); the complete packed terrain resources are
+2,537,652 logical bytes and require 2,621,440 bytes of committed D3D12
+allocation. The current `33x33` fixture remains the permanent compact analytic
+regression oracle. T-007 replaces the capacity fixture's deliberately simple
+heights with bounded deterministic natural shaping, and T-008 adds
+scenario-owned spawn and lake-basin metadata plus the dry terrain indentation.
+Only W-001 adds water pixels.
+
 ### Non-negotiable ownership rules
 
 1. Full-resolution `HeightTileSurface` data is the single source of truth for
@@ -533,8 +555,23 @@ across resources or frames.
    T-005 completes the bounded first step with one coarse level, identical
    equal/mixed boundary segments, exact continuous vertical-error measurement,
    and stateless distance selection.
-6. Add streaming, virtual texturing, or mesh-shader meshlets only when scene size
-   makes them necessary.
+6. Prove larger resident capacity without changing canonical ownership or
+   index architecture. T-006 completes this with one separate
+   `241x241`-sample, four-meter-spacing capacity region, the retained compact
+   fixture for tests, a 1,500-meter far plane, scaled navigation, measured
+   geometry/startup budgets, and `F4` chunk/query diagnostics that are off by
+   default.
+7. Shape that region with deterministic project-owned, multi-scale rolling
+   terrain. T-007 will keep the land mostly flat through documented relief and
+   slope limits while avoiding periodic seams, spikes, external assets, and
+   unbounded procedural work.
+8. Add a deterministic dry spawn and closed lake-like indentation near it.
+   T-008 will publish the future waterline and footprint as scenario metadata,
+   prove the basin is closed below that waterline, and stop before rendering or
+   simulating water.
+9. Add streaming, virtual texturing, render sections, wider indices, or
+   mesh-shader meshlets only when measured scale or fidelity exceeds the
+   bounded resident `R16_UINT` contract.
 
 ### Weather and rain
 
@@ -542,6 +579,8 @@ across resources or frames.
 values into a bounded camera-relative GPU particle field, streaks, impacts,
 splashes, and a non-conserving wetness mask (**V**). Later, hydrology converts
 the same precipitation rate into a measured source term for water cells (**C**).
+The visual particle/splash/wetness work is currently deferred; the numerical
+weather boundary remains available to later hydrology independently.
 
 ### Rigid-body physics
 
@@ -557,7 +596,9 @@ render frame rate changes.
 
 ### Water and fluids
 
-The first water is explicitly visual: Fresnel response, depth tint/absorption,
+The first water is explicitly visual and begins only after T-008 defines the
+dry basin, spawn, footprint, and future waterline. W-001 adds a bounded static
+lake surface with Fresnel response, depth tint/absorption,
 refraction/reflection approximation, and animated normals (**V**). It is not
 called a fluid simulation.
 
@@ -704,18 +745,22 @@ the debug layer and readable in a PIX capture.
 renderer and CPU queries agree exactly at LOD0 and whose bounded coarse
 presentation stays within the documented continuous vertical-error limit.
 
-### M4 - Storm and visual water
+### M4 - Large natural terrain and visual lake
 
 | ID | Level | Increment and acceptance gate | Suggested commit |
 |---|---:|---|---|
-| `R-001` | V | Add seeded, bounded GPU rain driven by adjustable rate and wind; terrain impacts are correct and particle capacity is fixed | `feat(weather): render wind-driven rain` |
-| `R-002` | V | Turn terrain impacts into bounded splash/ripple events with repeatable placement and lifetime | `feat(weather): add rain impact splashes` |
-| `R-003` | V | Add a non-conserving visual wetness mask with explicit accumulation and drying controls | `feat(weather): add visual terrain wetness` |
-| `R-004` | V | Add rain density/overdraw controls and record GPU timing at low/medium/high quality | `perf(weather): add scalable rain quality` |
-| `W-001` | V | Render static water with Fresnel, depth tint/absorption, reflection/refraction approximation, and normal waves | `feat(water): render a visual water surface` |
+| `T-006` | V | Complete: add a separate bounded resident capacity region with `241x241` samples at four-meter spacing (`960x960` meters), 225 `16x16`-cell chunks, 58,081 shared vertices, 345,600 LOD0 indices, and 194,400 boundary-preserving coarse indices; retain the compact fixture as the regression oracle, stay on global `R16_UINT`, scale the camera/smoke contract, and verify a 2,473,944-byte surface payload, 2,621,440-byte committed D3D12 allocation, and 6,049.240/82.738-ms Debug/Release CPU build | `feat(terrain): add bounded large terrain region` |
+| `T-007` | V | Replace the capacity region's simple heights with fixed-seed, project-owned multi-scale rolling terrain; lock sample anchors/checksum, finite bounds, and visual captures, keep at least 90% of triangles at or below 12 degrees, keep every triangle at or below 30 degrees, bound total relief to 40 meters, and add no lake, erosion, vegetation, roads, or external height asset | `feat(terrain): generate natural rolling landscape` |
+| `T-008` | V | Add a scenario-owned dry spawn overlooking a nearby smoothly irregular 80-120-meter lake indentation; publish its footprint and future waterline, place the basin core at least six meters below that level and its complete flood-fill rim at least one meter above it, keep spawn at least two meters above and 20 meters outside the shoreline with validation props dry, and render no water | `feat(terrain): add spawn-side lake basin` |
+| `W-001` | V | Render a bounded static surface at the T-008 lake waterline with Fresnel response, depth tint/absorption, reflection/refraction approximation, and animated normal waves; change no terrain height and claim no fluid simulation | `feat(water): render a visual lake surface` |
 
-**M4 exit / Environment Lab 0.1:** sky, textured terrain, rain, wetness, and
-visual water run together with measured frame/pass timings.
+**M4 exit / Environment Lab 0.1:** the camera starts on dry natural terrain
+overlooking a visually convincing static lake inside a bounded `960x960`-meter
+resident region. Canonical queries, culling, LOD seams, resource budgets, and
+frame/pass timings remain measured and clean.
+
+The deferred visual-weather track is listed in Section 12 and does not block
+M5.
 
 ### M5 - First physics
 
@@ -757,8 +802,10 @@ terrain while a tested shallow-water state drives the displayed water surface.
 | `C-005` | C | Represent static body occupancy as effective moving-bed/free-volume data without deleting water; visualize excluded volume and boundaries | `feat(fluids): add conservative body occupancy` |
 | `C-006` | C | Add moving no-penetration boundary fluxes and conservative redistribution; the staggered floating-block case stays stable within mass tolerance | `feat(fluids): couple moving body displacement` |
 
-**M7 exit:** the permanent integration scenario is "rain fills a terrain bowl and
-a block floats in it," with conservation, stability, and performance metrics.
+**M7 exit:** the permanent integration scenario is "measured precipitation
+fills a terrain bowl and a block floats in it," with conservation, stability,
+and performance metrics. Visual rain particles are not required for this
+physical source term.
 
 ## 11. Verification strategy
 
@@ -768,7 +815,7 @@ a block floats in it," with conservation, stability, and performance metrics.
 | D3D12 | Debug layer clean, focused GPU validation, DRED path, WARP smoke, named PIX passes |
 | Camera/cube | Basis and near/far math, elapsed-time input, aspect-changing resize, 24/36 geometry bounds, one static upload, one indexed draw/camera upload/depth clear per submission |
 | Sky/assets | Cubemap orientation, translation invariance, sRGB/linear correctness, missing-asset error |
-| Terrain | Flat/ramp samples, ray hits, normals, cell/chunk boundary equality, LOD seam captures |
+| Terrain | Flat/ramp samples, ray hits, normals, cell/chunk boundary equality, LOD seam captures, resident-region index/memory budgets, deterministic natural-height metrics, and closed-basin/spawn assertions |
 | Rain | Seed repeatability, capacity bounds, emission statistics, impact height, GPU timing |
 | Physics | Gravity trajectory, resting contact, slope friction, restitution, stack stability, NaN scan |
 | Fluids | Lake at rest, dam break, walls, wet/dry front, non-negative depth, mass accounting, CPU/GPU tolerance |
@@ -782,6 +829,20 @@ fixed seeds and record their configuration so failures can be replayed.
 
 The San Andreas-class ceiling is a maximum envelope, not a backlog. Nothing in
 this section competes with the coupled-environment critical path through M7.
+
+### Deferred visual-weather track
+
+The owner deferred these effects on July 19, 2026. They remain approved but
+have no position on the active `T-006 -> T-007 -> T-008 -> W-001 -> PHY-001`
+path. Resuming one requires a small plan update; skipping them does not remove
+the numerical precipitation rate used by later hydrology.
+
+| ID | Level | Deferred increment and acceptance gate | Suggested commit |
+|---|---:|---|---|
+| `R-001` | V | Add seeded, bounded GPU rain driven by adjustable rate and wind; terrain impacts are correct and particle capacity is fixed | `feat(weather): render wind-driven rain` |
+| `R-002` | V | Turn terrain impacts into bounded splash/ripple events with repeatable placement and lifetime | `feat(weather): add rain impact splashes` |
+| `R-003` | V | Add a non-conserving visual wetness mask with explicit accumulation and drying controls | `feat(weather): add visual terrain wetness` |
+| `R-004` | V | Add rain density/overdraw controls and record GPU timing at low/medium/high quality | `perf(weather): add scalable rain quality` |
 
 ### Admission rule for future proposals
 
@@ -865,6 +926,7 @@ online architecture is not implied.
 | Preview API churn | Pin retail Agility/DXC on `main`; experiments stay isolated |
 | Hardware differences | Startup capability report, explicit adapter choice, WARP smoke, multi-vendor tolerance tests |
 | Render/collision mismatch | One canonical `HeightTileSurface` source and identical fixed-triangle interpolation rules |
+| Resident-terrain growth | T-006 holds 58,081 shared vertices and 225 chunks on global `R16_UINT`; its measured 2,473,944-byte surface payload stays below 2.5 MiB and its two packed committed D3D12 buffers total 2,621,440 bytes; require evidence before wider indices, render sections, or streaming |
 | Custom physics robustness | Restrict shapes/features, build analytic tests, and keep a replaceable backend boundary |
 | Fluid instability or lost water | Conservative scheme, CFL substeps, positivity checks, lake-at-rest and mass accounting tests |
 | CPU/GPU stalls | GPU-owned fluid state, immutable snapshots, delayed/coarse queries, no full per-frame readback |
@@ -874,31 +936,38 @@ online architecture is not implied.
 
 ## 14. Immediate next increment
 
-The San Andreas-class scope amendment does not change the current goalpost.
-After `T-005` is reviewed and committed by the owner, implement only `R-001`:
+After T-006 is reviewed and committed by the owner, implement only `T-007`:
 
-- add a seeded, bounded GPU rain-particle field driven by adjustable
-  precipitation rate and wind;
-- keep particle capacity fixed and expose deterministic emission/lifetime
-  accounting;
-- place terrain impacts consistently against the canonical terrain surface;
-- preserve the sky, HDR/IBL, terrain LOD, graph, frame-resource, and canonical
-  query contracts; and
-- stop before splash/ripple events, wetness accumulation, rain-to-water volume
-  coupling, volumetric clouds, lightning, or generalized weather simulation.
+- replace only the active capacity fixture's alternating diagnostic heights
+  with a fixed-seed, project-owned multi-scale rolling-height generator;
+- preserve the `241x241` samples, four-meter spacing, `960x960`-meter
+  footprint, 225 `16x16`-cell chunks, global `R16_UINT` indices, canonical
+  query ownership, coarse-LOD construction, renderer resources, and camera
+  scale proven by T-006;
+- make the landscape natural and mostly flat: at least 90 percent of triangles
+  must be at or below 12 degrees, every triangle must be at or below 30
+  degrees, and total relief must not exceed 40 meters;
+- eliminate obvious periodic seams, spikes, and abrupt boundary artifacts, and
+  lock determinism with selected sample anchors plus a whole-heightfield
+  checksum;
+- add numeric terrain-shape tests and reproducible comparison captures while
+  keeping the existing capacity, culling, LOD, memory, hardware, WARP, and GPU
+  validation gates clean; and
+- stop before the lake indentation or spawn scenario, water rendering, rain,
+  erosion, vegetation, roads, external height assets, streaming, wider
+  indices, physics, or fluid state.
 
-`T-005` completed the bounded terrain-LOD path on July 19, 2026. The existing
-16 chunks retain their exact 384-index LOD0 ranges and gain one 240-index
-boundary-preserving coarse range over the unchanged 1,089 vertices. Complete
-chunk edges retain all nine canonical samples and eight segments, keeping
-equal and mixed LOD neighbors crack-free without skirts or variants. The exact
-fixture-wide continuous vertical-error bound is `0.140625` meters. Stateless
-selection uses the inclusive `error <= 0.008 * camera_distance_to_closed_AABB`
-rule. Graph topology, resource count, shaders, PSOs, HDR lighting, frustum
-culling, and canonical query answers remain unchanged.
+`T-006` completed the bounded resident-capacity proof on July 19, 2026. The
+active diagnostic region has 58,081 shared vertices, 225 chunks, 540,000
+surface indices, and a 0.5-meter maximum coarse error. The 1,000-frame hardware,
+600-frame packaged-WARP, and 120-frame GPU-validation paths exercised both
+LODs and ended with zero D3D12 errors and zero live child objects. The graph,
+shader, PSO, HDR-lighting, canonical-query, and crack-free boundary contracts
+remain unchanged.
 
-`R-001` is next with bounded visual rain. It remains a modern Direct3D 12
-implementation inside the San Andreas-class feature ceiling.
+The active queue after T-007 is `T-008` dry spawn and lake-basin shaping,
+`W-001` visual lake water, then `PHY-001` fixed-step physics. `R-001` through
+`R-004` remain deferred.
 
 ## 15. Primary technical references
 

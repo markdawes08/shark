@@ -1,6 +1,6 @@
 # Camera, Reversed-Z Depth, Cube, and Skybox Contract
 
-- **Completed through:** `T-005`
+- **Completed through:** `T-006`
 - **Last verified:** July 19, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
@@ -92,6 +92,7 @@ interprets the existing platform event records:
 | `Q` or `Control` / `E` or `Space` | Move down / up along world `Y` |
 | Hold `Shift` | Increase translation speed while held |
 | Hold right mouse and drag | Change yaw and pitch |
+| `F4` | Toggle terrain chunk bounds and query-marker diagnostics |
 
 Mouse coordinates remain absolute client coordinates at the platform boundary.
 The right-button press coordinates establish the drag baseline, so movement
@@ -101,10 +102,12 @@ clamped below vertical to preserve a finite orthonormal basis. Key-repeat
 records do not multiply a held action, and releasing a key or right mouse
 button ends that action.
 
-The defaults are `4 m/s`, a `4x` Shift multiplier, and `0.0025` radians per
-mouse pixel. Movement is scaled by elapsed render time and clamps one update to
-at most `0.1 s`, preventing a long minimize or debugger stall from producing a
-large camera jump. `WindowFocusChangedEvent` drives the controller's focus hook;
+T-006 scales the default translation speed to `32 m/s` with the existing `4x`
+Shift multiplier; mouse sensitivity remains `0.0025` radians per pixel.
+Movement is scaled by elapsed render time and clamps one update to at most
+`0.1 s`, preventing a long minimize or debugger stall from producing a large
+camera jump. `F4` diagnostics are off at startup. `WindowFocusChangedEvent`
+drives the controller's focus hook;
 focus loss, minimize, close request, and final close clear held input. This is
 an interactive camera proof, not the fixed 60 Hz simulation clock planned for
 physics. The controller owns only the documented bindings; the platform layer
@@ -217,27 +220,27 @@ draw or clear. A restore carrying the existing extent is a no-op.
 
 ## Automated and manual acceptance
 
-The fixed presentation smoke requires exactly 1,000 successful presents on
-automatic hardware and normal packaged WARP. The focused packaged-WARP path
-with GPU-based validation requires 120 successful presents, a 180-second
-internal deadline, and a 240-second CTest timeout. Each run changes from
+The fixed presentation smoke requires 1,000 successful presents on automatic
+hardware, 600 on normal packaged WARP, and 120 on the focused packaged-WARP path
+with GPU-based validation. Each run changes from
 `1280x720` to `960x600` at its quarter checkpoint, intentionally changes the
 aspect ratio, and applies `1.25` radians of scripted yaw at three quarters.
-That camera sequence exposes 16 terrain chunks before the turn and five after
-it, with LOD0/coarse splits of `8/8` and `3/2`. Only the normal 1,000-frame
-paths minimize/restore at halfway; focused validation intentionally skips that
+The camera starts at `(0, 28, 112)` with pitch `-0.25` radians and a 1,500-meter
+far plane. Initial and resized views expose 93 terrain chunks at a `3/90`
+LOD0/coarse split; the turned view exposes 71 at `4/67`. Hardware and normal
+WARP minimize/restore at halfway; focused validation intentionally skips that
 already-covered interval.
 
 The permanent accounting contract requires:
 
 - with `V0` visible LOD0 chunks and `Vc` visible coarse chunks, `V0`
-  384-index and `Vc` 240-index terrain draws, one 1,584-index material sphere,
-  `V0+Vc` 24-index magenta chunk-bounds draws, one six-index cyan query marker,
-  one 36-index cube, and one 36-index skybox; plus one fullscreen tone-map
-  draw, four texture-table bindings, one frame-constant upload, and one depth
-  clear;
-- 16 chunk tests per submitted frame, visible-plus-culled conservation, exact
-  `16 -> 5` visibility, and exact `8/8 -> 3/2` LOD0/coarse splits across the
+  1,536-index and `Vc` 864-index terrain draws, one 1,584-index material sphere,
+  one 36-index cube, and one 36-index skybox; `F4` optionally adds
+  `V0+Vc` 24-index magenta chunk-bounds draws and one six-index cyan query
+  marker; plus one fullscreen tone-map draw, four texture-table bindings, one
+  frame-constant upload, and one depth clear;
+- 225 chunk tests per submitted frame, visible-plus-culled conservation, exact
+  `93 -> 71` visibility, and exact `3/90 -> 4/67` LOD0/coarse splits across the
   deterministic smoke poses;
 - one graph compilation/execution, four pass executions, 15 imports, three
   dependencies, six recorded transitions, and 31 elided transitions per frame;
@@ -250,12 +253,11 @@ The permanent accounting contract requires:
   submission completes through its bounded fence wait before the first frame;
 - depth-resource and read-only DSV-view creations each equal
   `resize_count + 1`;
-- the normal paths prove no query-marker or other draw, texture bind,
+- minimized intervals prove no query-marker or other draw, texture bind,
   frame-constant upload, graph work, or depth clear occurs while minimized;
 - scene and sky matrix-change counts are each at least three, covering the
   initial matrix, aspect-changing resize, and scripted yaw at the
-  three-quarter checkpoint (frame 750 normally or frame 90 under focused
-  GPU validation);
+  three-quarter checkpoint;
 - upload accounting requires `upload_allocations == frame_submissions`,
   256 bytes written per allocation, and `upload_high_water_bytes == 256`;
 - descriptor accounting requires one allocation per submitted frame and
@@ -268,9 +270,11 @@ The permanent accounting contract requires:
 The smoke does not read back or compare pixels. Manual acceptance requires a
 clearly textured cube, a continuous HDR environment with coherent terrain and
 sphere response, clean `F3` fallback switching, unchanged sky direction under
-translation, correct near/far occlusion, a cyan terrain pin anchored to the
-displayed surface and pointing along its exact geometric normal, perspective
-that does not stretch after resize, and clean minimize/restore and shutdown.
+translation, correct near/far occlusion, and perspective that does not stretch
+after resize. Press `F4` and verify the magenta bounds and cyan terrain pin
+appear, with the pin anchored to the displayed surface and pointing along its
+exact geometric normal; press it again and verify both disappear. Resize,
+minimize/restore, and shutdown must remain clean.
 No cube face, edge, or corner may appear as a painted wall. See
 [the sky procedure](SKYBOX.md#manual-acceptance).
 
@@ -293,11 +297,11 @@ file-backed HDR conversion, arbitrary material graph/system, shadow map,
 atmospheric scattering, cloud, automatic exposure, time of day, terrain
 streaming, additional LOD levels, or content database.
 
-The query marker, CPU chunk culling, and stateless LOD choice add no camera
-state, control, matrix, GPU resource, PSO, graph pass, dependency, barrier, PIX
-event, or timestamp. T-005 retains 15 imports, four passes, three dependencies,
-six barriers, 31 elisions, four geometry buffers, and ten timestamps as the
-current exact contract.
+The query marker, CPU chunk culling, stateless LOD choice, and F4 diagnostic
+gate add no camera matrix, GPU resource, PSO, graph pass, dependency, barrier,
+PIX event, or timestamp. T-006 retains 15 imports, four passes, three
+dependencies, six barriers, 31 elisions, four geometry buffers, and ten
+timestamps as the current exact contract.
 
 It also adds no general mesh/resource/descriptor manager, typed GPU handles,
 placed-resource pool, copy queue, deferred uploader, shader reflection, runtime
@@ -315,6 +319,9 @@ with ordered `Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` passes. See
 fallback rules.
 See [the terrain contract](TERRAIN.md) for its separate geometry, chunk
 culling, bounded LOD, and canonical query/material/diagnostic rendering
-contract. `T-005` was completed on July 19, 2026 without changing the camera,
-cube, or canonical queries. The next increment is `R-001`, seeded, bounded GPU
-rain driven by adjustable precipitation rate and wind.
+contract. `T-006` was completed on July 19, 2026 with a scaled camera start,
+1,500-meter far plane, and 32 m/s navigation for the bounded `960x960`-meter
+fixture; cube, sky motion, depth, and canonical query conventions remain
+unchanged. The next increment is `T-007`: replace the shallow alternating
+capacity heights with fixed-seed, mostly flat natural rolling terrain; no lake
+is added yet.

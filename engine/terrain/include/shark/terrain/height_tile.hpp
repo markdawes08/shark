@@ -256,6 +256,69 @@ inline constexpr Bounds3 deterministic_tile_expected_bounds{
 // transcendental functions, external content, or platform APIs are involved.
 [[nodiscard]] HeightTile make_deterministic_height_tile();
 
+inline constexpr std::uint32_t large_capacity_tile_sample_columns = 241;
+inline constexpr std::uint32_t large_capacity_tile_sample_rows = 241;
+inline constexpr float large_capacity_tile_sample_spacing = 4.0F;
+inline constexpr math::Float3 large_capacity_tile_origin{
+    -480.0F,
+    -2.0F,
+    -480.0F,
+};
+inline constexpr std::size_t large_capacity_tile_vertex_count =
+    static_cast<std::size_t>(large_capacity_tile_sample_columns) *
+    static_cast<std::size_t>(large_capacity_tile_sample_rows);
+inline constexpr std::size_t large_capacity_tile_triangle_count =
+    static_cast<std::size_t>(
+        large_capacity_tile_sample_columns - 1U) *
+    static_cast<std::size_t>(
+        large_capacity_tile_sample_rows - 1U) *
+    2U;
+inline constexpr std::size_t large_capacity_tile_index_count =
+    large_capacity_tile_triangle_count * 3U;
+inline constexpr std::uint32_t
+    large_capacity_tile_chunk_cell_columns = 16;
+inline constexpr std::uint32_t
+    large_capacity_tile_chunk_cell_rows = 16;
+inline constexpr std::uint32_t large_capacity_tile_chunk_columns = 15;
+inline constexpr std::uint32_t large_capacity_tile_chunk_rows = 15;
+inline constexpr std::size_t large_capacity_tile_chunk_count =
+    static_cast<std::size_t>(large_capacity_tile_chunk_columns) *
+    large_capacity_tile_chunk_rows;
+inline constexpr std::size_t
+    large_capacity_tile_chunk_index_count =
+        static_cast<std::size_t>(
+            large_capacity_tile_chunk_cell_columns) *
+        large_capacity_tile_chunk_cell_rows * 6U;
+static_assert(
+    large_capacity_tile_chunk_count *
+        large_capacity_tile_chunk_index_count ==
+    large_capacity_tile_index_count);
+inline constexpr std::size_t
+    large_capacity_tile_coarse_chunk_index_count = 864;
+inline constexpr std::size_t large_capacity_tile_coarse_index_count =
+    large_capacity_tile_chunk_count *
+    large_capacity_tile_coarse_chunk_index_count;
+inline constexpr std::size_t large_capacity_tile_surface_index_count =
+    large_capacity_tile_index_count +
+    large_capacity_tile_coarse_index_count;
+inline constexpr double
+    large_capacity_tile_coarse_maximum_geometric_error = 0.5;
+inline constexpr Bounds3 large_capacity_tile_expected_bounds{
+    {-480.0F, -2.25F, -480.0F},
+    {480.0F, -1.75F, 480.0F},
+};
+static_assert(large_capacity_tile_vertex_count == 58'081);
+static_assert(large_capacity_tile_vertex_count <= 65'536);
+static_assert(large_capacity_tile_chunk_count == 225);
+static_assert(large_capacity_tile_index_count == 345'600);
+static_assert(large_capacity_tile_coarse_index_count == 194'400);
+static_assert(large_capacity_tile_surface_index_count == 540'000);
+
+// Returns T-006's bounded resident capacity fixture. Its shallow alternating
+// offsets deliberately exercise coarse-LOD error accounting without claiming
+// to be the final natural landscape introduced by T-007.
+[[nodiscard]] HeightTile make_large_capacity_height_tile();
+
 // Builds the exact LOD0 render surface. Every cell uses the diagonal from v00
 // to v11 and the +Y winding (v00, v01, v11), (v00, v11, v10), where v10 is
 // the next +X sample and v01 is the next +Z sample.

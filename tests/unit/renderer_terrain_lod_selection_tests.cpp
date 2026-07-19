@@ -165,20 +165,21 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "deterministic smoke poses select both terrain LODs",
-    "[renderer][terrain][lod][smoke]")
+    "compact deterministic smoke poses select both terrain LODs",
+    "[renderer][terrain][lod][smoke][compact]")
 {
     using namespace shark;
     using namespace shark::renderer::detail;
 
+    const auto tile = terrain::make_deterministic_height_tile();
     const auto layout = terrain::build_lod0_chunk_layout(
-        terrain::make_deterministic_height_tile(),
+        tile,
         terrain::deterministic_tile_chunk_cell_columns,
         terrain::deterministic_tile_chunk_cell_rows);
     REQUIRE(layout);
     const auto coarse =
         terrain::build_boundary_preserving_coarse_chunk_layout(
-            terrain::make_deterministic_height_tile(),
+            tile,
             terrain::deterministic_tile_chunk_cell_columns,
             terrain::deterministic_tile_chunk_cell_rows);
     REQUIRE(coarse);
@@ -234,4 +235,80 @@ TEST_CASE(
     culling_pose.transform.yaw_radians = 1.25F;
     REQUIRE(counts(culling_pose, 960.0F / 600.0F) ==
         std::array<std::size_t, 3>{5, 3, 2});
+}
+
+TEST_CASE(
+    "large capacity smoke poses select both terrain LODs",
+    "[renderer][terrain][lod][smoke]")
+{
+    using namespace shark;
+    using namespace shark::renderer::detail;
+
+    const auto tile = terrain::make_large_capacity_height_tile();
+    const auto layout = terrain::build_lod0_chunk_layout(
+        tile,
+        terrain::large_capacity_tile_chunk_cell_columns,
+        terrain::large_capacity_tile_chunk_cell_rows);
+    REQUIRE(layout);
+    const auto coarse =
+        terrain::build_boundary_preserving_coarse_chunk_layout(
+            tile,
+            terrain::large_capacity_tile_chunk_cell_columns,
+            terrain::large_capacity_tile_chunk_cell_rows);
+    REQUIRE(coarse);
+    REQUIRE(layout.value().chunks.size() ==
+        terrain::large_capacity_tile_chunk_count);
+    REQUIRE(coarse.value().chunks.size() ==
+        layout.value().chunks.size());
+
+    const auto counts = [&layout, &coarse](
+                            const world::Camera& camera,
+                            const float aspect_ratio) {
+        const auto matrices = world::build_camera_matrices(
+            camera,
+            aspect_ratio);
+        REQUIRE(matrices);
+        const auto frustum = make_view_frustum(
+            matrices.value().view_projection);
+        REQUIRE(frustum);
+
+        std::array<std::size_t, 3> result{};
+        for (std::size_t index = 0;
+             index < layout.value().chunks.size();
+             ++index) {
+            const auto& chunk = layout.value().chunks[index];
+            if (!intersects_view_frustum(
+                    *frustum,
+                    chunk.bounds.minimum,
+                    chunk.bounds.maximum)) {
+                continue;
+            }
+            const auto decision = select_terrain_lod(
+                camera.transform.position,
+                chunk.bounds.minimum,
+                chunk.bounds.maximum,
+                coarse.value()
+                    .chunks[index]
+                    .maximum_geometric_error);
+            REQUIRE(decision);
+            ++result[0];
+            ++result[
+                decision->lod == TerrainLod::lod0 ? 1U : 2U];
+        }
+        return result;
+    };
+
+    world::Camera initial;
+    initial.transform.position = {0.0F, 28.0F, 112.0F};
+    initial.transform.pitch_radians = -0.25F;
+    initial.lens.far_plane = 1'500.0F;
+    REQUIRE(counts(initial, 16.0F / 9.0F) ==
+        std::array<std::size_t, 3>{93, 3, 90});
+    REQUIRE(counts(initial, 960.0F / 600.0F) ==
+        std::array<std::size_t, 3>{93, 3, 90});
+
+    auto culling_pose = initial;
+    culling_pose.transform.yaw_radians = 1.25F;
+    REQUIRE(counts(culling_pose, 960.0F / 600.0F) ==
+        std::array<std::size_t, 3>{71, 4, 67});
 }

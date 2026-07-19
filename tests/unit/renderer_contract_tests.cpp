@@ -57,6 +57,7 @@ TEST_CASE(
     REQUIRE(
         frame.environment_lighting_mode ==
         EnvironmentLightingMode::image_based);
+    REQUIRE_FALSE(frame.terrain_diagnostics_enabled);
 
     STATIC_REQUIRE(
         static_cast<std::uint32_t>(TerrainMaterialView::shaded) == 1);
@@ -113,5 +114,8 @@ TEST_CASE(
     REQUIRE(changed != baseline);
     changed = baseline;
     changed.terrain_maximum_geometric_error = 0.125;
+    REQUIRE(changed != baseline);
+    changed = baseline;
+    changed.terrain_geometry_committed_bytes = 65'536;
     REQUIRE(changed != baseline);
 }

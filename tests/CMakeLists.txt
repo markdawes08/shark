@@ -193,7 +193,7 @@ set_tests_properties(integration.gpu.warp_cube_present
     PROPERTIES
         LABELS "integration;gpu;presentation;warp"
         RUN_SERIAL TRUE
-        TIMEOUT 90
+        TIMEOUT 150
 )
 
 add_test(

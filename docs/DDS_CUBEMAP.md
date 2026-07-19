@@ -1,6 +1,6 @@
 # DDS Cubemap Asset and Upload Contract
 
-- **Completed through:** `T-005`
+- **Completed through:** `T-006`
 - **Last verified:** July 19, 2026
 
 S-001 establishes Shark's first file-backed texture asset. It loads one
@@ -174,18 +174,19 @@ The startup path remains exactly one static submission, one
 frame graph now has 15 imports, four ordered
 `Terrain`/`TexturedCube`/`Skybox`/`ToneMap` passes, three dependencies, six
 transitions, 31 elisions, four texture-table binds, and ten timestamps per
-frame. With `V` visible terrain chunks it contains `2V + 4` indexed draws plus
-the tone-map draw. Each visible terrain draw selects its 384-index LOD0 or
-240-index coarse range. T-005's combined 9,984 surface indices, chunk bounds,
+frame. With `V` visible terrain chunks it contains `V + 3` indexed terrain/
+sphere/cube/sky draws plus the tone-map draw; `F4` optionally adds `V` chunk
+bounds and one query marker. Each visible terrain draw selects its 1,536-index
+LOD0 or 864-index coarse range. T-006's 540,000 surface indices, chunk bounds,
 query marker, and S-003 material sphere remain packed into the existing terrain
 buffers, preserving four total geometry buffers. The DDS-backed cube/sky draw
-and upload counts do not vary with terrain visibility or LOD.
+and upload counts do not vary with terrain visibility, LOD, or diagnostics.
 Cubemap creation/upload counters remain startup invariants, but there is no
 per-frame cubemap read or binding to count.
-Hardware and normal WARP execute 1,000 successful presents; focused WARP with
-GPU-based validation executes 120 presents, retaining resize and rotation while
-intentionally skipping the normal paths' minimize/restore interval, with a
-180-second internal deadline and 240-second CTest timeout.
+Hardware executes 1,000 successful presents, normal WARP executes 600, and
+focused WARP with GPU-based validation executes 120. All retain resize and
+rotation; focused validation intentionally skips the other paths'
+minimize/restore interval.
 
 ## Explicit non-goals
 
@@ -203,6 +204,8 @@ longer exposes a public `Presentation` class. T-003 adds three separate
 terrain arrays and descriptors without repurposing or sampling the retained
 cubemap. S-003 was completed on July 18, 2026 and defines its separate
 project-generated environment-lighting asset contract without treating this
-orientation fixture as production content. T-005 was completed on July 19,
-2026 without changing the DDS contract. The next increment is `R-001`, seeded,
-bounded GPU rain driven by adjustable precipitation rate and wind.
+orientation fixture as production content. T-006 was completed on July 19,
+2026 with a bounded `241x241`-sample terrain capacity fixture and without
+changing any DDS resource, descriptor, upload, or color-space contract. The
+next increment is `T-007`: replace the fixture's shallow alternating heights
+with fixed-seed, mostly flat natural rolling terrain; no lake is added yet.

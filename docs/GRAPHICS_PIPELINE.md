@@ -1,13 +1,13 @@
 # HLSL Graphics Pipeline Contract
 
-- **Completed through:** `T-005`
+- **Completed through:** `T-006`
 - **Last verified:** July 19, 2026
 
 Shark compiles all production HLSL at build time with a pinned retail DXC and
-creates immutable Direct3D 12 pipeline state during renderer startup. T-005
+creates immutable Direct3D 12 pipeline state during renderer startup. T-006
 retains the existing cube, terrain, sky, material-sphere, and tone-map programs
-while selecting a chunk's LOD0 or boundary-preserving coarse index range on the
-CPU. The pipeline still includes S-003's shared image-based-lighting helpers,
+while scaling CPU chunk/LOD selection to the bounded 225-chunk capacity
+fixture. The pipeline still includes S-003's shared image-based-lighting helpers,
 material-sphere proof, linear-HDR scene target, and final tone-map program.
 This remains a focused scene contract, not a general shader asset,
 material-graph, or pipeline-cache system.
@@ -205,8 +205,9 @@ Each non-minimized frame then:
    chooses each visible chunk's LOD from camera-to-AABB distance;
 2. stages one 256-byte constants/probe record;
 3. composes the exact 15-import/four-pass HDR frame graph;
-4. executes `Terrain`, including one selected LOD0/coarse surface and one
-   magenta-bounds draw per visible chunk plus the sphere and marker draws;
+4. executes `Terrain`, including one selected LOD0/coarse surface per visible
+   chunk plus the sphere; default-off `F4` diagnostics additionally draw each
+   visible chunk's magenta bounds and the query marker;
 5. executes `TexturedCube`;
 6. executes the far-depth `Skybox`;
 7. executes `ToneMap` to the current back buffer;
@@ -218,33 +219,35 @@ For `V0` visible LOD0 chunks, `Vc` visible coarse chunks, and `V=V0+Vc`, the
 submitted-frame draw contract is:
 
 ```text
-LOD0 terrain chunks      V0 * DrawIndexedInstanced(384, ...)
-coarse terrain chunks    Vc * DrawIndexedInstanced(240, ...)
+LOD0 terrain chunks      V0 * DrawIndexedInstanced(1,536, ...)
+coarse terrain chunks    Vc * DrawIndexedInstanced(864, ...)
 material sphere          DrawIndexedInstanced(1,584, ...)
-visible chunk AABBs      V * DrawIndexedInstanced(24, ...)
-terrain query marker     DrawIndexedInstanced(6, ...)
+visible chunk AABBs      F4 ? V * DrawIndexedInstanced(24, ...) : 0
+terrain query marker     F4 ? DrawIndexedInstanced(6, ...) : 0
 textured cube            DrawIndexedInstanced(36, ...)
 skybox                   DrawIndexedInstanced(36, ...)
 tone map                 DrawInstanced(3, 1, 0, 0)
 ```
 
 Each chunk selects one contiguous LOD0 or coarse first-index/count range into
-the shared 1,089-vertex stream. The matching bounds draw selects its own packed
-eight-vertex/24-index range. Fine and coarse terrain indices occupy the
-`0..6,143` and `6,144..9,983` ranges; bounds, marker, and sphere begin at
-9,984, 10,368, and 10,374. The sphere remains in those terrain buffers, so the
-variable `2V + 4` indexed draws still use four geometry buffers. The smoke
-poses produce 36 indexed draws/7,038 indices at `V0/Vc=8/8`, then 14 indexed
-draws/3,414 indices at `V0/Vc=3/2`. Exact per-frame graph accounting remains
+the shared 58,081-vertex stream; its maximum surface index is 58,080. The
+matching bounds draw selects its own packed eight-vertex/24-index range. Fine
+and coarse terrain indices occupy `0..345,599` and `345,600..539,999`; bounds,
+marker, and sphere begin at 540,000, 545,400, and 545,406. The sphere remains
+in those terrain buffers, so the normal `V + 3` indexed draws and optional
+`F4` diagnostic draws still use four geometry buffers. Initial/resized smoke
+poses select `V0/Vc=3/90`; the turned pose selects `4/67`. Exact per-frame graph
+accounting remains
 15 imports, four passes, three dependencies, six transitions, and 31 elisions.
 Diagnostics retain ten timestamps per context: frame begin/end plus begin/end
 for each pass.
 
 ## Acceptance and non-goals
 
-The hardware and normal packaged-WARP smoke paths require 1,000 successful
-presents; focused packaged WARP with GPU-based validation requires 120. They
-exercise both terrain fill modes, both terrain LODs, the exact `8/8 -> 3/2`
+The hardware smoke path requires 1,000 successful presents, normal packaged
+WARP requires 600, and focused packaged WARP with GPU-based validation requires
+120. They exercise both terrain fill modes, both terrain LODs, the exact
+`3/90 -> 4/67`
 LOD split, all three terrain material views, both environment modes, resize,
 camera rotation, frame retirement, and clean DirectX validation. The smoke
 validates resources, commands, counts, and lifetime; it does not compare pixels.
@@ -261,6 +264,8 @@ exposure, HDR display output, or image-comparison testing. Those omissions
 preserve the bounded San Andreas-class product scope while allowing modern HDR
 implementation quality.
 
-`T-005` was completed on July 19, 2026 without adding or changing HLSL, root
-signatures, or PSOs. The next increment is `R-001`, seeded, bounded GPU rain
-driven by adjustable precipitation rate and wind.
+`T-006` was completed on July 19, 2026 without adding or changing HLSL, root
+signatures, or PSOs. Hardware, WARP, and focused GPU-validation presentation
+runs completed with zero Direct3D errors and zero live child objects. The next
+increment is `T-007`: replace the shallow alternating capacity heights with
+fixed-seed, mostly flat natural rolling terrain; no lake is added yet.

@@ -1637,7 +1637,8 @@ public:
         const TerrainRenderMode mode,
         const math::Float3 camera_world_position,
         const TerrainMaterialView material_view,
-        const EnvironmentLightingMode environment_mode)
+        const EnvironmentLightingMode environment_mode,
+        const bool terrain_diagnostics_enabled)
     {
         auto scene_color_access = pass_context.write(
             scene_color_resource);
@@ -1853,33 +1854,37 @@ public:
                 backend_detail::terrain_query_marker_vertex_count),
             0);
 
-        command_list->SetPipelineState(terrain_bounds_pipeline.Get());
-        command_list->IASetPrimitiveTopology(
-            backend_detail::terrain_bounds_topology);
-        for (const auto& chunk : visible_terrain_chunks) {
+        if (terrain_diagnostics_enabled) {
+            command_list->SetPipelineState(terrain_bounds_pipeline.Get());
+            command_list->IASetPrimitiveTopology(
+                backend_detail::terrain_bounds_topology);
+            for (const auto& chunk : visible_terrain_chunks) {
+                command_list->DrawIndexedInstanced(
+                    backend_detail::terrain_chunk_bounds_index_count,
+                    1,
+                    terrain_surface_index_count +
+                        chunk.chunk_index *
+                            backend_detail::
+                                terrain_chunk_bounds_index_count,
+                    static_cast<INT>(
+                        terrain_vertex_count +
+                        chunk.chunk_index *
+                            backend_detail::
+                                terrain_chunk_bounds_vertex_count),
+                    0);
+            }
+            command_list->IASetPrimitiveTopology(
+                backend_detail::terrain_query_marker_topology);
             command_list->DrawIndexedInstanced(
-                backend_detail::terrain_chunk_bounds_index_count,
+                terrain_query_marker_index_count,
                 1,
                 terrain_surface_index_count +
-                    chunk.chunk_index *
-                        backend_detail::
-                            terrain_chunk_bounds_index_count,
+                    terrain_bounds_index_count,
                 static_cast<INT>(
                     terrain_vertex_count +
-                    chunk.chunk_index *
-                        backend_detail::
-                            terrain_chunk_bounds_vertex_count),
+                    terrain_bounds_vertex_count),
                 0);
         }
-        command_list->IASetPrimitiveTopology(
-            backend_detail::terrain_query_marker_topology);
-        command_list->DrawIndexedInstanced(
-            terrain_query_marker_index_count,
-            1,
-            terrain_surface_index_count + terrain_bounds_index_count,
-            static_cast<INT>(
-                terrain_vertex_count + terrain_bounds_vertex_count),
-            0);
 
         command_list->EndQuery(
             timestamp_query_heap.Get(),
@@ -2701,6 +2706,11 @@ public:
             terrain_bounds_vertex_bytes +
             terrain_query_marker_vertex_bytes +
             material_sphere_vertex_bytes);
+        statistics.terrain_surface_vertex_payload_bytes =
+            terrain_vertex_bytes;
+        statistics.terrain_diagnostic_vertex_payload_bytes =
+            terrain_bounds_vertex_bytes +
+            terrain_query_marker_vertex_bytes;
         result = native_device->CreateCommittedResource(
             &default_heap,
             D3D12_HEAP_FLAG_NONE,
@@ -2732,6 +2742,40 @@ public:
             terrain_bounds_index_bytes +
             terrain_query_marker_index_bytes +
             material_sphere_index_bytes);
+        statistics.terrain_surface_index_payload_bytes =
+            terrain_index_bytes;
+        statistics.terrain_diagnostic_index_payload_bytes =
+            terrain_bounds_index_bytes +
+            terrain_query_marker_index_bytes;
+        statistics.terrain_geometry_resource_bytes =
+            terrain_vertex_description.Width +
+            terrain_index_description.Width;
+        statistics.terrain_vertex_resource_bytes =
+            terrain_vertex_description.Width;
+        statistics.terrain_index_resource_bytes =
+            terrain_index_description.Width;
+        const auto terrain_vertex_allocation =
+            native_device->GetResourceAllocationInfo(
+                0,
+                1,
+                &terrain_vertex_description);
+        const auto terrain_index_allocation =
+            native_device->GetResourceAllocationInfo(
+                0,
+                1,
+                &terrain_index_description);
+        if (terrain_vertex_allocation.SizeInBytes ==
+                std::numeric_limits<UINT64>::max() ||
+            terrain_index_allocation.SizeInBytes ==
+                std::numeric_limits<UINT64>::max()) {
+            return core::Result<void>::failure(graphics_error(
+                core::ErrorCode::unsupported,
+                "D3D12 rejected the terrain geometry allocation "
+                "descriptions"));
+        }
+        statistics.terrain_geometry_committed_bytes =
+            terrain_vertex_allocation.SizeInBytes +
+            terrain_index_allocation.SizeInBytes;
         result = native_device->CreateCommittedResource(
             &default_heap,
             D3D12_HEAP_FLAG_NONE,
@@ -5525,7 +5569,9 @@ core::Result<RenderStatus> Renderer::render_frame(
                  material_view =
                     frame_data.terrain_material_view,
                  environment_mode =
-                    frame_data.environment_lighting_mode](
+                    frame_data.environment_lighting_mode,
+                 terrain_diagnostics_enabled =
+                    frame_data.terrain_diagnostics_enabled](
                     const render_graph::PassContext& pass_context,
                     const detail::TerrainPassResources& resources) {
                     return implementation->record_terrain_pass(
@@ -5545,7 +5591,8 @@ core::Result<RenderStatus> Renderer::render_frame(
                         terrain_mode,
                         camera_world_position,
                         material_view,
-                        environment_mode);
+                        environment_mode,
+                        terrain_diagnostics_enabled);
                 },
             .textured_cube =
                 [implementation = implementation_.get(),
@@ -5840,9 +5887,12 @@ core::Result<RenderStatus> Renderer::render_frame(
                 visible_chunk_count;
         break;
     }
-    implementation_->statistics.terrain_bounds_draw_calls +=
-        visible_chunk_count;
-    ++implementation_->statistics.terrain_query_marker_draw_calls;
+    if (frame_data.terrain_diagnostics_enabled) {
+        implementation_->statistics.terrain_bounds_draw_calls +=
+            visible_chunk_count;
+        ++implementation_->
+            statistics.terrain_query_marker_draw_calls;
+    }
     if (implementation_->statistics.terrain_chunks_tested == 0) {
         implementation_->statistics.terrain_visible_chunk_min =
             visible_chunk_count;
@@ -5876,11 +5926,13 @@ core::Result<RenderStatus> Renderer::render_frame(
         implementation_->current_visible_terrain_lod0_index_count;
     implementation_->statistics.terrain_coarse_indices +=
         implementation_->current_visible_terrain_coarse_index_count;
-    implementation_->statistics.terrain_bounds_indices +=
-        visible_chunk_count *
-            backend_detail::terrain_chunk_bounds_index_count;
-    implementation_->statistics.terrain_query_marker_indices +=
-        implementation_->terrain_query_marker_index_count;
+    if (frame_data.terrain_diagnostics_enabled) {
+        implementation_->statistics.terrain_bounds_indices +=
+            visible_chunk_count *
+                backend_detail::terrain_chunk_bounds_index_count;
+        implementation_->statistics.terrain_query_marker_indices +=
+            implementation_->terrain_query_marker_index_count;
+    }
     if (frame_data.environment_lighting_mode ==
         EnvironmentLightingMode::image_based) {
         ++implementation_->statistics.image_based_lighting_frames;

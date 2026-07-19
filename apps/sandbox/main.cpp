@@ -659,19 +659,29 @@ void log_platform_event(const shark::platform::Event& event)
 
     const auto focused_gpu_validation =
         device.gpu_based_validation_enabled();
+    const auto software_adapter =
+        device.selected_adapter().software;
     const auto exercise_minimize_restore = !focused_gpu_validation;
     const std::uint64_t required_smoke_frames =
-        focused_gpu_validation ? 120 : 1'000;
+        focused_gpu_validation
+        ? 120
+        : (software_adapter ? 600 : 1'000);
     const auto resize_after_frames = required_smoke_frames / 4;
     const auto minimize_after_frames = required_smoke_frames / 2;
     const auto change_camera_after_frames =
         required_smoke_frames * 3 / 4;
+    const auto diagnostic_smoke_frames =
+        std::min<std::uint64_t>(
+            30,
+            required_smoke_frames / 4);
     constexpr float smoke_culling_yaw_radians = 1.25F;
     constexpr platform::WindowExtent smoke_resize_extent{960, 600};
     const auto smoke_deadline_duration =
         focused_gpu_validation
         ? std::chrono::seconds{180}
-        : std::chrono::seconds{75};
+        : (software_adapter
+            ? std::chrono::seconds{120}
+            : std::chrono::seconds{75});
 
     platform::ApplicationConfig application_config;
     application_config.visible = !smoke_mode;
@@ -785,8 +795,10 @@ void log_platform_event(const shark::platform::Event& event)
             },
         }};
 
+    const auto terrain_build_started =
+        std::chrono::steady_clock::now();
     auto terrain_surface_result = terrain::HeightTileSurface::create(
-        terrain::make_deterministic_height_tile());
+        terrain::make_large_capacity_height_tile());
     if (!terrain_surface_result) {
         return core::Result<void>::failure(
             std::move(terrain_surface_result).error());
@@ -802,8 +814,8 @@ void log_platform_event(const shark::platform::Event& event)
     auto terrain_chunk_layout_result =
         terrain::build_lod0_chunk_layout(
             terrain_tile,
-            terrain::deterministic_tile_chunk_cell_columns,
-            terrain::deterministic_tile_chunk_cell_rows);
+            terrain::large_capacity_tile_chunk_cell_columns,
+            terrain::large_capacity_tile_chunk_cell_rows);
     if (!terrain_chunk_layout_result) {
         return core::Result<void>::failure(
             std::move(terrain_chunk_layout_result).error());
@@ -813,8 +825,8 @@ void log_platform_event(const shark::platform::Event& event)
     auto terrain_coarse_layout_result =
         terrain::build_boundary_preserving_coarse_chunk_layout(
             terrain_tile,
-            terrain::deterministic_tile_chunk_cell_columns,
-            terrain::deterministic_tile_chunk_cell_rows);
+            terrain::large_capacity_tile_chunk_cell_columns,
+            terrain::large_capacity_tile_chunk_cell_rows);
     if (!terrain_coarse_layout_result) {
         return core::Result<void>::failure(
             std::move(terrain_coarse_layout_result).error());
@@ -822,20 +834,21 @@ void log_platform_event(const shark::platform::Event& event)
     auto terrain_coarse_layout =
         std::move(terrain_coarse_layout_result).value();
     if (terrain_chunk_layout.chunks.size() !=
-            terrain::deterministic_tile_chunk_count ||
+            terrain::large_capacity_tile_chunk_count ||
         terrain_chunk_layout.indices.size() !=
             terrain_mesh.indices.size() ||
         terrain_coarse_layout.chunks.size() !=
             terrain_chunk_layout.chunks.size() ||
         terrain_coarse_layout.indices.size() !=
-            terrain::deterministic_tile_coarse_index_count ||
+            terrain::large_capacity_tile_coarse_index_count ||
         terrain_coarse_layout.maximum_geometric_error !=
-            terrain::deterministic_tile_coarse_maximum_geometric_error) {
+            terrain::
+                large_capacity_tile_coarse_maximum_geometric_error) {
         return core::Result<void>::failure(core::Error{
             core::ErrorCategory::simulation,
             core::ErrorCode::invalid_state,
-            "The deterministic terrain did not produce the fixed "
-            "4x4 two-level chunk layout and error bound",
+            "The large capacity terrain did not produce the fixed "
+            "15x15 two-level chunk layout and error bound",
         });
     }
     std::vector<std::uint16_t> terrain_surface_indices;
@@ -951,16 +964,16 @@ void log_platform_event(const shark::platform::Event& event)
         return core::Result<void>::failure(core::Error{
             core::ErrorCategory::simulation,
             core::ErrorCode::invalid_state,
-            "The deterministic terrain query marker is outside the "
+            "The large capacity terrain query marker is outside the "
             "canonical LOD0 surface",
         });
     }
     constexpr terrain::Ray3 query_marker_ray{
-        {query_marker_world_x, 10.0F, query_marker_world_z},
+        {query_marker_world_x, 50.0F, query_marker_world_z},
         {0.0F, -1.0F, 0.0F},
     };
     auto query_marker_hit_result =
-        terrain_surface.raycast_lod0(query_marker_ray, 20.0F);
+        terrain_surface.raycast_lod0(query_marker_ray, 100.0F);
     if (!query_marker_hit_result) {
         return core::Result<void>::failure(
             std::move(query_marker_hit_result).error());
@@ -971,7 +984,7 @@ void log_platform_event(const shark::platform::Event& event)
         return core::Result<void>::failure(core::Error{
             core::ErrorCategory::simulation,
             core::ErrorCode::invalid_state,
-            "The deterministic terrain query-marker ray missed the "
+            "The large capacity terrain query-marker ray missed the "
             "canonical LOD0 surface",
         });
     }
@@ -1052,6 +1065,36 @@ void log_platform_event(const shark::platform::Event& event)
     }};
     constexpr std::array<std::uint16_t, 6>
         terrain_query_marker_indices{{0, 1, 2, 3, 4, 5}};
+    const auto terrain_build_elapsed =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() -
+            terrain_build_started).count();
+    const auto terrain_canonical_cpu_bytes =
+        terrain_tile.height_offsets.size() * sizeof(float);
+    const auto terrain_surface_gpu_vertex_bytes =
+        terrain_vertices.size() * sizeof(TerrainGpuVertex);
+    const auto terrain_surface_gpu_index_bytes =
+        terrain_surface_indices.size() * sizeof(std::uint16_t);
+    const auto terrain_surface_gpu_bytes =
+        terrain_surface_gpu_vertex_bytes +
+        terrain_surface_gpu_index_bytes;
+    const auto terrain_diagnostic_gpu_bytes =
+        terrain_bounds_vertices.size() * sizeof(TerrainGpuVertex) +
+        terrain_bounds_indices.size() * sizeof(std::uint16_t) +
+        terrain_query_marker_vertices.size() *
+            sizeof(TerrainGpuVertex) +
+        terrain_query_marker_indices.size() *
+            sizeof(std::uint16_t);
+    constexpr std::size_t maximum_surface_gpu_bytes =
+        5U * 1'024U * 1'024U / 2U;
+    if (terrain_surface_gpu_bytes >= maximum_surface_gpu_bytes) {
+        return core::Result<void>::failure(core::Error{
+            core::ErrorCategory::simulation,
+            core::ErrorCode::unsupported,
+            "The large capacity terrain exceeded its 2.5-MiB "
+            "surface-data budget",
+        });
+    }
 
     const auto terrain_material_palette =
         terrain::make_deterministic_material_palette();
@@ -1235,9 +1278,11 @@ void log_platform_event(const shark::platform::Event& event)
         core::LogLevel::info,
         "terrain",
         std::string{
-            "Built deterministic two-level height tile: samples="} +
+            "Built bounded two-level capacity terrain: samples="} +
             std::to_string(terrain_tile.sample_columns) + "x" +
             std::to_string(terrain_tile.sample_rows) +
+            ", spacing=" +
+            std::to_string(terrain_tile.sample_spacing) + "m" +
             ", vertices=" +
             std::to_string(terrain_mesh.positions.size()) +
             ", LOD0-triangles=" +
@@ -1247,11 +1292,11 @@ void log_platform_event(const shark::platform::Event& event)
                 terrain_coarse_layout.indices.size() / 3U) +
             ", chunks=" +
             std::to_string(
-                terrain::deterministic_tile_chunk_columns) + "x" +
+                terrain::large_capacity_tile_chunk_columns) + "x" +
             std::to_string(
-                terrain::deterministic_tile_chunk_rows) + " (" +
+                terrain::large_capacity_tile_chunk_rows) + " (" +
             std::to_string(terrain_chunk_layout.chunks.size()) +
-            " total, 8x8 cells each), max-coarse-error=" +
+            " total, 16x16 cells each), max-coarse-error=" +
             std::to_string(
                 terrain_coarse_layout.maximum_geometric_error) +
             "m" +
@@ -1262,6 +1307,45 @@ void log_platform_event(const shark::platform::Event& event)
             std::to_string(terrain_mesh.bounds.maximum.x) + ", " +
             std::to_string(terrain_mesh.bounds.maximum.y) + ", " +
             std::to_string(terrain_mesh.bounds.maximum.z) + ")]");
+
+    core::log_message(
+        core::LogLevel::info,
+        "terrain.capacity",
+        std::string{"Capacity payload: canonical-height-CPU-payload="} +
+            std::to_string(terrain_canonical_cpu_bytes) +
+            " bytes, surface-buffer(vertices/indices/total)=" +
+            std::to_string(terrain_surface_gpu_vertex_bytes) + "/" +
+            std::to_string(terrain_surface_gpu_index_bytes) + "/" +
+            std::to_string(terrain_surface_gpu_bytes) +
+            " bytes, diagnostic-buffer=" +
+            std::to_string(terrain_diagnostic_gpu_bytes) +
+            " bytes, CPU-build=" +
+            format_gpu_milliseconds(
+                static_cast<std::uint64_t>(
+                    terrain_build_elapsed * 1'000.0),
+                1'000'000) +
+            "ms");
+
+    const auto& startup_renderer_stats = renderer_instance.stats();
+    core::log_message(
+        core::LogLevel::info,
+        "terrain.capacity",
+        std::string{
+            "D3D12 packed geometry resources "
+            "(vertex/index/logical/committed)="} +
+            std::to_string(
+                startup_renderer_stats.terrain_vertex_resource_bytes) +
+            "/" +
+            std::to_string(
+                startup_renderer_stats.terrain_index_resource_bytes) +
+            "/" +
+            std::to_string(
+                startup_renderer_stats.terrain_geometry_resource_bytes) +
+            "/" +
+            std::to_string(
+                startup_renderer_stats.
+                    terrain_geometry_committed_bytes) +
+            " bytes");
 
     core::log_message(
         core::LogLevel::info,
@@ -1325,18 +1409,25 @@ void log_platform_event(const shark::platform::Event& event)
             : "Direct3D 12 terrain, material sphere, HDR environment, "
               "and tone mapping initialized; F1 toggles "
               "solid/wireframe, F2 cycles terrain material views, and "
-              "F3 toggles HDR IBL/procedural daylight");
+              "F3 toggles HDR IBL/procedural daylight, and F4 toggles "
+              "terrain chunk/query diagnostics");
 
     world::Camera camera;
-    camera.transform.position = {0.0F, 4.0F, 10.0F};
-    camera.transform.pitch_radians = -0.35F;
+    camera.transform.position = {0.0F, 28.0F, 112.0F};
+    camera.transform.pitch_radians = -0.25F;
+    camera.lens.far_plane = 1'500.0F;
     const renderer::DaylightSettings daylight{};
-    sandbox::CameraController camera_controller;
+    sandbox::CameraController camera_controller{
+        sandbox::CameraControllerConfig{
+            .movement_speed = 32.0F,
+            .sprint_multiplier = 4.0F,
+        }};
     auto terrain_mode = renderer::TerrainRenderMode::solid;
     auto terrain_material_view =
         renderer::TerrainMaterialView::shaded;
     auto environment_lighting_mode =
         renderer::EnvironmentLightingMode::image_based;
+    auto terrain_diagnostics_enabled = false;
     auto previous_frame_time = std::chrono::steady_clock::now();
     const auto smoke_deadline =
         std::chrono::steady_clock::now() + smoke_deadline_duration;
@@ -1418,6 +1509,19 @@ void log_platform_event(const shark::platform::Event& event)
                             std::string{
                                 environment_lighting_mode_name(
                                     environment_lighting_mode)});
+                }
+                if (key != nullptr &&
+                    key->virtual_key == VK_F4 &&
+                    key->action == platform::KeyAction::pressed &&
+                    !key->repeated) {
+                    terrain_diagnostics_enabled =
+                        !terrain_diagnostics_enabled;
+                    core::log_message(
+                        core::LogLevel::info,
+                        "terrain.diagnostics",
+                        terrain_diagnostics_enabled
+                            ? "Terrain chunk bounds and query marker: on"
+                            : "Terrain chunk bounds and query marker: off");
                 }
             }
             camera_controller.handle_event(event);
@@ -1652,6 +1756,8 @@ void log_platform_event(const shark::platform::Event& event)
         if (smoke_mode) {
             const auto presented_frames =
                 renderer_instance.stats().presented_frames;
+            terrain_diagnostics_enabled =
+                presented_frames < diagnostic_smoke_frames;
             terrain_mode =
                 presented_frames >=
                     required_smoke_frames / 2U
@@ -1701,6 +1807,8 @@ void log_platform_event(const shark::platform::Event& event)
             .terrain_material_view = terrain_material_view,
             .environment_lighting_mode =
                 environment_lighting_mode,
+            .terrain_diagnostics_enabled =
+                terrain_diagnostics_enabled,
         };
         auto render_result = renderer_instance.render_frame(frame_data);
         if (!render_result) {
@@ -1738,13 +1846,15 @@ void log_platform_event(const shark::platform::Event& event)
             (std::uint32_t{1} << expected_context_count) - 1;
         constexpr std::uint64_t frame_probe_bytes = 256;
         constexpr std::uint64_t timestamp_queries_per_frame = 10;
-        constexpr std::uint64_t initial_lod0_chunks = 8;
-        constexpr std::uint64_t initial_coarse_chunks = 8;
-        constexpr std::uint64_t final_lod0_chunks = 3;
-        constexpr std::uint64_t final_coarse_chunks = 2;
+        constexpr std::uint64_t initial_lod0_chunks = 3;
+        constexpr std::uint64_t initial_coarse_chunks = 90;
+        constexpr std::uint64_t final_lod0_chunks = 4;
+        constexpr std::uint64_t final_coarse_chunks = 67;
+        constexpr auto initial_visible_chunks =
+            initial_lod0_chunks + initial_coarse_chunks;
         constexpr auto expected_maximum_geometric_error =
             terrain::
-                deterministic_tile_coarse_maximum_geometric_error;
+                large_capacity_tile_coarse_maximum_geometric_error;
         const auto initial_lod_frames = change_camera_after_frames;
         const auto final_lod_frames =
             required_smoke_frames - change_camera_after_frames;
@@ -1756,10 +1866,14 @@ void log_platform_event(const shark::platform::Event& event)
             final_lod_frames * final_coarse_chunks;
         const auto expected_lod0_indices =
             expected_lod0_draw_calls *
-            terrain::deterministic_tile_chunk_index_count;
+            terrain::large_capacity_tile_chunk_index_count;
         const auto expected_coarse_indices =
             expected_coarse_draw_calls *
-            terrain::deterministic_tile_coarse_chunk_index_count;
+            terrain::large_capacity_tile_coarse_chunk_index_count;
+        const auto expected_diagnostic_frames =
+            diagnostic_smoke_frames;
+        const auto expected_bounds_draw_calls =
+            expected_diagnostic_frames * initial_visible_chunks;
         const auto attempted_presents =
             stats.presented_frames + stats.occluded_frames;
         if (stats.frame_context_count != expected_context_count ||
@@ -1849,12 +1963,12 @@ void log_platform_event(const shark::platform::Event& event)
                 stats.frame_submissions ||
             stats.tone_map_draw_calls != stats.frame_submissions ||
             stats.terrain_query_marker_draw_calls !=
-                stats.frame_submissions ||
+                expected_diagnostic_frames ||
             stats.terrain_chunk_count !=
-                terrain::deterministic_tile_chunk_count ||
+                terrain::large_capacity_tile_chunk_count ||
             stats.terrain_chunks_tested !=
                 stats.frame_submissions *
-                    terrain::deterministic_tile_chunk_count ||
+                    terrain::large_capacity_tile_chunk_count ||
             stats.terrain_chunks_visible +
                     stats.terrain_chunks_culled !=
                 stats.terrain_chunks_tested ||
@@ -1868,7 +1982,7 @@ void log_platform_event(const shark::platform::Event& event)
                     stats.terrain_coarse_draw_calls !=
                 stats.terrain_draw_calls ||
             stats.terrain_bounds_draw_calls !=
-                stats.terrain_chunks_visible ||
+                expected_bounds_draw_calls ||
             stats.terrain_visible_chunk_min >=
                 stats.terrain_chunk_count ||
             stats.terrain_visible_chunk_max <=
@@ -1913,26 +2027,26 @@ void log_platform_event(const shark::platform::Event& event)
                     stats.terrain_coarse_indices !=
                 stats.terrain_indices ||
             stats.terrain_bounds_indices !=
-                stats.terrain_bounds_draw_calls * 24 ||
+                expected_bounds_draw_calls * 24 ||
             stats.terrain_query_marker_indices !=
-                stats.terrain_query_marker_draw_calls * 6 ||
+                expected_diagnostic_frames * 6 ||
             stats.material_sphere_indices !=
                 stats.material_sphere_draw_calls * 1'584 ||
             stats.terrain_vertex_count !=
-                terrain::deterministic_tile_vertex_count ||
+                terrain::large_capacity_tile_vertex_count ||
             stats.terrain_index_count !=
-                terrain::deterministic_tile_index_count +
-                    terrain::deterministic_tile_coarse_index_count ||
+                terrain::large_capacity_tile_index_count +
+                    terrain::large_capacity_tile_coarse_index_count ||
             stats.terrain_lod0_index_count !=
-                terrain::deterministic_tile_index_count ||
+                terrain::large_capacity_tile_index_count ||
             stats.terrain_coarse_index_count !=
-                terrain::deterministic_tile_coarse_index_count ||
+                terrain::large_capacity_tile_coarse_index_count ||
             stats.terrain_maximum_geometric_error !=
                 expected_maximum_geometric_error ||
             stats.terrain_bounds_vertex_count !=
-                terrain::deterministic_tile_chunk_count * 8U ||
+                terrain::large_capacity_tile_chunk_count * 8U ||
             stats.terrain_bounds_index_count !=
-                terrain::deterministic_tile_chunk_count * 24U ||
+                terrain::large_capacity_tile_chunk_count * 24U ||
             stats.terrain_query_marker_vertex_count != 6 ||
             stats.terrain_query_marker_index_count != 6 ||
             stats.material_sphere_vertex_count != 266 ||
@@ -1963,6 +2077,25 @@ void log_platform_event(const shark::platform::Event& event)
                 stats.frame_submissions ||
             stats.static_upload_submissions != 1 ||
             stats.geometry_buffer_creations != 4 ||
+            stats.terrain_surface_vertex_payload_bytes !=
+                1'393'944 ||
+            stats.terrain_surface_index_payload_bytes !=
+                1'080'000 ||
+            stats.terrain_diagnostic_vertex_payload_bytes !=
+                43'344 ||
+            stats.terrain_diagnostic_index_payload_bytes !=
+                10'812 ||
+            stats.terrain_vertex_resource_bytes !=
+                1'443'672 ||
+            stats.terrain_index_resource_bytes !=
+                1'093'980 ||
+            stats.terrain_geometry_resource_bytes !=
+                2'537'652 ||
+            stats.terrain_geometry_committed_bytes <
+                stats.terrain_geometry_resource_bytes ||
+            stats.terrain_geometry_committed_bytes %
+                    (64U * 1'024U) !=
+                0 ||
             stats.checker_texture_creations != 1 ||
             stats.cubemap_texture_creations != 1 ||
             stats.texture_srv_creations !=
@@ -2139,6 +2272,21 @@ void log_platform_event(const shark::platform::Event& event)
         summary.append(std::to_string(
             stats.terrain_maximum_geometric_error));
         summary.append("m");
+        summary.append(
+            ", terrain-bytes(surface/diagnostic/resources/committed)=");
+        summary.append(std::to_string(
+            stats.terrain_surface_vertex_payload_bytes +
+            stats.terrain_surface_index_payload_bytes));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.terrain_diagnostic_vertex_payload_bytes +
+            stats.terrain_diagnostic_index_payload_bytes));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.terrain_geometry_resource_bytes));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.terrain_geometry_committed_bytes));
         summary.append(", terrain(shaded/weights/normals)-views=");
         summary.append(std::to_string(
             stats.terrain_shaded_draw_calls));

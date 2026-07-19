@@ -368,6 +368,146 @@ TEST_CASE(
 }
 
 TEST_CASE(
+    "the bounded large terrain fixture stays inside its resident budget",
+    "[terrain][height-tile][capacity][contract]")
+{
+    using namespace shark;
+
+    STATIC_REQUIRE(
+        terrain::large_capacity_tile_sample_columns == 241);
+    STATIC_REQUIRE(
+        terrain::large_capacity_tile_sample_rows == 241);
+    STATIC_REQUIRE(
+        terrain::large_capacity_tile_sample_spacing == 4.0F);
+    STATIC_REQUIRE(
+        terrain::large_capacity_tile_vertex_count == 58'081);
+    STATIC_REQUIRE(
+        terrain::large_capacity_tile_triangle_count == 115'200);
+    STATIC_REQUIRE(
+        terrain::large_capacity_tile_index_count == 345'600);
+    STATIC_REQUIRE(
+        terrain::large_capacity_tile_chunk_cell_columns == 16);
+    STATIC_REQUIRE(
+        terrain::large_capacity_tile_chunk_cell_rows == 16);
+    STATIC_REQUIRE(
+        terrain::large_capacity_tile_chunk_columns == 15);
+    STATIC_REQUIRE(
+        terrain::large_capacity_tile_chunk_rows == 15);
+    STATIC_REQUIRE(
+        terrain::large_capacity_tile_chunk_count == 225);
+    STATIC_REQUIRE(
+        terrain::large_capacity_tile_chunk_index_count == 1'536);
+    STATIC_REQUIRE(
+        terrain::large_capacity_tile_coarse_chunk_index_count == 864);
+    STATIC_REQUIRE(
+        terrain::large_capacity_tile_coarse_index_count == 194'400);
+    STATIC_REQUIRE(
+        terrain::large_capacity_tile_surface_index_count == 540'000);
+    STATIC_REQUIRE(
+        terrain::large_capacity_tile_vertex_count <= 65'536);
+
+    const auto first = terrain::make_large_capacity_height_tile();
+    const auto second = terrain::make_large_capacity_height_tile();
+    REQUIRE(first == second);
+    REQUIRE(first.sample_columns ==
+        terrain::large_capacity_tile_sample_columns);
+    REQUIRE(first.sample_rows ==
+        terrain::large_capacity_tile_sample_rows);
+    REQUIRE(first.sample_spacing ==
+        terrain::large_capacity_tile_sample_spacing);
+    REQUIRE(first.origin == terrain::large_capacity_tile_origin);
+    REQUIRE(first.height_offsets.size() ==
+        terrain::large_capacity_tile_vertex_count);
+    const auto [minimum, maximum] = std::minmax_element(
+        first.height_offsets.begin(),
+        first.height_offsets.end());
+    REQUIRE(*minimum == -0.25F);
+    REQUIRE(*maximum == 0.25F);
+    REQUIRE(std::all_of(
+        first.height_offsets.begin(),
+        first.height_offsets.end(),
+        [](const float height) {
+            return std::isfinite(height);
+        }));
+
+    const auto surface = terrain::HeightTileSurface::create(first);
+    const auto mesh = terrain::build_lod0_mesh(first);
+    const auto lod0 = terrain::build_lod0_chunk_layout(
+        first,
+        terrain::large_capacity_tile_chunk_cell_columns,
+        terrain::large_capacity_tile_chunk_cell_rows);
+    const auto coarse =
+        terrain::build_boundary_preserving_coarse_chunk_layout(
+            first,
+            terrain::large_capacity_tile_chunk_cell_columns,
+            terrain::large_capacity_tile_chunk_cell_rows);
+    REQUIRE(surface);
+    REQUIRE(mesh);
+    REQUIRE(lod0);
+    REQUIRE(coarse);
+    REQUIRE(surface.value().bounds() ==
+        terrain::large_capacity_tile_expected_bounds);
+    REQUIRE(mesh.value().bounds ==
+        terrain::large_capacity_tile_expected_bounds);
+    REQUIRE(mesh.value().positions.size() ==
+        terrain::large_capacity_tile_vertex_count);
+    REQUIRE(mesh.value().normals.size() ==
+        terrain::large_capacity_tile_vertex_count);
+    REQUIRE(mesh.value().indices.size() ==
+        terrain::large_capacity_tile_index_count);
+    REQUIRE(lod0.value().indices.size() ==
+        terrain::large_capacity_tile_index_count);
+    REQUIRE(lod0.value().chunks.size() ==
+        terrain::large_capacity_tile_chunk_count);
+    REQUIRE(coarse.value().indices.size() ==
+        terrain::large_capacity_tile_coarse_index_count);
+    REQUIRE(coarse.value().chunks.size() ==
+        terrain::large_capacity_tile_chunk_count);
+    REQUIRE(coarse.value().maximum_geometric_error ==
+        terrain::
+            large_capacity_tile_coarse_maximum_geometric_error);
+
+    for (std::size_t index = 0;
+         index < lod0.value().chunks.size();
+         ++index) {
+        const auto& lod0_chunk = lod0.value().chunks[index];
+        const auto& coarse_chunk = coarse.value().chunks[index];
+        REQUIRE(lod0_chunk.cell_columns ==
+            terrain::large_capacity_tile_chunk_cell_columns);
+        REQUIRE(lod0_chunk.cell_rows ==
+            terrain::large_capacity_tile_chunk_cell_rows);
+        REQUIRE(lod0_chunk.index_count ==
+            terrain::large_capacity_tile_chunk_index_count);
+        REQUIRE(coarse_chunk.index_count ==
+            terrain::large_capacity_tile_coarse_chunk_index_count);
+        REQUIRE(coarse_chunk.maximum_geometric_error ==
+            terrain::
+                large_capacity_tile_coarse_maximum_geometric_error);
+    }
+
+    REQUIRE(*std::max_element(
+                lod0.value().indices.begin(),
+                lod0.value().indices.end()) == 58'080);
+    REQUIRE(*std::max_element(
+                coarse.value().indices.begin(),
+                coarse.value().indices.end()) == 58'080);
+
+    constexpr auto surface_vertex_bytes =
+        terrain::large_capacity_tile_vertex_count *
+        sizeof(float) * 6U;
+    constexpr auto surface_index_bytes =
+        terrain::large_capacity_tile_surface_index_count *
+        sizeof(std::uint16_t);
+    STATIC_REQUIRE(surface_vertex_bytes == 1'393'944);
+    STATIC_REQUIRE(surface_index_bytes == 1'080'000);
+    STATIC_REQUIRE(
+        surface_vertex_bytes + surface_index_bytes == 2'473'944);
+    STATIC_REQUIRE(
+        surface_vertex_bytes + surface_index_bytes <
+        5U * 1'024U * 1'024U / 2U);
+}
+
+TEST_CASE(
     "LOD0 mesh preserves every canonical sample and fixed cell split",
     "[terrain][height-tile][mesh]")
 {

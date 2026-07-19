@@ -1,13 +1,13 @@
 # Renderer and Direct3D 12 Presentation/Frame-Resource Contract
 
-- **Completed through:** `T-005`
+- **Completed through:** `T-006`
 - **Last verified:** July 19, 2026
 
 `shark::renderer::Renderer` owns Shark's focused D3D12 scene/presentation
-backend. T-005 preserves the triple-buffered fence-gated HDR lifecycle and
-adds stateless, camera-distance selection between each visible terrain chunk's
-full-resolution and boundary-preserving coarse ranges. Normal frames still
-submit and present without an unconditional post-frame queue drain.
+backend. T-006 preserves the triple-buffered fence-gated HDR lifecycle while
+scaling the resident terrain proof to 225 chunks and making bounds/query
+diagnostics default-off behind `F4`. Normal frames still submit and present
+without an unconditional post-frame queue drain.
 
 ## Public boundary and ownership
 
@@ -110,20 +110,28 @@ submission signals the normal fence, performs one bounded startup wait, and
 releases temporary upload resources before the first frame. No static upload
 occurs in the frame loop.
 
-The terrain buffers contain one unchanged 1,089-vertex surface stream, 16
-contiguous 384-index LOD0 ranges, 16 contiguous 240-index coarse ranges, 16
+The terrain buffers contain a 58,081-vertex surface stream, 225 contiguous
+1,536-index LOD0 ranges, 225 contiguous 864-index coarse ranges, 225
 eight-vertex/24-index bounds ranges, the query marker, and the
-266-vertex/1,584-index material sphere. The complete vertex buffer contains
-1,489 vertices. Index offsets are 0 for LOD0, 6,144 for coarse, 9,984 for
-bounds, 10,368 for the marker, and 10,374 for the sphere, for 11,958 total
-indices. The sphere remains packed after the marker; T-005 adds no fifth
-geometry buffer.
+266-vertex/1,584-index material sphere. The maximum surface index is 58,080;
+the complete vertex buffer contains 60,153 vertices. Index offsets are 0 for
+LOD0, 345,600 for coarse, 540,000 for bounds, 545,400 for the marker, and
+545,406 for the sphere, for 546,990 total indices. The sphere remains packed
+after the marker; T-006 adds no fifth geometry buffer.
+
+Meaningful surface payload is 1,393,944 vertex bytes plus 1,080,000 index
+bytes. Bounds/query diagnostics add 54,156 bytes, while the packed
+vertex/index resource widths including the sphere are
+1,443,672/1,093,980 bytes. Their logical total is 2,537,652 bytes and the two
+committed allocations total 2,621,440 bytes. The separately logged CPU-build
+boundary covers fixture construction through LOD/query proof; latest hardware
+measurements were 6,049.240 ms in Debug and 82.738 ms in Release.
 
 ## Frame acquisition, recording, and present
 
 One frame:
 
-1. extracts the current Direct3D frustum, tests all 16 terrain AABBs, chooses
+1. extracts the current Direct3D frustum, tests all 225 terrain AABBs, chooses
    each visible chunk's LOD from finite camera-to-AABB distance, and logs a
    changed visible/total/LOD split;
 2. obtains DXGI's current back-buffer index and selects that context;
@@ -159,23 +167,24 @@ elided transitions      31
 transitions cover scene-color render/read state, depth write/read state, and
 back-buffer present/render state.
 
-For `V0` visible LOD0 chunks, `Vc` visible coarse chunks, and `V=V0+Vc`, the
-submitted commands contain `2V + 4` indexed scene draws:
+For `V0` visible LOD0 chunks, `Vc` visible coarse chunks, and `V=V0+Vc`, normal
+submitted commands contain `V + 3` indexed scene draws. `F4` adds `V + 1`
+diagnostic draws:
 
 ```text
-LOD0 terrain chunks         384 * V0 indices
-coarse terrain chunks       240 * Vc indices
+LOD0 terrain chunks       1,536 * V0 indices
+coarse terrain chunks       864 * Vc indices
 material sphere          1,584 indices
-visible chunk AABBs           24 * V indices
-terrain query marker          6 indices
+visible chunk AABBs       F4 ? 24 * V indices : 0
+terrain query marker      F4 ? 6 indices : 0
 textured cube                 36 indices
 skybox                        36 indices
 ```
 
 `ToneMap` adds `DrawInstanced(3, 1, 0, 0)`. Per frame there is one depth clear
 and four texture-table binds: terrain/IBL, checker, sky radiance, and HDR scene
-color. The fixed smoke poses produce `V0/Vc=8/8`, then `3/2`: 36 indexed
-draws/7,038 indices, then 14 indexed draws/3,414 indices.
+color. The fixed smoke poses produce `V0/Vc=3/90`, then `4/67`, for 82,368 and
+64,032 terrain-surface indices. Bounds/query diagnostics are off by default.
 
 The 256-byte frame record remains:
 
@@ -262,20 +271,21 @@ Run:
 .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe --present-smoke --warp --gpu-validation
 ```
 
-Hardware and normal WARP require 1,000 successful presents. Focused
-GPU-validated WARP requires 120, a 180-second application deadline, and a
-240-second CTest timeout. The paths:
+Hardware requires 1,000 successful presents, normal WARP requires 600, and
+focused GPU-validated WARP requires 120. The paths:
 
 - resize `1280x720` to `960x600`;
-- start with all 16 terrain chunks visible at an `8/8` LOD0/coarse split, then
-  script yaw `1.25` radians so exactly five remain visible at a `3/2` split;
+- start with 93 of 225 terrain chunks visible at a `3/90` LOD0/coarse split,
+  then script yaw `1.25` radians so 71 remain visible at a `4/67` split;
 - exercise all three contexts;
 - exercise both terrain fill modes, all three material views, and both
   environment modes;
-- prove `16 * frame_submissions` chunk tests, visible-plus-culled conservation,
+- prove `225 * frame_submissions` chunk tests, visible-plus-culled conservation,
   actual LOD0/coarse surface and bounds draws/indices, min/max/last visibility,
-  exact `0.140625` maximum geometric error, graph, texture-binding, upload,
+  exact `0.5`-meter maximum geometric error, graph, texture-binding, upload,
   descriptor, and timestamp accounting;
+- prove the default-off F4 diagnostics through exactly 2,790 bounds draws and
+  30 query-marker draws;
 - prove one static upload, four geometry buffers, three material arrays, four
   HDR environment textures, ten persistent descriptors, and 79/284,608
   environment upload accounting;
@@ -284,13 +294,16 @@ GPU-validated WARP requires 120, a 180-second application deadline, and a
 - retire every submission before final validation; and
 - report zero D3D12/DXGI corruption/errors and no live children.
 
-The normal 1,000-frame paths also minimize/restore and compare the complete
-statistics snapshot to prove no counter changes while minimized. Smoke checks
-commands and accounting, not pixels.
+Hardware and normal WARP also minimize/restore and compare the complete
+statistics snapshot to prove no counter changes while minimized. Debug and
+Release hardware runs completed the exact 1,000-frame contract; Debug WARP
+completed 600 frames and focused GPU validation completed 120. Every run
+reported zero D3D12/DXGI errors and zero live children. Smoke checks commands
+and accounting, not pixels.
 
 ## Explicit non-goals
 
-T-005 does not expose a public/general upload allocator, global upload ring,
+T-006 does not expose a public/general upload allocator, global upload ring,
 persistent descriptor allocator, generic deferred-destruction service, or
 image readback. Its fixed scene, ten-slot heap, query storage, HDR target, and
 environment maps are focused infrastructure, not a general scene/material/
@@ -302,7 +315,8 @@ parallel recording, copy queue, async compute, enhanced barriers, automatic
 exposure, HDR display output, or texture streaming.
 
 This modern chunked HDR implementation does not broaden Shark beyond its
-approved San Andreas-class local-sandbox feature ceiling. `T-005` was
-completed on July 19, 2026 with one bounded coarse terrain LOD and unchanged
-canonical queries. The next increment is `R-001`, seeded, bounded GPU rain
-driven by adjustable precipitation rate and wind.
+approved San Andreas-class local-sandbox feature ceiling. `T-006` was completed
+on July 19, 2026 with a bounded `241x241`-sample, `960x960`-meter resident
+fixture and unchanged canonical queries. Its shallow alternating
+`+/-0.25`-meter heights are diagnostic. The next increment is `T-007`: replace
+them with fixed-seed, mostly flat natural rolling terrain; no lake is added yet.

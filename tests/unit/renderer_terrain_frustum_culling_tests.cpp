@@ -228,8 +228,8 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "deterministic smoke poses exercise terrain chunk culling",
-    "[renderer][terrain][culling][frustum][smoke]")
+    "compact deterministic smoke poses exercise terrain chunk culling",
+    "[renderer][terrain][culling][frustum][smoke][compact]")
 {
     using namespace shark;
     using namespace shark::renderer::detail;
@@ -272,4 +272,53 @@ TEST_CASE(
     auto culling_pose = initial;
     culling_pose.transform.yaw_radians = 1.25F;
     REQUIRE(visible_count(culling_pose, 960.0F / 600.0F) == 5);
+}
+
+TEST_CASE(
+    "large capacity smoke poses exercise terrain chunk culling",
+    "[renderer][terrain][culling][frustum][smoke]")
+{
+    using namespace shark;
+    using namespace shark::renderer::detail;
+
+    const auto layout = terrain::build_lod0_chunk_layout(
+        terrain::make_large_capacity_height_tile(),
+        terrain::large_capacity_tile_chunk_cell_columns,
+        terrain::large_capacity_tile_chunk_cell_rows);
+    REQUIRE(layout);
+    REQUIRE(layout.value().chunks.size() ==
+        terrain::large_capacity_tile_chunk_count);
+
+    const auto visible_count = [&layout](
+                                   const world::Camera& camera,
+                                   const float aspect_ratio) {
+        const auto matrices = world::build_camera_matrices(
+            camera,
+            aspect_ratio);
+        REQUIRE(matrices);
+        const auto frustum = make_view_frustum(
+            matrices.value().view_projection);
+        REQUIRE(frustum);
+
+        std::size_t visible = 0;
+        for (const auto& chunk : layout.value().chunks) {
+            visible += static_cast<std::size_t>(
+                intersects_view_frustum(
+                    *frustum,
+                    chunk.bounds.minimum,
+                    chunk.bounds.maximum));
+        }
+        return visible;
+    };
+
+    world::Camera initial;
+    initial.transform.position = {0.0F, 28.0F, 112.0F};
+    initial.transform.pitch_radians = -0.25F;
+    initial.lens.far_plane = 1'500.0F;
+    REQUIRE(visible_count(initial, 16.0F / 9.0F) == 93);
+    REQUIRE(visible_count(initial, 960.0F / 600.0F) == 93);
+
+    auto culling_pose = initial;
+    culling_pose.transform.yaw_radians = 1.25F;
+    REQUIRE(visible_count(culling_pose, 960.0F / 600.0F) == 71);
 }

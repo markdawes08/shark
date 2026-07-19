@@ -1,6 +1,6 @@
 # Building Shark
 
-- **Completed through:** `T-005`
+- **Completed through:** `T-006`
 - **Last verified:** July 19, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
@@ -114,8 +114,8 @@ local development and testing only and must never enter a packaged product.
 With no arguments, `SharkSandbox` initializes the highest-priority eligible
 hardware device, creates the validated canonical `HeightTileSurface`, and
 continuously draws its deterministic terrain with bounded distance-selected
-LOD, query-derived cyan normal pin, material sphere, procedural-checker cube,
-and HDR environment through named
+LOD, material sphere, procedural-checker cube, and HDR environment through
+named
 `Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` graph passes. The first
 three render into a resize-owned `R16G16B16A16_FLOAT` scene target; `ToneMap`
 writes the final back buffer. The triple frame-resource lifecycle reports
@@ -124,7 +124,9 @@ public `shark::renderer::Renderer`; the sandbox creates the D3D12 `Device` and
 passes it to `Renderer::create` only at the composition root. Press `F1` to
 toggle terrain fill between solid and wireframe. Press `F2` to cycle shaded,
 ground/rock weight, and mapped world-normal views. Press `F3` to toggle between
-HDR image-based lighting and the retained procedural-daylight fallback. Use
+HDR image-based lighting and the retained procedural-daylight fallback. Press
+`F4` to toggle the query-derived cyan normal pin and magenta chunk bounds,
+which are off by default. Use
 `W`/`S` along the
 camera forward axis, `A`/`D` to strafe, `Q`/`E` to move down/up, hold `Shift`
 to move faster, and hold the right mouse button while dragging to look around.
@@ -170,15 +172,17 @@ For the visual acceptance check, run `SharkSandbox` without arguments. A solid
 height tile must show tiled ground and rock materials blended by slope and
 height, mapped surface detail, and direct-sun plus environment response. The
 glossy neutral material sphere must reflect the same environment used by the
-terrain. The initial pose must show 16 magenta depth-tested chunk AABBs and log
-`Terrain chunks: 16 / 16 visible (LOD0=8, coarse=8)`. Surface chunks and
-matching bounds must disappear together when the camera turns away; the
-deterministic smoke pose must reach
-`5 / 16 visible (LOD0=3, coarse=2)`. In `F1` wireframe, equal and mixed LOD
+terrain. The initial pose must log
+`Terrain chunks: 93 / 225 visible (LOD0=3, coarse=90)`. The diagnostics start
+off; press `F4` and confirm the 93 magenta depth-tested chunk AABBs and cyan
+query pin appear. Surface chunks and matching bounds must disappear together
+when the camera turns away; the deterministic smoke pose must retain that
+split after resize and reach
+`71 / 225 visible (LOD0=4, coarse=67)`. In `F1` wireframe, equal and mixed LOD
 neighbors must retain every shared edge segment without cracks, skirts, or
 missing corners. The cyan query pin must begin on the canonical LOD0 surface
-and extend along its exact triangle normal. `F1` must keep the pin connected
-and visible. `F2` must cycle
+and extend along its exact triangle normal. `F1` must keep the enabled pin
+connected and visible. `F2` must cycle
 shaded, complementary material-weight, and mapped world-normal views without
 changing the canonical geometry.
 The textured cube must retain correct hidden-surface occlusion and perspective.
@@ -248,8 +252,16 @@ WARP with:
 & .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe --present-smoke --warp
 ```
 
-Each command shows a real PMv2-aware window, presents exactly 1,000 successful
-four-pass frames, changes the physical client area from `1280x720` to
+The hardware command presents exactly 1,000 successful four-pass frames. The
+normal packaged-WARP command presents 600; the focused packaged-WARP
+GPU-validation command below presents 120:
+
+```powershell
+& .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe --present-smoke --warp --gpu-validation
+```
+
+Each command shows a real PMv2-aware window, changes the physical client area
+from `1280x720` to
 `960x600`, proves the projection and `D32_FLOAT` depth extent follow the
 aspect-changing resize, proves no frame is submitted while minimized, restores,
 shuts down `Renderer` before the window, and checks new
@@ -275,29 +287,41 @@ material arrays, and four derived HDR environment textures. The deterministic
 `64x32` linear-HDR source is CPU-only. Its GPU derivatives are a `32x32`
 six-mip radiance cube, `8x8` one-mip diffuse-irradiance cube, `32x32` six-mip
 GGX-prefiltered specular cube, and `32x32` split-sum BRDF LUT: 79 subresources
-and 284,608 meaningful RGBA32-float bytes. The 16 row-major chunks use the
-same 1,089 terrain vertices, 16 contiguous 384-index LOD0 ranges, and 16
-contiguous 240-index boundary-preserving coarse ranges. The 9,984 surface
-indices are followed by 128 bounds vertices/384 bounds indices, the query
-marker, and the 266-vertex/1,584-index material sphere in the same terrain
-buffers, so startup still creates four geometry buffers. The packed terrain
-index offsets are 0 for LOD0, 6,144 for coarse, 9,984 for bounds, 10,368 for
-the marker, and 10,374 for the sphere; the buffer contains 11,958 indices.
-The retained DDS
+and 284,608 meaningful RGBA32-float bytes. T-006's active capacity fixture has
+`241x241` samples/`240x240` cells at four-meter spacing over `960x960` meters,
+58,081 shared vertices, and 225
+row-major `16x16`-cell chunks. Its contiguous ranges contain 115,200 LOD0
+triangles/345,600 indices (1,536 per chunk) followed by 64,800
+boundary-preserving coarse triangles/194,400 indices (864 per chunk), with a
+measured 0.5-meter maximum coarse error. The 540,000 surface indices are
+followed by 1,800
+bounds vertices/5,400 bounds indices, the query marker, and the
+266-vertex/1,584-index material sphere in the same terrain buffers, so startup
+still creates four geometry buffers. Packed index offsets are 0 for LOD0,
+345,600 for coarse, 540,000 for bounds, 545,400 for the marker, and 545,406 for
+the sphere; the buffer contains 546,990 indices. The retained DDS
 cubemap remains a separate asset/upload proof. The startup list ends with 13
 initialization barriers.
+
+The meaningful terrain surface payload is 1,393,944 vertex bytes plus 1,080,000
+index bytes, or 2,473,944 bytes. Bounds and marker diagnostics add 54,156
+bytes; the packed sphere adds another 9,552. The vertex/index resource widths are
+1,443,672/1,093,980 bytes (2,537,652 logical bytes), and their committed D3D12
+allocation is 2,621,440 bytes. The logged CPU-build boundary covers fixture
+construction through chunk/LOD generation and query proof; the latest hardware
+runs measured 6,049.240 ms in Debug and 82.738 ms in Release. These are recorded
+development measurements, not cross-machine performance gates.
 
 Every submitted frame records one outer `Frame` event with nested `Terrain`,
 `TexturedCube`, `Skybox`, and `ToneMap` events. Its exact graph has 15 imports,
 four passes, three dependencies, six recorded transitions, and 31 elided
 transitions. With `V0` visible LOD0 chunks, `Vc` visible coarse chunks, and
-`V=V0+Vc`, it issues `2V + 4` indexed draws: `V0` 384-index terrain surfaces,
-`Vc` 240-index terrain surfaces, the material sphere, `V` matching 24-index
-chunk bounds, the terrain query marker, 36-index textured cube, and 36-index
-skybox.
-One non-indexed fullscreen-triangle tone-map draw follows. The fixed smoke
-poses therefore issue 36 indexed draws/7,038 indices at `V0/Vc=8/8`, then 14
-indexed draws/3,414 indices at `V0/Vc=3/2`. The frame
+`V=V0+Vc`, it issues `V0` 1,536-index terrain surfaces, `Vc` 864-index terrain
+surfaces, the material sphere, 36-index textured cube, and 36-index skybox.
+`F4` additionally enables `V` matching 24-index chunk bounds and the six-index
+query marker; those diagnostics are off by default. One non-indexed
+fullscreen-triangle tone-map draw follows. The initial and resized smoke poses
+show 93 chunks at `V0/Vc=3/90`; the turned pose shows 71 at `4/67`. The frame
 retains four texture-table bindings and one reversed-Z depth clear. Terrain
 owns the clear, cube preserves it, sky uses the read-only DSV, and `ToneMap`
 reads the HDR scene target while writing the swap-chain back buffer.
@@ -326,6 +350,27 @@ resolve per frame, one completed timing sample per retired submission, and a
 ten-query per-context high-water. Duration magnitude is deliberately not a
 performance gate because adapter speed and timestamp resolution vary.
 
+The completed presentation evidence is:
+
+- Debug and Release hardware, 1,000 frames: 225,000/87,500/137,500 chunks
+  tested/visible/culled, 3,250/84,250 LOD0/coarse draws, and
+  4,992,000/72,792,000 LOD0/coarse indices;
+- Debug packaged WARP, 600 frames: 135,000/52,500/82,500 chunks,
+  1,950/50,550 draws, and 2,995,200/43,675,200 indices; and
+- Debug packaged WARP with GPU validation, 120 frames:
+  27,000/10,500/16,500 chunks, 390/10,110 draws, and
+  599,040/8,735,040 indices.
+
+Each path exercised a 30-frame diagnostic interval with 2,790 bounds draws and
+30 query-marker draws, then finished with zero Direct3D errors and zero live
+child objects. Debug and Release builds passed, and each configuration passed
+`135/135` unit CTests. The full Debug run covered 302,707 assertions across
+those 135 cases. Build/shader
+labels passed `3/3` and the platform/device integration subset passed `3/3` in
+each configuration. The latest focused capacity contract measured 5.98 seconds
+in Debug and 0.09 seconds in Release; the large-fixture LOD smoke measured 5.91
+and 0.09 seconds.
+
 Run the focused renderer composer, planner, D3D12 executor, scene helpers, and
 GPU timestamp-state unit coverage directly with:
 
@@ -339,8 +384,10 @@ GPU timestamp-state unit coverage directly with:
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][height-tile][chunks]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][height-tile][lod]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][height-tile][capacity]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[renderer][terrain][culling]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[renderer][terrain][lod]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[renderer][terrain][lod][smoke]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][material]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[assets][dds][cubemap]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[assets][environment][ibl]"
@@ -391,10 +438,12 @@ tracked fixture, strict loader, app-local deployment, retained startup upload,
 and deliberately absent per-frame sky read. See
 [the terrain contract](TERRAIN.md) for canonical ownership, exact query
 semantics, full-resolution chunks, bounded visual LOD, frustum culling,
-material fixture, render-mesh separation, and diagnostic rules. `T-005`
-completed one boundary-preserving coarse terrain LOD on July 19, 2026 without
-changing canonical queries. The upcoming increment is `R-001`, seeded, bounded
-GPU rain driven by adjustable precipitation rate and wind.
+material fixture, render-mesh separation, and diagnostic rules. `T-006`
+completed the bounded `241x241`-sample resident capacity fixture on July 19,
+2026 while retaining canonical queries and global `R16_UINT` indices. Its
+shallow alternating `+/-0.25`-meter heights are a capacity diagnostic, not
+natural terrain. The next increment is `T-007`: replace those heights with
+fixed-seed, mostly flat natural rolling terrain; the lake remains deferred.
 
 ## Visual Studio
 

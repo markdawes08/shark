@@ -39,6 +39,13 @@ TEST_CASE(
     REQUIRE(
         config.environment_lighting.brdf_lut.subresources == nullptr);
 
+    const TerrainChunkUploadView chunk;
+    REQUIRE(chunk.first_index == 0);
+    REQUIRE(chunk.index_count == 0);
+    REQUIRE(chunk.coarse_first_index == 0);
+    REQUIRE(chunk.coarse_index_count == 0);
+    REQUIRE(chunk.maximum_geometric_error == 0.0);
+
     const RenderFrameData frame;
     REQUIRE(
         frame.terrain_mode == TerrainRenderMode::solid);
@@ -97,5 +104,14 @@ TEST_CASE(
     REQUIRE(changed != baseline);
     changed = baseline;
     changed.terrain_chunks_visible = 1;
+    REQUIRE(changed != baseline);
+    changed = baseline;
+    changed.terrain_coarse_draw_calls = 1;
+    REQUIRE(changed != baseline);
+    changed = baseline;
+    changed.terrain_lod0_indices = 384;
+    REQUIRE(changed != baseline);
+    changed = baseline;
+    changed.terrain_maximum_geometric_error = 0.125;
     REQUIRE(changed != baseline);
 }

@@ -207,6 +207,111 @@ expected_bounds_line_positions(
     }};
 }
 
+using TerrainEdge = std::pair<std::uint16_t, std::uint16_t>;
+
+[[nodiscard]] constexpr TerrainEdge normalized_edge(
+    const std::uint16_t first,
+    const std::uint16_t second) noexcept
+{
+    return {
+        std::min(first, second),
+        std::max(first, second),
+    };
+}
+
+[[nodiscard]] std::vector<TerrainEdge> expected_chunk_boundary_edges(
+    const shark::terrain::HeightTile& tile,
+    const shark::terrain::HeightTileChunk& chunk)
+{
+    std::vector<TerrainEdge> result;
+    result.reserve(
+        static_cast<std::size_t>(
+            chunk.cell_columns + chunk.cell_rows) *
+        2U);
+    const auto first_x = chunk.first_cell_x;
+    const auto final_x = first_x + chunk.cell_columns;
+    const auto first_z = chunk.first_cell_z;
+    const auto final_z = first_z + chunk.cell_rows;
+    for (std::uint32_t x = first_x; x < final_x; ++x) {
+        result.push_back(normalized_edge(
+            static_cast<std::uint16_t>(
+                sample_index(x, first_z, tile.sample_columns)),
+            static_cast<std::uint16_t>(
+                sample_index(x + 1U, first_z, tile.sample_columns))));
+        result.push_back(normalized_edge(
+            static_cast<std::uint16_t>(
+                sample_index(x, final_z, tile.sample_columns)),
+            static_cast<std::uint16_t>(
+                sample_index(x + 1U, final_z, tile.sample_columns))));
+    }
+    for (std::uint32_t z = first_z; z < final_z; ++z) {
+        result.push_back(normalized_edge(
+            static_cast<std::uint16_t>(
+                sample_index(first_x, z, tile.sample_columns)),
+            static_cast<std::uint16_t>(
+                sample_index(first_x, z + 1U, tile.sample_columns))));
+        result.push_back(normalized_edge(
+            static_cast<std::uint16_t>(
+                sample_index(final_x, z, tile.sample_columns)),
+            static_cast<std::uint16_t>(
+                sample_index(final_x, z + 1U, tile.sample_columns))));
+    }
+    std::sort(result.begin(), result.end());
+    return result;
+}
+
+[[nodiscard]] std::vector<TerrainEdge> emitted_chunk_boundary_edges(
+    const shark::terrain::HeightTile& tile,
+    const shark::terrain::HeightTileChunk& chunk,
+    const std::vector<std::uint16_t>& indices,
+    const std::size_t first_index,
+    const std::size_t index_count)
+{
+    std::vector<TerrainEdge> result;
+    const auto first_x = chunk.first_cell_x;
+    const auto final_x = first_x + chunk.cell_columns;
+    const auto first_z = chunk.first_cell_z;
+    const auto final_z = first_z + chunk.cell_rows;
+    const auto range_end = first_index + index_count;
+    for (auto index = first_index; index < range_end; index += 3U) {
+        const std::array triangle{
+            indices[index],
+            indices[index + 1U],
+            indices[index + 2U],
+        };
+        for (std::size_t edge = 0; edge < triangle.size(); ++edge) {
+            const auto first = triangle[edge];
+            const auto second =
+                triangle[(edge + 1U) % triangle.size()];
+            const auto first_x_coordinate =
+                static_cast<std::uint32_t>(first) %
+                tile.sample_columns;
+            const auto first_z_coordinate =
+                static_cast<std::uint32_t>(first) /
+                tile.sample_columns;
+            const auto second_x_coordinate =
+                static_cast<std::uint32_t>(second) %
+                tile.sample_columns;
+            const auto second_z_coordinate =
+                static_cast<std::uint32_t>(second) /
+                tile.sample_columns;
+            const auto on_vertical_boundary =
+                first_x_coordinate == second_x_coordinate &&
+                (first_x_coordinate == first_x ||
+                 first_x_coordinate == final_x);
+            const auto on_horizontal_boundary =
+                first_z_coordinate == second_z_coordinate &&
+                (first_z_coordinate == first_z ||
+                 first_z_coordinate == final_z);
+            if (on_vertical_boundary || on_horizontal_boundary) {
+                result.push_back(normalized_edge(first, second));
+            }
+        }
+    }
+    std::sort(result.begin(), result.end());
+    return result;
+}
+
 } // namespace
 
 TEST_CASE(
@@ -618,6 +723,207 @@ TEST_CASE(
 }
 
 TEST_CASE(
+    "coarse chunk layout is bounded and preserves every deterministic seam",
+    "[terrain][height-tile][lod][contract]")
+{
+    using namespace shark;
+
+    STATIC_REQUIRE(
+        terrain::deterministic_tile_coarse_chunk_index_count == 240);
+    STATIC_REQUIRE(
+        terrain::deterministic_tile_coarse_index_count == 3'840);
+    STATIC_REQUIRE(
+        terrain::deterministic_tile_coarse_maximum_geometric_error ==
+        0.140625);
+
+    const auto tile = terrain::make_deterministic_height_tile();
+    const auto mesh_result = terrain::build_lod0_mesh(tile);
+    const auto lod0_result = terrain::build_lod0_chunk_layout(
+        tile,
+        terrain::deterministic_tile_chunk_cell_columns,
+        terrain::deterministic_tile_chunk_cell_rows);
+    const auto coarse_result =
+        terrain::build_boundary_preserving_coarse_chunk_layout(
+            tile,
+            terrain::deterministic_tile_chunk_cell_columns,
+            terrain::deterministic_tile_chunk_cell_rows);
+    REQUIRE(mesh_result);
+    REQUIRE(lod0_result);
+    REQUIRE(coarse_result);
+    const auto& mesh = mesh_result.value();
+    const auto& lod0 = lod0_result.value();
+    const auto& coarse = coarse_result.value();
+
+    REQUIRE(coarse.chunks.size() == lod0.chunks.size());
+    REQUIRE(coarse.chunks.size() ==
+        terrain::deterministic_tile_chunk_count);
+    REQUIRE(coarse.indices.size() ==
+        terrain::deterministic_tile_coarse_index_count);
+    REQUIRE(coarse.maximum_geometric_error ==
+        terrain::deterministic_tile_coarse_maximum_geometric_error);
+
+    constexpr std::array<double, 16> expected_chunk_errors{{
+        0.109375,
+        0.109375,
+        0.0625,
+        0.0546875,
+        0.125,
+        0.046875,
+        0.125,
+        0.03515625,
+        0.015625,
+        0.1015625,
+        0.125,
+        0.0859375,
+        0.125,
+        0.109375,
+        0.140625,
+        0.0859375,
+    }};
+
+    std::size_t expected_first_index = 0;
+    for (std::size_t chunk_index = 0;
+         chunk_index < coarse.chunks.size();
+         ++chunk_index) {
+        const auto& lod0_chunk = lod0.chunks[chunk_index];
+        const auto& coarse_chunk = coarse.chunks[chunk_index];
+        REQUIRE(coarse_chunk.first_index == expected_first_index);
+        REQUIRE(coarse_chunk.index_count ==
+            terrain::deterministic_tile_coarse_chunk_index_count);
+        REQUIRE(coarse_chunk.maximum_geometric_error ==
+            expected_chunk_errors[chunk_index]);
+        REQUIRE(coarse_chunk.first_index +
+                coarse_chunk.index_count <=
+            coarse.indices.size());
+
+        double projected_twice_area = 0.0;
+        const auto range_end =
+            coarse_chunk.first_index + coarse_chunk.index_count;
+        for (auto index = coarse_chunk.first_index;
+             index < range_end;
+             index += 3U) {
+            const auto first = coarse.indices[index];
+            const auto second = coarse.indices[index + 1U];
+            const auto third = coarse.indices[index + 2U];
+            REQUIRE(first < mesh.positions.size());
+            REQUIRE(second < mesh.positions.size());
+            REQUIRE(third < mesh.positions.size());
+            REQUIRE(first != second);
+            REQUIRE(second != third);
+            REQUIRE(first != third);
+
+            const auto first_x =
+                static_cast<std::uint32_t>(first) %
+                tile.sample_columns;
+            const auto first_z =
+                static_cast<std::uint32_t>(first) /
+                tile.sample_columns;
+            const auto second_x =
+                static_cast<std::uint32_t>(second) %
+                tile.sample_columns;
+            const auto second_z =
+                static_cast<std::uint32_t>(second) /
+                tile.sample_columns;
+            const auto third_x =
+                static_cast<std::uint32_t>(third) %
+                tile.sample_columns;
+            const auto third_z =
+                static_cast<std::uint32_t>(third) /
+                tile.sample_columns;
+            REQUIRE(first_x >= lod0_chunk.first_cell_x);
+            REQUIRE(first_x <=
+                lod0_chunk.first_cell_x +
+                    lod0_chunk.cell_columns);
+            REQUIRE(first_z >= lod0_chunk.first_cell_z);
+            REQUIRE(first_z <=
+                lod0_chunk.first_cell_z + lod0_chunk.cell_rows);
+            REQUIRE(second_x >= lod0_chunk.first_cell_x);
+            REQUIRE(second_x <=
+                lod0_chunk.first_cell_x +
+                    lod0_chunk.cell_columns);
+            REQUIRE(second_z >= lod0_chunk.first_cell_z);
+            REQUIRE(second_z <=
+                lod0_chunk.first_cell_z + lod0_chunk.cell_rows);
+            REQUIRE(third_x >= lod0_chunk.first_cell_x);
+            REQUIRE(third_x <=
+                lod0_chunk.first_cell_x +
+                    lod0_chunk.cell_columns);
+            REQUIRE(third_z >= lod0_chunk.first_cell_z);
+            REQUIRE(third_z <=
+                lod0_chunk.first_cell_z + lod0_chunk.cell_rows);
+
+            const auto first_edge = subtract(
+                mesh.positions[second],
+                mesh.positions[first]);
+            const auto second_edge = subtract(
+                mesh.positions[third],
+                mesh.positions[first]);
+            const auto face_normal = cross(
+                first_edge,
+                second_edge);
+            REQUIRE(math::is_finite(face_normal));
+            REQUIRE(face_normal.y > 0.0F);
+            projected_twice_area +=
+                static_cast<double>(face_normal.y);
+        }
+        const auto chunk_width =
+            static_cast<double>(lod0_chunk.cell_columns) *
+            tile.sample_spacing;
+        const auto chunk_depth =
+            static_cast<double>(lod0_chunk.cell_rows) *
+            tile.sample_spacing;
+        REQUIRE(projected_twice_area ==
+            Catch::Approx(2.0 * chunk_width * chunk_depth)
+                .margin(0.000001));
+
+        const auto expected_boundary =
+            expected_chunk_boundary_edges(tile, lod0_chunk);
+        REQUIRE(emitted_chunk_boundary_edges(
+                    tile,
+                    lod0_chunk,
+                    lod0.indices,
+                    lod0_chunk.first_index,
+                    lod0_chunk.index_count) ==
+            expected_boundary);
+        REQUIRE(emitted_chunk_boundary_edges(
+                    tile,
+                    lod0_chunk,
+                    coarse.indices,
+                    coarse_chunk.first_index,
+                    coarse_chunk.index_count) ==
+            expected_boundary);
+
+        expected_first_index += coarse_chunk.index_count;
+    }
+    REQUIRE(expected_first_index == coarse.indices.size());
+
+    // The first 2x2 patch is on the chunk's top and left edges. Its four
+    // center-fan triangles therefore become six triangles with exact
+    // one-sample boundary segments.
+    constexpr std::array<std::uint16_t, 18>
+        expected_first_patch_indices{{
+            0, 34, 1,
+            1, 34, 2,
+            2, 34, 68,
+            68, 34, 66,
+            66, 34, 33,
+            33, 34, 0,
+        }};
+    REQUIRE(std::equal(
+        expected_first_patch_indices.begin(),
+        expected_first_patch_indices.end(),
+        coarse.indices.begin()));
+
+    const auto lod0_after_result =
+        terrain::build_lod0_chunk_layout(
+            tile,
+            terrain::deterministic_tile_chunk_cell_columns,
+            terrain::deterministic_tile_chunk_cell_rows);
+    REQUIRE(lod0_after_result);
+    REQUIRE(lod0_after_result.value() == lod0);
+}
+
+TEST_CASE(
     "LOD0 chunk layout supports partial edge chunks",
     "[terrain][height-tile][chunks][partial]")
 {
@@ -740,6 +1046,127 @@ TEST_CASE(
 }
 
 TEST_CASE(
+    "coarse layout falls back exactly for odd and partial chunks",
+    "[terrain][height-tile][lod][partial]")
+{
+    using namespace shark;
+
+    auto tile = make_flat_tile(12, 7);
+    tile.sample_spacing = 0.25F;
+    tile.origin = {-3.0F, -5.0F, 2.0F};
+    for (std::uint32_t z = 0; z < tile.sample_rows; ++z) {
+        for (std::uint32_t x = 0;
+             x < tile.sample_columns;
+             ++x) {
+            tile.height_offsets[sample_index(
+                x,
+                z,
+                tile.sample_columns)] =
+                static_cast<float>(x + z * 10U) / 8.0F;
+        }
+    }
+
+    const auto lod0_result =
+        terrain::build_lod0_chunk_layout(tile, 4, 4);
+    const auto coarse_result =
+        terrain::build_boundary_preserving_coarse_chunk_layout(
+            tile,
+            4,
+            4);
+    REQUIRE(lod0_result);
+    REQUIRE(coarse_result);
+    const auto& lod0 = lod0_result.value();
+    const auto& coarse = coarse_result.value();
+    REQUIRE(coarse.chunks.size() == lod0.chunks.size());
+    REQUIRE(coarse.chunks.size() == 6);
+    REQUIRE(coarse.indices.size() == 348);
+    REQUIRE(coarse.maximum_geometric_error == 0.0);
+
+    constexpr std::array<std::size_t, 6> expected_index_counts{{
+        72,
+        72,
+        72,
+        48,
+        48,
+        36,
+    }};
+    std::size_t expected_first_index = 0;
+    for (std::size_t chunk_index = 0;
+         chunk_index < coarse.chunks.size();
+         ++chunk_index) {
+        const auto& lod0_chunk = lod0.chunks[chunk_index];
+        const auto& coarse_chunk = coarse.chunks[chunk_index];
+        REQUIRE(coarse_chunk.first_index == expected_first_index);
+        REQUIRE(coarse_chunk.index_count ==
+            expected_index_counts[chunk_index]);
+        REQUIRE(coarse_chunk.maximum_geometric_error == 0.0);
+        REQUIRE(emitted_chunk_boundary_edges(
+                    tile,
+                    lod0_chunk,
+                    coarse.indices,
+                    coarse_chunk.first_index,
+                    coarse_chunk.index_count) ==
+            expected_chunk_boundary_edges(tile, lod0_chunk));
+
+        if (chunk_index >= 2U) {
+            REQUIRE(coarse_chunk.index_count ==
+                lod0_chunk.index_count);
+            for (std::size_t local_index = 0;
+                 local_index < coarse_chunk.index_count;
+                 ++local_index) {
+                REQUIRE(coarse.indices[
+                            coarse_chunk.first_index +
+                            local_index] ==
+                    lod0.indices[
+                        lod0_chunk.first_index + local_index]);
+            }
+        }
+        expected_first_index += coarse_chunk.index_count;
+    }
+    REQUIRE(expected_first_index == coarse.indices.size());
+
+    SECTION("one exact even chunk is reduced")
+    {
+        const auto one_chunk =
+            terrain::build_boundary_preserving_coarse_chunk_layout(
+                make_flat_tile(9, 9),
+                8,
+                8);
+        REQUIRE(one_chunk);
+        REQUIRE(one_chunk.value().chunks.size() == 1);
+        REQUIRE(one_chunk.value().indices.size() == 240);
+        REQUIRE(one_chunk.value().chunks.front().first_index == 0);
+        REQUIRE(one_chunk.value().chunks.front().index_count == 240);
+        REQUIRE(
+            one_chunk.value().maximum_geometric_error == 0.0);
+    }
+
+    SECTION("one oversized partial chunk copies LOD0")
+    {
+        const auto deterministic =
+            terrain::make_deterministic_height_tile();
+        const auto one_lod0 = terrain::build_lod0_chunk_layout(
+            deterministic,
+            100,
+            100);
+        const auto one_coarse =
+            terrain::build_boundary_preserving_coarse_chunk_layout(
+                deterministic,
+                100,
+                100);
+        REQUIRE(one_lod0);
+        REQUIRE(one_coarse);
+        REQUIRE(one_coarse.value().chunks.size() == 1);
+        REQUIRE(one_coarse.value().indices ==
+            one_lod0.value().indices);
+        REQUIRE(one_coarse.value().chunks.front().index_count ==
+            terrain::deterministic_tile_index_count);
+        REQUIRE(
+            one_coarse.value().maximum_geometric_error == 0.0);
+    }
+}
+
+TEST_CASE(
     "LOD0 chunk layout rejects invalid dimensions and tiles",
     "[terrain][height-tile][chunks][validation]")
 {
@@ -796,6 +1223,78 @@ TEST_CASE(
             make_flat_tile(257, 257),
             8,
             8);
+        REQUIRE_FALSE(result);
+        REQUIRE(result.error().code() ==
+            core::ErrorCode::unsupported);
+    }
+}
+
+TEST_CASE(
+    "coarse chunk layout rejects invalid dimensions and tiles",
+    "[terrain][height-tile][lod][validation]")
+{
+    using namespace shark;
+
+    SECTION("zero chunk width")
+    {
+        const auto result =
+            terrain::build_boundary_preserving_coarse_chunk_layout(
+                make_flat_tile(2, 2),
+                0,
+                1);
+        REQUIRE_FALSE(result);
+        REQUIRE(result.error().code() ==
+            core::ErrorCode::invalid_argument);
+    }
+
+    SECTION("zero chunk height")
+    {
+        const auto result =
+            terrain::build_boundary_preserving_coarse_chunk_layout(
+                make_flat_tile(2, 2),
+                1,
+                0);
+        REQUIRE_FALSE(result);
+        REQUIRE(result.error().code() ==
+            core::ErrorCode::invalid_argument);
+    }
+
+    SECTION("malformed source tile")
+    {
+        auto tile = make_flat_tile(3, 3);
+        tile.height_offsets.pop_back();
+        const auto result =
+            terrain::build_boundary_preserving_coarse_chunk_layout(
+                tile,
+                2,
+                2);
+        REQUIRE_FALSE(result);
+        REQUIRE(result.error().code() ==
+            core::ErrorCode::invalid_argument);
+    }
+
+    SECTION("nonfinite source tile")
+    {
+        auto tile = make_flat_tile(3, 3);
+        tile.height_offsets[4] =
+            std::numeric_limits<float>::quiet_NaN();
+        const auto result =
+            terrain::build_boundary_preserving_coarse_chunk_layout(
+                tile,
+                2,
+                2);
+        REQUIRE_FALSE(result);
+        REQUIRE(result.error().code() ==
+            core::ErrorCode::invalid_argument);
+    }
+
+    SECTION("uint16 vertex capacity")
+    {
+        const auto result =
+            terrain::build_boundary_preserving_coarse_chunk_layout(
+                make_flat_tile(257, 257),
+                8,
+                8);
         REQUIRE_FALSE(result);
         REQUIRE(result.error().code() ==
             core::ErrorCode::unsupported);

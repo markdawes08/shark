@@ -1,6 +1,6 @@
 # Direct3D 12 Device Contract
 
-- **Completed through:** `T-004`
+- **Completed through:** `T-005`
 - **Last verified:** July 19, 2026
 
 G-001 establishes adapter discovery, diagnostics, capability reporting, and
@@ -198,7 +198,9 @@ transitions plus four texture-table bindings, and every submission retires
 during explicit shutdown before frame resources are released. S-003 retains
 four geometry buffers. T-004 retains that resource count while issuing
 `2V + 4` indexed draws for `V` visible chunks plus one fullscreen tone-map draw
-and ten timestamps per frame. The smoke poses prove `V=16` and `V=5`.
+and ten timestamps per frame. T-005 retains the same resource/draw count while
+each visible surface selects a 384-index LOD0 or 240-index coarse range. The
+smoke poses prove `V=16` and `V=5`, with LOD0/coarse splits of `8/8` and `3/2`.
 
 Renderer shutdown explicitly drains and releases its command list, all scene
 and tone-map PSOs/root signatures, descriptor heap, checker/cubemap/material/
@@ -215,11 +217,12 @@ the G-005 input, math, depth, static-resource, and acceptance rules. See
 [the minimal render-graph contract](RENDER_GRAPH.md) for the G-006
 platform-independent planner and D3D12 legacy-barrier executor.
 See [the terrain contract](TERRAIN.md) for the canonical query, deterministic
-full-resolution chunks, frustum culling, and diagnostic rendering modes, and
+full-resolution chunks, bounded visual LOD, frustum culling, and diagnostic
+rendering modes, and
 [the skybox contract](SKYBOX.md) for the S-003 HDR environment, analytic sun,
 and procedural fallback. T-002 adds no device capability or lifetime policy;
 REN-001, T-003, and S-003 likewise change no device capability or selection
-policy. T-004 was completed on July 19, 2026 without changing adapter,
+policy. T-005 was completed on July 19, 2026 without changing adapter,
 capability, debug-layer, device, or lifetime policy. The next increment is
-`T-005`, one bounded coarser terrain LOD with crack-free seams and
-full-resolution canonical queries.
+`R-001`, seeded, bounded GPU rain driven by adjustable precipitation rate and
+wind.

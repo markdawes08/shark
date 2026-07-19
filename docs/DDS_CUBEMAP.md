@@ -1,6 +1,6 @@
 # DDS Cubemap Asset and Upload Contract
 
-- **Completed through:** `T-004`
+- **Completed through:** `T-005`
 - **Last verified:** July 19, 2026
 
 S-001 establishes Shark's first file-backed texture asset. It loads one
@@ -175,10 +175,11 @@ frame graph now has 15 imports, four ordered
 `Terrain`/`TexturedCube`/`Skybox`/`ToneMap` passes, three dependencies, six
 transitions, 31 elisions, four texture-table binds, and ten timestamps per
 frame. With `V` visible terrain chunks it contains `2V + 4` indexed draws plus
-the tone-map draw. T-004's chunk ranges and bounds, the query marker, and the
-S-003 material sphere are packed into the existing terrain buffers, preserving
-four total geometry buffers. The DDS-backed cube/sky draw and upload counts do
-not vary with terrain visibility.
+the tone-map draw. Each visible terrain draw selects its 384-index LOD0 or
+240-index coarse range. T-005's combined 9,984 surface indices, chunk bounds,
+query marker, and S-003 material sphere remain packed into the existing terrain
+buffers, preserving four total geometry buffers. The DDS-backed cube/sky draw
+and upload counts do not vary with terrain visibility or LOD.
 Cubemap creation/upload counters remain startup invariants, but there is no
 per-frame cubemap read or binding to count.
 Hardware and normal WARP execute 1,000 successful presents; focused WARP with
@@ -202,7 +203,6 @@ longer exposes a public `Presentation` class. T-003 adds three separate
 terrain arrays and descriptors without repurposing or sampling the retained
 cubemap. S-003 was completed on July 18, 2026 and defines its separate
 project-generated environment-lighting asset contract without treating this
-orientation fixture as production content. T-004 was completed on July 19,
-2026 without changing the DDS contract. The next increment is `T-005`, one
-bounded coarser terrain LOD with crack-free seams and full-resolution
-canonical queries.
+orientation fixture as production content. T-005 was completed on July 19,
+2026 without changing the DDS contract. The next increment is `R-001`, seeded,
+bounded GPU rain driven by adjustable precipitation rate and wind.

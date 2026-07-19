@@ -9,6 +9,7 @@
 #include "gpu_timestamp_state.hpp"
 #include "render_graph_executor.hpp"
 #include "../terrain_frustum_culling.hpp"
+#include "../terrain_lod_selection.hpp"
 
 #include <directx/d3d12.h>
 #include <dxgi1_6.h>
@@ -746,26 +747,51 @@ static_assert(
             static_cast<std::size_t>(chunk.index_count);
         if (first_index != expected_first_index ||
             index_count == 0 ||
-            index_count % 6U != 0 ||
+            index_count % 3U != 0 ||
             first_index > terrain.index_count ||
             index_count > terrain.index_count - first_index ||
             !math::is_finite(chunk.bounds_minimum) ||
             !math::is_finite(chunk.bounds_maximum) ||
             chunk.bounds_minimum.x > chunk.bounds_maximum.x ||
             chunk.bounds_minimum.y > chunk.bounds_maximum.y ||
-            chunk.bounds_minimum.z > chunk.bounds_maximum.z) {
+            chunk.bounds_minimum.z > chunk.bounds_maximum.z ||
+            !std::isfinite(chunk.maximum_geometric_error) ||
+            chunk.maximum_geometric_error < 0.0) {
             return core::Result<void>::failure(graphics_error(
                 core::ErrorCode::invalid_argument,
-                "Terrain chunks must provide contiguous triangle "
-                "ranges and finite ordered bounds"));
+                "Terrain chunks must provide a contiguous LOD0 "
+                "triangle prefix, finite ordered bounds, and finite "
+                "nonnegative error"));
+        }
+        expected_first_index += index_count;
+    }
+    for (std::size_t index = 0;
+         index < terrain.chunk_count;
+         ++index) {
+        const auto& chunk = terrain.chunks[index];
+        const auto first_index =
+            static_cast<std::size_t>(chunk.coarse_first_index);
+        const auto index_count =
+            static_cast<std::size_t>(chunk.coarse_index_count);
+        if (first_index != expected_first_index ||
+            index_count == 0 ||
+            index_count % 3U != 0 ||
+            index_count >
+                static_cast<std::size_t>(chunk.index_count) ||
+            first_index > terrain.index_count ||
+            index_count > terrain.index_count - first_index) {
+            return core::Result<void>::failure(graphics_error(
+                core::ErrorCode::invalid_argument,
+                "Terrain chunks must provide a contiguous bounded "
+                "coarse-triangle suffix after every LOD0 range"));
         }
         expected_first_index += index_count;
     }
     if (expected_first_index != terrain.index_count) {
         return core::Result<void>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
-            "Terrain chunk ranges must cover the complete index "
-            "stream exactly once"));
+            "Terrain LOD0 and coarse chunk ranges must cover the "
+            "complete index stream exactly once"));
     }
     for (std::size_t index = 0;
          index < terrain.index_count;
@@ -783,44 +809,51 @@ static_assert(
          chunk_index < terrain.chunk_count;
          ++chunk_index) {
         const auto& chunk = terrain.chunks[chunk_index];
-        const auto range_end =
-            static_cast<std::size_t>(chunk.first_index) +
-            static_cast<std::size_t>(chunk.index_count);
-        for (auto index =
-                 static_cast<std::size_t>(chunk.first_index);
-             index < range_end;
-             ++index) {
-            math::Float3 position{};
-            std::memcpy(
-                &position,
-                vertex_bytes +
-                    static_cast<std::size_t>(
-                        terrain.indices[index]) *
-                        terrain.vertex_stride,
-                sizeof(position));
-            if (!math::is_finite(position) ||
-                position.x <
-                    chunk.bounds_minimum.x -
-                        chunk_bounds_tolerance ||
-                position.y <
-                    chunk.bounds_minimum.y -
-                        chunk_bounds_tolerance ||
-                position.z <
-                    chunk.bounds_minimum.z -
-                        chunk_bounds_tolerance ||
-                position.x >
-                    chunk.bounds_maximum.x +
-                        chunk_bounds_tolerance ||
-                position.y >
-                    chunk.bounds_maximum.y +
-                        chunk_bounds_tolerance ||
-                position.z >
-                    chunk.bounds_maximum.z +
-                        chunk_bounds_tolerance) {
-                return core::Result<void>::failure(graphics_error(
-                    core::ErrorCode::invalid_argument,
-                    "Terrain chunk bounds must enclose every indexed "
-                    "LOD0 vertex"));
+        const std::array ranges{
+            std::pair{
+                static_cast<std::size_t>(chunk.first_index),
+                static_cast<std::size_t>(chunk.index_count)},
+            std::pair{
+                static_cast<std::size_t>(chunk.coarse_first_index),
+                static_cast<std::size_t>(chunk.coarse_index_count)},
+        };
+        for (const auto& [range_start, range_count] : ranges) {
+            const auto range_end = range_start + range_count;
+            for (auto index = range_start;
+                 index < range_end;
+                 ++index) {
+                math::Float3 position{};
+                std::memcpy(
+                    &position,
+                    vertex_bytes +
+                        static_cast<std::size_t>(
+                            terrain.indices[index]) *
+                            terrain.vertex_stride,
+                    sizeof(position));
+                if (!math::is_finite(position) ||
+                    position.x <
+                        chunk.bounds_minimum.x -
+                            chunk_bounds_tolerance ||
+                    position.y <
+                        chunk.bounds_minimum.y -
+                            chunk_bounds_tolerance ||
+                    position.z <
+                        chunk.bounds_minimum.z -
+                            chunk_bounds_tolerance ||
+                    position.x >
+                        chunk.bounds_maximum.x +
+                            chunk_bounds_tolerance ||
+                    position.y >
+                        chunk.bounds_maximum.y +
+                            chunk_bounds_tolerance ||
+                    position.z >
+                        chunk.bounds_maximum.z +
+                            chunk_bounds_tolerance) {
+                    return core::Result<void>::failure(graphics_error(
+                        core::ErrorCode::invalid_argument,
+                        "Terrain chunk bounds must enclose every "
+                        "indexed LOD0 and coarse vertex"));
+                }
             }
         }
     }
@@ -1020,6 +1053,13 @@ public:
         backend_detail::GpuTimestampSlice timestamp_slice{};
         UINT timestamp_query_base{};
         bool timestamp_results_pending{};
+    };
+
+    struct SelectedTerrainChunk final {
+        std::uint32_t chunk_index{};
+        std::uint32_t first_index{};
+        std::uint32_t index_count{};
+        detail::TerrainLod lod{detail::TerrainLod::lod0};
     };
 
     ~Implementation() noexcept
@@ -1485,7 +1525,8 @@ public:
     }
 
     [[nodiscard]] core::Result<void> update_terrain_visibility(
-        const math::Matrix4x4& view_projection)
+        const math::Matrix4x4& view_projection,
+        const math::Float3 camera_position)
     {
         const auto frustum =
             detail::make_view_frustum(view_projection);
@@ -1498,6 +1539,10 @@ public:
 
         visible_terrain_chunks.clear();
         current_visible_terrain_index_count = 0;
+        current_visible_terrain_lod0_index_count = 0;
+        current_visible_terrain_coarse_index_count = 0;
+        current_visible_terrain_lod0_chunk_count = 0;
+        current_visible_terrain_coarse_chunk_count = 0;
         for (std::size_t chunk_index = 0;
              chunk_index < terrain_chunks.size();
              ++chunk_index) {
@@ -1508,12 +1553,49 @@ public:
                     chunk.bounds_maximum)) {
                 continue;
             }
-            visible_terrain_chunks.push_back(
-                static_cast<std::uint32_t>(chunk_index));
-            current_visible_terrain_index_count += chunk.index_count;
+            const auto lod = detail::select_terrain_lod(
+                camera_position,
+                chunk.bounds_minimum,
+                chunk.bounds_maximum,
+                chunk.maximum_geometric_error);
+            if (!lod.has_value()) {
+                return core::Result<void>::failure(graphics_error(
+                    core::ErrorCode::invalid_state,
+                    "Validated terrain and camera data did not produce "
+                    "a finite terrain LOD decision"));
+            }
+            const auto coarse =
+                lod->lod == detail::TerrainLod::coarse;
+            const auto first_index = coarse
+                ? chunk.coarse_first_index
+                : chunk.first_index;
+            const auto index_count = coarse
+                ? chunk.coarse_index_count
+                : chunk.index_count;
+            visible_terrain_chunks.push_back(SelectedTerrainChunk{
+                static_cast<std::uint32_t>(chunk_index),
+                first_index,
+                index_count,
+                lod->lod,
+            });
+            current_visible_terrain_index_count += index_count;
+            if (coarse) {
+                ++current_visible_terrain_coarse_chunk_count;
+                current_visible_terrain_coarse_index_count +=
+                    index_count;
+            }
+            else {
+                ++current_visible_terrain_lod0_chunk_count;
+                current_visible_terrain_lod0_index_count +=
+                    index_count;
+            }
         }
         if (last_logged_visible_terrain_chunk_count !=
-            visible_terrain_chunks.size()) {
+                visible_terrain_chunks.size() ||
+            last_logged_visible_terrain_lod0_chunk_count !=
+                current_visible_terrain_lod0_chunk_count ||
+            last_logged_visible_terrain_coarse_chunk_count !=
+                current_visible_terrain_coarse_chunk_count) {
             core::log_message(
                 core::LogLevel::info,
                 "renderer.terrain",
@@ -1521,9 +1603,19 @@ public:
                     std::to_string(visible_terrain_chunks.size()) +
                     " / " +
                     std::to_string(terrain_chunks.size()) +
-                    " visible");
+                    " visible (LOD0=" +
+                    std::to_string(
+                        current_visible_terrain_lod0_chunk_count) +
+                    ", coarse=" +
+                    std::to_string(
+                        current_visible_terrain_coarse_chunk_count) +
+                    ")");
             last_logged_visible_terrain_chunk_count =
                 visible_terrain_chunks.size();
+            last_logged_visible_terrain_lod0_chunk_count =
+                current_visible_terrain_lod0_chunk_count;
+            last_logged_visible_terrain_coarse_chunk_count =
+                current_visible_terrain_coarse_chunk_count;
         }
         return core::Result<void>::success();
     }
@@ -1739,8 +1831,7 @@ public:
             &terrain_vertex_buffer_view);
         command_list->IASetIndexBuffer(&terrain_index_buffer_view);
         command_list->IASetPrimitiveTopology(backend_detail::terrain_topology);
-        for (const auto chunk_index : visible_terrain_chunks) {
-            const auto& chunk = terrain_chunks[chunk_index];
+        for (const auto& chunk : visible_terrain_chunks) {
             command_list->DrawIndexedInstanced(
                 chunk.index_count,
                 1,
@@ -1753,7 +1844,7 @@ public:
         command_list->DrawIndexedInstanced(
             material_sphere_index_count,
             1,
-            terrain_triangle_index_count +
+            terrain_surface_index_count +
                 terrain_bounds_index_count +
                 terrain_query_marker_index_count,
             static_cast<INT>(
@@ -1765,17 +1856,17 @@ public:
         command_list->SetPipelineState(terrain_bounds_pipeline.Get());
         command_list->IASetPrimitiveTopology(
             backend_detail::terrain_bounds_topology);
-        for (const auto chunk_index : visible_terrain_chunks) {
+        for (const auto& chunk : visible_terrain_chunks) {
             command_list->DrawIndexedInstanced(
                 backend_detail::terrain_chunk_bounds_index_count,
                 1,
-                terrain_triangle_index_count +
-                    chunk_index *
+                terrain_surface_index_count +
+                    chunk.chunk_index *
                         backend_detail::
                             terrain_chunk_bounds_index_count,
                 static_cast<INT>(
                     terrain_vertex_count +
-                    chunk_index *
+                    chunk.chunk_index *
                         backend_detail::
                             terrain_chunk_bounds_vertex_count),
                 0);
@@ -1785,7 +1876,7 @@ public:
         command_list->DrawIndexedInstanced(
             terrain_query_marker_index_count,
             1,
-            terrain_triangle_index_count + terrain_bounds_index_count,
+            terrain_surface_index_count + terrain_bounds_index_count,
             static_cast<INT>(
                 terrain_vertex_count + terrain_bounds_vertex_count),
             0);
@@ -2460,6 +2551,16 @@ public:
         visible_terrain_chunks.clear();
         visible_terrain_chunks.reserve(terrain.chunk_count);
         statistics.terrain_chunk_count = terrain.chunk_count;
+        for (const auto& chunk : terrain_chunks) {
+            statistics.terrain_lod0_index_count +=
+                chunk.index_count;
+            statistics.terrain_coarse_index_count +=
+                chunk.coarse_index_count;
+            statistics.terrain_maximum_geometric_error =
+                std::max(
+                    statistics.terrain_maximum_geometric_error,
+                    chunk.maximum_geometric_error);
+        }
         constexpr UINT64 vertex_bytes = sizeof(backend_detail::cube_vertices);
         constexpr UINT64 index_bytes = sizeof(backend_detail::cube_indices);
         constexpr UINT64 index_upload_offset =
@@ -3903,7 +4004,7 @@ public:
         terrain_index_buffer_view.Format = backend_detail::terrain_index_format;
         terrain_vertex_count =
             static_cast<UINT>(terrain.vertex_count);
-        terrain_triangle_index_count =
+        terrain_surface_index_count =
             static_cast<UINT>(terrain.index_count);
         terrain_bounds_vertex_count =
             static_cast<UINT>(terrain.bounds_vertex_count);
@@ -4119,15 +4220,23 @@ public:
     D3D12_VERTEX_BUFFER_VIEW terrain_vertex_buffer_view{};
     D3D12_INDEX_BUFFER_VIEW terrain_index_buffer_view{};
     UINT terrain_vertex_count{};
-    UINT terrain_triangle_index_count{};
+    UINT terrain_surface_index_count{};
     UINT terrain_bounds_vertex_count{};
     UINT terrain_bounds_index_count{};
     UINT terrain_query_marker_index_count{};
     UINT material_sphere_index_count{};
     std::vector<TerrainChunkUploadView> terrain_chunks;
-    std::vector<std::uint32_t> visible_terrain_chunks;
+    std::vector<SelectedTerrainChunk> visible_terrain_chunks;
     std::uint64_t current_visible_terrain_index_count{};
+    std::uint64_t current_visible_terrain_lod0_index_count{};
+    std::uint64_t current_visible_terrain_coarse_index_count{};
+    std::size_t current_visible_terrain_lod0_chunk_count{};
+    std::size_t current_visible_terrain_coarse_chunk_count{};
     std::size_t last_logged_visible_terrain_chunk_count{
+        std::numeric_limits<std::size_t>::max()};
+    std::size_t last_logged_visible_terrain_lod0_chunk_count{
+        std::numeric_limits<std::size_t>::max()};
+    std::size_t last_logged_visible_terrain_coarse_chunk_count{
         std::numeric_limits<std::size_t>::max()};
     std::array<float, 16> last_camera_matrix{};
     bool has_last_camera_matrix{};
@@ -5366,7 +5475,8 @@ core::Result<RenderStatus> Renderer::render_frame(
     }
     auto visibility_result =
         implementation_->update_terrain_visibility(
-            frame_data.view_projection);
+            frame_data.view_projection,
+            frame_data.camera_world_position);
     if (!visibility_result) {
         return core::Result<RenderStatus>::failure(
             std::move(visibility_result).error());
@@ -5688,12 +5798,24 @@ core::Result<RenderStatus> Renderer::render_frame(
     ++implementation_->statistics.tone_map_draw_calls;
     const auto visible_chunk_count = static_cast<std::uint64_t>(
         implementation_->visible_terrain_chunks.size());
+    const auto visible_lod0_chunk_count =
+        static_cast<std::uint64_t>(
+            implementation_->
+                current_visible_terrain_lod0_chunk_count);
+    const auto visible_coarse_chunk_count =
+        static_cast<std::uint64_t>(
+            implementation_->
+                current_visible_terrain_coarse_chunk_count);
     const auto total_chunk_count = static_cast<std::uint64_t>(
         implementation_->terrain_chunks.size());
     const auto culled_chunk_count =
         total_chunk_count - visible_chunk_count;
     implementation_->statistics.terrain_draw_calls +=
         visible_chunk_count;
+    implementation_->statistics.terrain_lod0_draw_calls +=
+        visible_lod0_chunk_count;
+    implementation_->statistics.terrain_coarse_draw_calls +=
+        visible_coarse_chunk_count;
     if (frame_data.terrain_mode == TerrainRenderMode::wireframe) {
         implementation_->statistics.terrain_wireframe_draw_calls +=
             visible_chunk_count;
@@ -5738,6 +5860,10 @@ core::Result<RenderStatus> Renderer::render_frame(
             visible_chunk_count);
     implementation_->statistics.terrain_visible_chunk_last =
         visible_chunk_count;
+    implementation_->statistics.terrain_lod0_chunks_last =
+        visible_lod0_chunk_count;
+    implementation_->statistics.terrain_coarse_chunks_last =
+        visible_coarse_chunk_count;
     implementation_->statistics.terrain_chunks_tested +=
         total_chunk_count;
     implementation_->statistics.terrain_chunks_visible +=
@@ -5746,6 +5872,10 @@ core::Result<RenderStatus> Renderer::render_frame(
         culled_chunk_count;
     implementation_->statistics.terrain_indices +=
         implementation_->current_visible_terrain_index_count;
+    implementation_->statistics.terrain_lod0_indices +=
+        implementation_->current_visible_terrain_lod0_index_count;
+    implementation_->statistics.terrain_coarse_indices +=
+        implementation_->current_visible_terrain_coarse_index_count;
     implementation_->statistics.terrain_bounds_indices +=
         visible_chunk_count *
             backend_detail::terrain_chunk_bounds_index_count;

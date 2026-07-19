@@ -179,6 +179,33 @@ struct HeightTileChunkLayout final {
         const HeightTileChunkLayout&) = default;
 };
 
+struct HeightTileCoarseChunk final {
+    std::size_t first_index{};
+    std::size_t index_count{};
+
+    // Exact maximum world-space vertical separation, in meters, between this
+    // visual surface and the canonical continuous LOD0 surface over the
+    // chunk's complete X/Z domain.
+    double maximum_geometric_error{};
+
+    [[nodiscard]] friend bool operator==(
+        const HeightTileCoarseChunk&,
+        const HeightTileCoarseChunk&) = default;
+};
+
+// Row-for-row companion to HeightTileChunkLayout. Coarse indices reference
+// build_lod0_mesh's unchanged global vertex stream. A partial or odd-sized
+// chunk conservatively copies its exact LOD0 range.
+struct HeightTileCoarseChunkLayout final {
+    std::vector<std::uint16_t> indices;
+    std::vector<HeightTileCoarseChunk> chunks;
+    double maximum_geometric_error{};
+
+    [[nodiscard]] friend bool operator==(
+        const HeightTileCoarseChunkLayout&,
+        const HeightTileCoarseChunkLayout&) = default;
+};
+
 inline constexpr std::uint32_t deterministic_tile_sample_columns = 33;
 inline constexpr std::uint32_t deterministic_tile_sample_rows = 33;
 inline constexpr float deterministic_tile_sample_spacing = 0.5F;
@@ -213,6 +240,13 @@ static_assert(
     deterministic_tile_chunk_count *
         deterministic_tile_chunk_index_count ==
     deterministic_tile_index_count);
+inline constexpr std::size_t
+    deterministic_tile_coarse_chunk_index_count = 240;
+inline constexpr std::size_t deterministic_tile_coarse_index_count =
+    deterministic_tile_chunk_count *
+    deterministic_tile_coarse_chunk_index_count;
+inline constexpr double
+    deterministic_tile_coarse_maximum_geometric_error = 0.140625;
 inline constexpr Bounds3 deterministic_tile_expected_bounds{
     {-8.0F, -3.171875F, -12.0F},
     {8.0F, -0.09375F, 4.0F},
@@ -236,5 +270,17 @@ inline constexpr Bounds3 deterministic_tile_expected_bounds{
     const HeightTile& tile,
     std::uint32_t chunk_cell_columns,
     std::uint32_t chunk_cell_rows);
+
+// Derives exactly one boundary-preserving visual LOD for every complete,
+// even-sized chunk. Each 2x2-cell patch uses its four corners and canonical
+// center; chunk-edge midpoints retain every LOD0 boundary segment. This makes
+// all equal- and mixed-LOD seams identical without changing canonical data.
+// The returned error is the exact continuous vertical surface-deviation bound,
+// measured from all vertices of every coarse/LOD0 triangle intersection.
+[[nodiscard]] core::Result<HeightTileCoarseChunkLayout>
+    build_boundary_preserving_coarse_chunk_layout(
+        const HeightTile& tile,
+        std::uint32_t chunk_cell_columns,
+        std::uint32_t chunk_cell_rows);
 
 } // namespace shark::terrain

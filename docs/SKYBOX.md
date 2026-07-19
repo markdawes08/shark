@@ -1,8 +1,8 @@
 # Sky and HDR Environment-Lighting Contract
 
-- **Completed through:** `T-004`
+- **Completed through:** `T-005`
 - **Last verified:** July 19, 2026
-- **Next planned increment:** `T-005` - bounded terrain LOD
+- **Next planned increment:** `R-001` - wind-driven GPU rain
 
 Shark still uses a skybox as the background rasterization technique: a cube is
 drawn around the camera with a translation-free view matrix and forced to the
@@ -187,11 +187,12 @@ declared final states. Persistent environment and material resources remain in
 pixel-shader-read state.
 
 With `V` visible terrain chunks, a submitted frame issues `2V + 4` indexed
-draws: `V` chunk surfaces, the material sphere, `V` matching magenta chunk
-bounds, the terrain query marker, textured cube, and skybox. `ToneMap` adds one
-non-indexed fullscreen-triangle draw. The chunk ranges, bounds, marker, and
-sphere share the packed terrain buffers, so the static scene still contains
-four geometry buffers. Sky remains exactly one indexed draw.
+draws: `V` selected LOD0/coarse chunk surfaces, the material sphere, `V`
+matching magenta chunk bounds, the terrain query marker, textured cube, and
+skybox. LOD0 surfaces use 384 indices and coarse surfaces use 240. `ToneMap`
+adds one non-indexed fullscreen-triangle draw. Both surface ranges, bounds,
+marker, and sphere share the packed terrain buffers, so the static scene still
+contains four geometry buffers. Sky remains exactly one indexed draw.
 
 The stable PIX hierarchy is:
 
@@ -243,7 +244,7 @@ mip zero, and material roughness uses the separately GGX-prefiltered specular
 cube, so that limitation is not on the visible S-003 path.
 
 It does not broaden Shark beyond the approved San Andreas-class local-sandbox
-ceiling. `T-004` completed full-resolution terrain chunks and frustum culling
-on July 19, 2026 without changing sky pixels, resources, or the sky draw
-policy. The next increment is `T-005`: add one bounded coarser visual LOD with
-crack-free seams while collision and canonical queries remain full resolution.
+ceiling. `T-005` completed one bounded coarse terrain LOD on July 19, 2026
+without changing sky pixels, resources, or the sky draw policy. The next
+increment is `R-001`: add seeded, bounded GPU rain driven by adjustable
+precipitation rate and wind.

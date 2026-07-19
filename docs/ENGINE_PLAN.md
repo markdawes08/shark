@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 19, 2026
-- **Latest completed:** `T-004` - terrain chunk culling
-- **Next increment:** `T-005` - bounded terrain LOD
+- **Latest completed:** `T-005` - bounded terrain LOD
+- **Next increment:** `R-001` - wind-driven GPU rain
 
 ## 1. Project direction
 
@@ -313,14 +313,20 @@ T-004 adds a derived row-major `4x4` render layout over that same LOD0 surface:
 16 `8x8`-cell chunks reference the unchanged 1,089-vertex stream through
 contiguous 384-index ranges and carry exact sample-derived AABBs. The renderer
 frustum-culls those AABBs without changing canonical query ownership.
+T-005 adds one boundary-preserving 240-index coarse range per complete chunk
+over the same vertices. Every chunk edge retains all canonical boundary
+segments, so equal and mixed LOD choices match without skirts or stitch
+variants. Exact continuous vertical deviation is bounded at `0.140625` meters
+for the fixture, and a stateless relative-error proxy selects coarse only when
+`error <= 0.008 * camera_distance_to_closed_AABB`.
 
 ### Non-negotiable ownership rules
 
 1. Full-resolution `HeightTileSurface` data is the single source of truth for
    future collision and the fluid bed. LOD0 rendering and queries use the same
-   `v00 -> v11` cell split and planar interpolation exactly; coarser visual LODs
-   are derived approximations with a measured error bound and never change
-   physics with camera distance.
+   `v00 -> v11` cell split and planar interpolation exactly. T-005's one
+   coarser visual LOD is a derived approximation with an exact measured error
+   bound and never changes physics with camera distance.
 2. Physics never reads a render mesh or Direct3D resource.
 3. Visual rain particles and physical rainfall share `WeatherState`, but particle
    count never determines water volume.
@@ -521,8 +527,12 @@ across resources or frames.
    deterministic triangle ties, metric rays with scale-relative triangle
    tolerances, and a visible query-derived normal pin.
 3. Add PBR texture arrays and slope/height or painted blend weights.
-4. Add chunks and frustum culling at full resolution.
+4. Add chunks and frustum culling at full resolution. T-004 completes this
+   with 16 exact-AABB chunks and conservative Direct3D frustum tests.
 5. Add derived visual LODs with crack-free seams and measured error bounds.
+   T-005 completes the bounded first step with one coarse level, identical
+   equal/mixed boundary segments, exact continuous vertical-error measurement,
+   and stateless distance selection.
 6. Add streaming, virtual texturing, or mesh-shader meshlets only when scene size
    makes them necessary.
 
@@ -688,11 +698,11 @@ the debug layer and readable in a PIX capture.
 | `T-003` | V | Complete: blend two project-owned ground/rock layers from matching `32x32`, six-mip albedo/normal/roughness texture arrays by deterministic slope and height; add world-XZ tiling, tangent-free normal mapping, direct-sun dielectric GGX, and material-weight/world-normal views | `feat(terrain): add layered PBR materials` |
 | `S-003` | V | Complete: generate a deterministic `64x32` linear-HDR daylight source; derive a `32x32` six-mip radiance cube, `8x8` irradiance cube, `32x32` six-mip GGX specular cube, and `32x32` split-sum BRDF LUT; light terrain and one material sphere through an HDR scene target and final tone map; retain an `F3` procedural fallback | `feat(sky): add image-based environment lighting` |
 | `T-004` | V | Complete: split the full-resolution fixture into 16 row-major `8x8`-cell chunks over one shared 1,089-vertex stream; conservatively frustum-cull their exact AABBs, draw one 384-index surface plus one 24-index magenta bound per visible chunk, and expose visible/total statistics | `feat(terrain): add chunk culling` |
-| `T-005` | V | Add one coarser derived LOD with crack-free seams and a measured geometric-error bound; collision remains full resolution | `feat(terrain): add bounded terrain LOD` |
+| `T-005` | V | Complete: add one boundary-preserving 240-index coarse range per complete `8x8` chunk over the unchanged vertices; retain every edge segment for crack-free equal/mixed seams, measure exact continuous vertical error (`0.140625` m fixture maximum), and select statelessly from shortest camera-to-AABB distance while collision/queries remain full resolution | `feat(terrain): add bounded terrain LOD` |
 
-**M3 exit:** the user can fly over a textured outdoor terrain whose renderer and
-CPU queries agree exactly at LOD0 and stay within the documented visual error at
-coarser LODs.
+**M3 exit achieved:** the user can fly over a textured outdoor terrain whose
+renderer and CPU queries agree exactly at LOD0 and whose bounded coarse
+presentation stays within the documented continuous vertical-error limit.
 
 ### M4 - Storm and visual water
 
@@ -865,32 +875,30 @@ online architecture is not implied.
 ## 14. Immediate next increment
 
 The San Andreas-class scope amendment does not change the current goalpost.
-After `T-004` is reviewed and committed by the owner, implement only `T-005`:
+After `T-005` is reviewed and committed by the owner, implement only `R-001`:
 
-- derive one coarser visual LOD for the existing 16 render chunks while keeping
-  the canonical `HeightTileSurface` and all collision/query answers at full
-  resolution;
-- define a measured geometric-error bound and select the LOD without changing
-  simulation state;
-- keep neighboring chunk edges crack-free across equal and mixed LOD choices;
-- retain T-004 frustum culling, visible bounds/counts, S-003 HDR/IBL,
-  procedural fallback, diagnostics, and all material views; and
-- stop before additional LOD levels, terrain streaming, occlusion culling,
-  virtual texturing, mesh shaders, physics acceleration, or generalized world
-  partition.
+- add a seeded, bounded GPU rain-particle field driven by adjustable
+  precipitation rate and wind;
+- keep particle capacity fixed and expose deterministic emission/lifetime
+  accounting;
+- place terrain impacts consistently against the canonical terrain surface;
+- preserve the sky, HDR/IBL, terrain LOD, graph, frame-resource, and canonical
+  query contracts; and
+- stop before splash/ripple events, wetness accumulation, rain-to-water volume
+  coupling, volumetric clouds, lightning, or generalized weather simulation.
 
-`T-004` completed the bounded full-resolution chunk path on July 19, 2026.
-The deterministic `32x32`-cell fixture is partitioned row-major in `+Z`, then
-`+X`, into a `4x4` grid of 16 `8x8`-cell chunks. Every chunk owns one contiguous
-384-index range into the unchanged 1,089-vertex stream and one exact
-sample-derived AABB. Conservative Direct3D frustum tests keep tangent and
-intersecting bounds visible. Each visible chunk produces one surface draw and
-one magenta 24-index bounds draw; the normal smoke poses expose 16 and then
-five visible chunks. The graph, resource, HDR, and canonical-query contracts
-remain unchanged.
+`T-005` completed the bounded terrain-LOD path on July 19, 2026. The existing
+16 chunks retain their exact 384-index LOD0 ranges and gain one 240-index
+boundary-preserving coarse range over the unchanged 1,089 vertices. Complete
+chunk edges retain all nine canonical samples and eight segments, keeping
+equal and mixed LOD neighbors crack-free without skirts or variants. The exact
+fixture-wide continuous vertical-error bound is `0.140625` meters. Stateless
+selection uses the inclusive `error <= 0.008 * camera_distance_to_closed_AABB`
+rule. Graph topology, resource count, shaders, PSOs, HDR lighting, frustum
+culling, and canonical query answers remain unchanged.
 
-`T-005` is next with one bounded coarser visual LOD. It remains a modern
-Direct3D 12 implementation inside the San Andreas-class feature ceiling.
+`R-001` is next with bounded visual rain. It remains a modern Direct3D 12
+implementation inside the San Andreas-class feature ceiling.
 
 ## 15. Primary technical references
 

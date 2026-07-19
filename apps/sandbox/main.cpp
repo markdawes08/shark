@@ -810,17 +810,46 @@ void log_platform_event(const shark::platform::Event& event)
     }
     auto terrain_chunk_layout =
         std::move(terrain_chunk_layout_result).value();
+    auto terrain_coarse_layout_result =
+        terrain::build_boundary_preserving_coarse_chunk_layout(
+            terrain_tile,
+            terrain::deterministic_tile_chunk_cell_columns,
+            terrain::deterministic_tile_chunk_cell_rows);
+    if (!terrain_coarse_layout_result) {
+        return core::Result<void>::failure(
+            std::move(terrain_coarse_layout_result).error());
+    }
+    auto terrain_coarse_layout =
+        std::move(terrain_coarse_layout_result).value();
     if (terrain_chunk_layout.chunks.size() !=
             terrain::deterministic_tile_chunk_count ||
         terrain_chunk_layout.indices.size() !=
-            terrain_mesh.indices.size()) {
+            terrain_mesh.indices.size() ||
+        terrain_coarse_layout.chunks.size() !=
+            terrain_chunk_layout.chunks.size() ||
+        terrain_coarse_layout.indices.size() !=
+            terrain::deterministic_tile_coarse_index_count ||
+        terrain_coarse_layout.maximum_geometric_error !=
+            terrain::deterministic_tile_coarse_maximum_geometric_error) {
         return core::Result<void>::failure(core::Error{
             core::ErrorCategory::simulation,
             core::ErrorCode::invalid_state,
             "The deterministic terrain did not produce the fixed "
-            "4x4 full-resolution chunk layout",
+            "4x4 two-level chunk layout and error bound",
         });
     }
+    std::vector<std::uint16_t> terrain_surface_indices;
+    terrain_surface_indices.reserve(
+        terrain_chunk_layout.indices.size() +
+        terrain_coarse_layout.indices.size());
+    terrain_surface_indices.insert(
+        terrain_surface_indices.end(),
+        terrain_chunk_layout.indices.begin(),
+        terrain_chunk_layout.indices.end());
+    terrain_surface_indices.insert(
+        terrain_surface_indices.end(),
+        terrain_coarse_layout.indices.begin(),
+        terrain_coarse_layout.indices.end());
     if (terrain_surface.bounds() != terrain_mesh.bounds) {
         return core::Result<void>::failure(core::Error{
             core::ErrorCategory::simulation,
@@ -856,15 +885,28 @@ void log_platform_event(const shark::platform::Event& event)
         -1.0F,
         1.0F,
     };
-    for (const auto& chunk : terrain_chunk_layout.chunks) {
+    for (std::size_t chunk_index = 0;
+         chunk_index < terrain_chunk_layout.chunks.size();
+         ++chunk_index) {
+        const auto& chunk =
+            terrain_chunk_layout.chunks[chunk_index];
+        const auto& coarse_chunk =
+            terrain_coarse_layout.chunks[chunk_index];
+        const auto coarse_first_index =
+            terrain_chunk_layout.indices.size() +
+            coarse_chunk.first_index;
         if (chunk.first_index >
                 std::numeric_limits<std::uint32_t>::max() ||
             chunk.index_count >
+                std::numeric_limits<std::uint32_t>::max() ||
+            coarse_first_index >
+                std::numeric_limits<std::uint32_t>::max() ||
+            coarse_chunk.index_count >
                 std::numeric_limits<std::uint32_t>::max()) {
             return core::Result<void>::failure(core::Error{
                 core::ErrorCategory::simulation,
                 core::ErrorCode::unsupported,
-                "The terrain chunk layout exceeds the renderer's "
+                "The terrain LOD layout exceeds the renderer's "
                 "uint32 draw-range contract",
             });
         }
@@ -874,8 +916,16 @@ void log_platform_event(const shark::platform::Event& event)
                     chunk.first_index),
                 .index_count = static_cast<std::uint32_t>(
                     chunk.index_count),
+                .coarse_first_index =
+                    static_cast<std::uint32_t>(
+                        coarse_first_index),
+                .coarse_index_count =
+                    static_cast<std::uint32_t>(
+                        coarse_chunk.index_count),
                 .bounds_minimum = chunk.bounds.minimum,
                 .bounds_maximum = chunk.bounds.maximum,
+                .maximum_geometric_error =
+                    coarse_chunk.maximum_geometric_error,
             });
         for (const auto position :
              chunk.bounds_lines.positions) {
@@ -1085,8 +1135,8 @@ void log_platform_event(const shark::platform::Event& event)
         .vertices = terrain_vertices.data(),
         .vertex_count = terrain_vertices.size(),
         .vertex_stride = sizeof(TerrainGpuVertex),
-        .indices = terrain_chunk_layout.indices.data(),
-        .index_count = terrain_chunk_layout.indices.size(),
+        .indices = terrain_surface_indices.data(),
+        .index_count = terrain_surface_indices.size(),
         .chunks = terrain_chunk_uploads.data(),
         .chunk_count = terrain_chunk_uploads.size(),
         .bounds_vertices = terrain_bounds_vertices.data(),
@@ -1184,20 +1234,27 @@ void log_platform_event(const shark::platform::Event& event)
     core::log_message(
         core::LogLevel::info,
         "terrain",
-        std::string{"Built deterministic LOD0 height tile: samples="} +
+        std::string{
+            "Built deterministic two-level height tile: samples="} +
             std::to_string(terrain_tile.sample_columns) + "x" +
             std::to_string(terrain_tile.sample_rows) +
             ", vertices=" +
             std::to_string(terrain_mesh.positions.size()) +
-            ", triangles=" +
+            ", LOD0-triangles=" +
             std::to_string(terrain_mesh.indices.size() / 3U) +
+            ", coarse-triangles=" +
+            std::to_string(
+                terrain_coarse_layout.indices.size() / 3U) +
             ", chunks=" +
             std::to_string(
                 terrain::deterministic_tile_chunk_columns) + "x" +
             std::to_string(
                 terrain::deterministic_tile_chunk_rows) + " (" +
             std::to_string(terrain_chunk_layout.chunks.size()) +
-            " total, 8x8 cells each)" +
+            " total, 8x8 cells each), max-coarse-error=" +
+            std::to_string(
+                terrain_coarse_layout.maximum_geometric_error) +
+            "m" +
             ", bounds=[(" +
             std::to_string(terrain_mesh.bounds.minimum.x) + ", " +
             std::to_string(terrain_mesh.bounds.minimum.y) + ", " +
@@ -1681,6 +1738,28 @@ void log_platform_event(const shark::platform::Event& event)
             (std::uint32_t{1} << expected_context_count) - 1;
         constexpr std::uint64_t frame_probe_bytes = 256;
         constexpr std::uint64_t timestamp_queries_per_frame = 10;
+        constexpr std::uint64_t initial_lod0_chunks = 8;
+        constexpr std::uint64_t initial_coarse_chunks = 8;
+        constexpr std::uint64_t final_lod0_chunks = 3;
+        constexpr std::uint64_t final_coarse_chunks = 2;
+        constexpr auto expected_maximum_geometric_error =
+            terrain::
+                deterministic_tile_coarse_maximum_geometric_error;
+        const auto initial_lod_frames = change_camera_after_frames;
+        const auto final_lod_frames =
+            required_smoke_frames - change_camera_after_frames;
+        const auto expected_lod0_draw_calls =
+            initial_lod_frames * initial_lod0_chunks +
+            final_lod_frames * final_lod0_chunks;
+        const auto expected_coarse_draw_calls =
+            initial_lod_frames * initial_coarse_chunks +
+            final_lod_frames * final_coarse_chunks;
+        const auto expected_lod0_indices =
+            expected_lod0_draw_calls *
+            terrain::deterministic_tile_chunk_index_count;
+        const auto expected_coarse_indices =
+            expected_coarse_draw_calls *
+            terrain::deterministic_tile_coarse_chunk_index_count;
         const auto attempted_presents =
             stats.presented_frames + stats.occluded_frames;
         if (stats.frame_context_count != expected_context_count ||
@@ -1781,6 +1860,13 @@ void log_platform_event(const shark::platform::Event& event)
                 stats.terrain_chunks_tested ||
             stats.terrain_chunks_visible !=
                 stats.terrain_draw_calls ||
+            stats.terrain_lod0_draw_calls !=
+                expected_lod0_draw_calls ||
+            stats.terrain_coarse_draw_calls !=
+                expected_coarse_draw_calls ||
+            stats.terrain_lod0_draw_calls +
+                    stats.terrain_coarse_draw_calls !=
+                stats.terrain_draw_calls ||
             stats.terrain_bounds_draw_calls !=
                 stats.terrain_chunks_visible ||
             stats.terrain_visible_chunk_min >=
@@ -1791,6 +1877,12 @@ void log_platform_event(const shark::platform::Event& event)
                 stats.terrain_chunk_count ||
             stats.terrain_visible_chunk_last >
                 stats.terrain_chunk_count ||
+            stats.terrain_lod0_chunks_last != final_lod0_chunks ||
+            stats.terrain_coarse_chunks_last !=
+                final_coarse_chunks ||
+            stats.terrain_lod0_chunks_last +
+                    stats.terrain_coarse_chunks_last !=
+                stats.terrain_visible_chunk_last ||
             stats.terrain_chunks_visible == 0 ||
             stats.terrain_chunks_culled == 0 ||
             stats.terrain_solid_draw_calls == 0 ||
@@ -1814,9 +1906,12 @@ void log_platform_event(const shark::platform::Event& event)
                 stats.cube_draw_calls * 36 ||
             stats.skybox_indices !=
                 stats.skybox_draw_calls * 36 ||
-            stats.terrain_indices !=
-                stats.terrain_chunks_visible *
-                    terrain::deterministic_tile_chunk_index_count ||
+            stats.terrain_lod0_indices != expected_lod0_indices ||
+            stats.terrain_coarse_indices !=
+                expected_coarse_indices ||
+            stats.terrain_lod0_indices +
+                    stats.terrain_coarse_indices !=
+                stats.terrain_indices ||
             stats.terrain_bounds_indices !=
                 stats.terrain_bounds_draw_calls * 24 ||
             stats.terrain_query_marker_indices !=
@@ -1826,7 +1921,14 @@ void log_platform_event(const shark::platform::Event& event)
             stats.terrain_vertex_count !=
                 terrain::deterministic_tile_vertex_count ||
             stats.terrain_index_count !=
+                terrain::deterministic_tile_index_count +
+                    terrain::deterministic_tile_coarse_index_count ||
+            stats.terrain_lod0_index_count !=
                 terrain::deterministic_tile_index_count ||
+            stats.terrain_coarse_index_count !=
+                terrain::deterministic_tile_coarse_index_count ||
+            stats.terrain_maximum_geometric_error !=
+                expected_maximum_geometric_error ||
             stats.terrain_bounds_vertex_count !=
                 terrain::deterministic_tile_chunk_count * 8U ||
             stats.terrain_bounds_index_count !=
@@ -2015,6 +2117,28 @@ void log_platform_event(const shark::platform::Event& event)
         summary.append(std::to_string(stats.terrain_chunks_visible));
         summary.push_back('/');
         summary.append(std::to_string(stats.terrain_chunks_culled));
+        summary.append(", terrain-LOD0/coarse(last)=");
+        summary.append(std::to_string(
+            stats.terrain_lod0_chunks_last));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.terrain_coarse_chunks_last));
+        summary.append(", terrain-LOD0/coarse(draws)=");
+        summary.append(std::to_string(
+            stats.terrain_lod0_draw_calls));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.terrain_coarse_draw_calls));
+        summary.append(", terrain-LOD0/coarse(indices)=");
+        summary.append(std::to_string(
+            stats.terrain_lod0_indices));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.terrain_coarse_indices));
+        summary.append(", terrain-max-coarse-error=");
+        summary.append(std::to_string(
+            stats.terrain_maximum_geometric_error));
+        summary.append("m");
         summary.append(", terrain(shaded/weights/normals)-views=");
         summary.append(std::to_string(
             stats.terrain_shaded_draw_calls));

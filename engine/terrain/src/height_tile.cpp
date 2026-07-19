@@ -622,6 +622,271 @@ struct TriangleRayHit final {
     return core::Result<Bounds3>::success(bounds);
 }
 
+struct SurfacePoint2 final {
+    double x{};
+    double z{};
+};
+
+struct SurfaceVertex final {
+    SurfacePoint2 horizontal;
+    double height{};
+};
+
+struct SurfaceTriangle final {
+    std::array<SurfaceVertex, 3> vertices;
+};
+
+[[nodiscard]] SurfaceVertex surface_vertex(
+    const HeightTile& tile,
+    const std::uint16_t vertex_index) noexcept
+{
+    const auto index = static_cast<std::uint32_t>(vertex_index);
+    const auto x = index % tile.sample_columns;
+    const auto z = index / tile.sample_columns;
+    return SurfaceVertex{
+        {
+            static_cast<double>(x),
+            static_cast<double>(z),
+        },
+        static_cast<double>(
+            sample_position(tile, x, z).y),
+    };
+}
+
+[[nodiscard]] SurfaceTriangle surface_triangle(
+    const HeightTile& tile,
+    const std::array<std::uint16_t, 3> indices) noexcept
+{
+    return SurfaceTriangle{{{
+        surface_vertex(tile, indices[0]),
+        surface_vertex(tile, indices[1]),
+        surface_vertex(tile, indices[2]),
+    }}};
+}
+
+[[nodiscard]] constexpr double orientation(
+    const SurfacePoint2 first,
+    const SurfacePoint2 second,
+    const SurfacePoint2 point) noexcept
+{
+    return
+        (second.x - first.x) * (point.z - first.z) -
+        (second.z - first.z) * (point.x - first.x);
+}
+
+[[nodiscard]] bool contains_projected_point(
+    const SurfaceTriangle& triangle,
+    const SurfacePoint2 point) noexcept
+{
+    const auto first = orientation(
+        triangle.vertices[0].horizontal,
+        triangle.vertices[1].horizontal,
+        point);
+    const auto second = orientation(
+        triangle.vertices[1].horizontal,
+        triangle.vertices[2].horizontal,
+        point);
+    const auto third = orientation(
+        triangle.vertices[2].horizontal,
+        triangle.vertices[0].horizontal,
+        point);
+    constexpr double edge_tolerance = 1.0e-10;
+    return
+        (first >= -edge_tolerance &&
+         second >= -edge_tolerance &&
+         third >= -edge_tolerance) ||
+        (first <= edge_tolerance &&
+         second <= edge_tolerance &&
+         third <= edge_tolerance);
+}
+
+[[nodiscard]] double surface_height(
+    const SurfaceTriangle& triangle,
+    const SurfacePoint2 point) noexcept
+{
+    const auto denominator = orientation(
+        triangle.vertices[0].horizontal,
+        triangle.vertices[1].horizontal,
+        triangle.vertices[2].horizontal);
+    const auto first_weight = orientation(
+        triangle.vertices[1].horizontal,
+        triangle.vertices[2].horizontal,
+        point) / denominator;
+    const auto second_weight = orientation(
+        triangle.vertices[2].horizontal,
+        triangle.vertices[0].horizontal,
+        point) / denominator;
+    const auto third_weight = 1.0 - first_weight - second_weight;
+    return first_weight * triangle.vertices[0].height +
+        second_weight * triangle.vertices[1].height +
+        third_weight * triangle.vertices[2].height;
+}
+
+[[nodiscard]] std::optional<SurfacePoint2>
+projected_edge_intersection(
+    const SurfacePoint2 first_start,
+    const SurfacePoint2 first_end,
+    const SurfacePoint2 second_start,
+    const SurfacePoint2 second_end) noexcept
+{
+    const SurfacePoint2 first_direction{
+        first_end.x - first_start.x,
+        first_end.z - first_start.z,
+    };
+    const SurfacePoint2 second_direction{
+        second_end.x - second_start.x,
+        second_end.z - second_start.z,
+    };
+    const auto denominator =
+        first_direction.x * second_direction.z -
+        first_direction.z * second_direction.x;
+    if (denominator == 0.0) {
+        // Collinear overlap endpoints are already supplied by the vertex
+        // containment candidates.
+        return std::nullopt;
+    }
+
+    const SurfacePoint2 start_delta{
+        second_start.x - first_start.x,
+        second_start.z - first_start.z,
+    };
+    const auto first_parameter =
+        (start_delta.x * second_direction.z -
+         start_delta.z * second_direction.x) /
+        denominator;
+    const auto second_parameter =
+        (start_delta.x * first_direction.z -
+         start_delta.z * first_direction.x) /
+        denominator;
+    constexpr double endpoint_tolerance = 1.0e-10;
+    if (first_parameter < -endpoint_tolerance ||
+        first_parameter > 1.0 + endpoint_tolerance ||
+        second_parameter < -endpoint_tolerance ||
+        second_parameter > 1.0 + endpoint_tolerance) {
+        return std::nullopt;
+    }
+
+    const auto clamped_parameter =
+        std::clamp(first_parameter, 0.0, 1.0);
+    return SurfacePoint2{
+        first_start.x +
+            first_direction.x * clamped_parameter,
+        first_start.z +
+            first_direction.z * clamped_parameter,
+    };
+}
+
+void measure_overlay_candidate(
+    const SurfaceTriangle& coarse,
+    const SurfaceTriangle& lod0,
+    const SurfacePoint2 point,
+    double& maximum_error) noexcept
+{
+    if (!contains_projected_point(coarse, point) ||
+        !contains_projected_point(lod0, point)) {
+        return;
+    }
+    maximum_error = std::max(
+        maximum_error,
+        std::abs(
+            surface_height(coarse, point) -
+            surface_height(lod0, point)));
+}
+
+[[nodiscard]] double maximum_triangle_overlay_error(
+    const SurfaceTriangle& coarse,
+    const SurfaceTriangle& lod0) noexcept
+{
+    double maximum_error = 0.0;
+    for (const auto& vertex : coarse.vertices) {
+        measure_overlay_candidate(
+            coarse,
+            lod0,
+            vertex.horizontal,
+            maximum_error);
+    }
+    for (const auto& vertex : lod0.vertices) {
+        measure_overlay_candidate(
+            coarse,
+            lod0,
+            vertex.horizontal,
+            maximum_error);
+    }
+    for (std::size_t coarse_edge = 0;
+         coarse_edge < coarse.vertices.size();
+         ++coarse_edge) {
+        const auto coarse_next =
+            (coarse_edge + 1U) % coarse.vertices.size();
+        for (std::size_t lod0_edge = 0;
+             lod0_edge < lod0.vertices.size();
+             ++lod0_edge) {
+            const auto lod0_next =
+                (lod0_edge + 1U) % lod0.vertices.size();
+            const auto intersection = projected_edge_intersection(
+                coarse.vertices[coarse_edge].horizontal,
+                coarse.vertices[coarse_next].horizontal,
+                lod0.vertices[lod0_edge].horizontal,
+                lod0.vertices[lod0_next].horizontal);
+            if (intersection.has_value()) {
+                measure_overlay_candidate(
+                    coarse,
+                    lod0,
+                    *intersection,
+                    maximum_error);
+            }
+        }
+    }
+    return maximum_error;
+}
+
+[[nodiscard]] std::array<SurfaceTriangle, 8>
+patch_lod0_triangles(
+    const HeightTile& tile,
+    const std::uint32_t first_cell_x,
+    const std::uint32_t first_cell_z) noexcept
+{
+    std::array<SurfaceTriangle, 8> triangles;
+    std::size_t output_index = 0;
+    constexpr std::array triangle_types{
+        HeightTileTriangle::v00_v01_v11,
+        HeightTileTriangle::v00_v11_v10,
+    };
+    for (std::uint32_t local_z = 0; local_z < 2U; ++local_z) {
+        for (std::uint32_t local_x = 0;
+             local_x < 2U;
+             ++local_x) {
+            for (const auto triangle_type : triangle_types) {
+                const auto source_indices = fixed_triangle_indices(
+                    first_cell_x + local_x,
+                    first_cell_z + local_z,
+                    tile.sample_columns,
+                    triangle_type);
+                triangles[output_index] = surface_triangle(
+                    tile,
+                    {{
+                        static_cast<std::uint16_t>(
+                            source_indices.vertices[0]),
+                        static_cast<std::uint16_t>(
+                            source_indices.vertices[1]),
+                        static_cast<std::uint16_t>(
+                            source_indices.vertices[2]),
+                    }});
+                ++output_index;
+            }
+        }
+    }
+    return triangles;
+}
+
+[[nodiscard]] constexpr std::uint16_t tile_vertex_index(
+    const std::uint32_t x,
+    const std::uint32_t z,
+    const std::uint32_t columns) noexcept
+{
+    return static_cast<std::uint16_t>(
+        sample_index(x, z, columns));
+}
+
 } // namespace
 
 HeightTile make_deterministic_height_tile()
@@ -1140,6 +1405,172 @@ core::Result<HeightTileChunkLayout> build_lod0_chunk_layout(
 
     return core::Result<HeightTileChunkLayout>::success(
         std::move(layout));
+}
+
+core::Result<HeightTileCoarseChunkLayout>
+build_boundary_preserving_coarse_chunk_layout(
+    const HeightTile& tile,
+    const std::uint32_t chunk_cell_columns,
+    const std::uint32_t chunk_cell_rows)
+{
+    auto lod0_result = build_lod0_chunk_layout(
+        tile,
+        chunk_cell_columns,
+        chunk_cell_rows);
+    if (!lod0_result) {
+        return core::Result<
+            HeightTileCoarseChunkLayout>::failure(
+                std::move(lod0_result).error());
+    }
+    const auto& lod0 = lod0_result.value();
+
+    HeightTileCoarseChunkLayout coarse;
+    coarse.indices.reserve(lod0.indices.size());
+    coarse.chunks.reserve(lod0.chunks.size());
+
+    for (const auto& lod0_chunk : lod0.chunks) {
+        const auto first_index = coarse.indices.size();
+        double chunk_maximum_error = 0.0;
+        const auto complete_even_chunk =
+            lod0_chunk.cell_columns == chunk_cell_columns &&
+            lod0_chunk.cell_rows == chunk_cell_rows &&
+            lod0_chunk.cell_columns % 2U == 0U &&
+            lod0_chunk.cell_rows % 2U == 0U;
+        if (!complete_even_chunk) {
+            const auto range_end =
+                lod0_chunk.first_index + lod0_chunk.index_count;
+            for (auto index = lod0_chunk.first_index;
+                 index < range_end;
+                 ++index) {
+                coarse.indices.push_back(lod0.indices[index]);
+            }
+        }
+        else {
+            for (std::uint32_t local_cell_z = 0;
+                 local_cell_z < lod0_chunk.cell_rows;
+                 local_cell_z += 2U) {
+                for (std::uint32_t local_cell_x = 0;
+                     local_cell_x < lod0_chunk.cell_columns;
+                     local_cell_x += 2U) {
+                    const auto first_cell_x =
+                        lod0_chunk.first_cell_x + local_cell_x;
+                    const auto first_cell_z =
+                        lod0_chunk.first_cell_z + local_cell_z;
+                    const auto patch_lod0 = patch_lod0_triangles(
+                        tile,
+                        first_cell_x,
+                        first_cell_z);
+                    const auto v00 = tile_vertex_index(
+                        first_cell_x,
+                        first_cell_z,
+                        tile.sample_columns);
+                    const auto v20 = tile_vertex_index(
+                        first_cell_x + 2U,
+                        first_cell_z,
+                        tile.sample_columns);
+                    const auto v22 = tile_vertex_index(
+                        first_cell_x + 2U,
+                        first_cell_z + 2U,
+                        tile.sample_columns);
+                    const auto v02 = tile_vertex_index(
+                        first_cell_x,
+                        first_cell_z + 2U,
+                        tile.sample_columns);
+                    const auto center = tile_vertex_index(
+                        first_cell_x + 1U,
+                        first_cell_z + 1U,
+                        tile.sample_columns);
+                    const auto top_midpoint = tile_vertex_index(
+                        first_cell_x + 1U,
+                        first_cell_z,
+                        tile.sample_columns);
+                    const auto right_midpoint = tile_vertex_index(
+                        first_cell_x + 2U,
+                        first_cell_z + 1U,
+                        tile.sample_columns);
+                    const auto bottom_midpoint = tile_vertex_index(
+                        first_cell_x + 1U,
+                        first_cell_z + 2U,
+                        tile.sample_columns);
+                    const auto left_midpoint = tile_vertex_index(
+                        first_cell_x,
+                        first_cell_z + 1U,
+                        tile.sample_columns);
+
+                    const auto emit_triangle =
+                        [&](const std::uint16_t first,
+                            const std::uint16_t second,
+                            const std::uint16_t third) {
+                            const std::array indices{
+                                first,
+                                second,
+                                third,
+                            };
+                            coarse.indices.insert(
+                                coarse.indices.end(),
+                                indices.begin(),
+                                indices.end());
+                            const auto coarse_triangle =
+                                surface_triangle(tile, indices);
+                            for (const auto& lod0_triangle :
+                                 patch_lod0) {
+                                chunk_maximum_error = std::max(
+                                    chunk_maximum_error,
+                                    maximum_triangle_overlay_error(
+                                        coarse_triangle,
+                                        lod0_triangle));
+                            }
+                        };
+
+                    if (local_cell_z == 0U) {
+                        emit_triangle(v00, center, top_midpoint);
+                        emit_triangle(top_midpoint, center, v20);
+                    }
+                    else {
+                        emit_triangle(v00, center, v20);
+                    }
+
+                    if (local_cell_x + 2U ==
+                        lod0_chunk.cell_columns) {
+                        emit_triangle(v20, center, right_midpoint);
+                        emit_triangle(right_midpoint, center, v22);
+                    }
+                    else {
+                        emit_triangle(v20, center, v22);
+                    }
+
+                    if (local_cell_z + 2U ==
+                        lod0_chunk.cell_rows) {
+                        emit_triangle(v22, center, bottom_midpoint);
+                        emit_triangle(bottom_midpoint, center, v02);
+                    }
+                    else {
+                        emit_triangle(v22, center, v02);
+                    }
+
+                    if (local_cell_x == 0U) {
+                        emit_triangle(v02, center, left_midpoint);
+                        emit_triangle(left_midpoint, center, v00);
+                    }
+                    else {
+                        emit_triangle(v02, center, v00);
+                    }
+                }
+            }
+        }
+
+        coarse.chunks.push_back(HeightTileCoarseChunk{
+            .first_index = first_index,
+            .index_count = coarse.indices.size() - first_index,
+            .maximum_geometric_error = chunk_maximum_error,
+        });
+        coarse.maximum_geometric_error = std::max(
+            coarse.maximum_geometric_error,
+            chunk_maximum_error);
+    }
+
+    return core::Result<HeightTileCoarseChunkLayout>::success(
+        std::move(coarse));
 }
 
 } // namespace shark::terrain

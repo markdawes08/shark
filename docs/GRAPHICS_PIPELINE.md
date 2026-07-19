@@ -1,16 +1,16 @@
 # HLSL Graphics Pipeline Contract
 
-- **Completed through:** `T-004`
+- **Completed through:** `T-005`
 - **Last verified:** July 19, 2026
 
 Shark compiles all production HLSL at build time with a pinned retail DXC and
-creates immutable Direct3D 12 pipeline state during renderer startup. T-004
+creates immutable Direct3D 12 pipeline state during renderer startup. T-005
 retains the existing cube, terrain, sky, material-sphere, and tone-map programs
-while selecting full-resolution terrain draw ranges on the CPU. The pipeline
-still includes S-003's shared image-based-lighting helpers, material-sphere
-proof, linear-HDR scene target, and final tone-map program. This remains a
-focused scene contract, not a general shader asset, material-graph, or
-pipeline-cache system.
+while selecting a chunk's LOD0 or boundary-preserving coarse index range on the
+CPU. The pipeline still includes S-003's shared image-based-lighting helpers,
+material-sphere proof, linear-HDR scene target, and final tone-map program.
+This remains a focused scene contract, not a general shader asset,
+material-graph, or pipeline-cache system.
 
 ## Pinned compiler and artifacts
 
@@ -190,7 +190,7 @@ one opaque `DXGI_FORMAT_R8G8B8A8_UNORM` render target from
 One startup direct-queue submission copies:
 
 - four immutable geometry buffers for cube and packed shared
-  terrain/chunk-bounds/query-marker/material-sphere data;
+  terrain-LOD/chunk-bounds/query-marker/material-sphere data;
 - checker and retained DDS cubemap textures;
 - 36 terrain-material subresources; and
 - 79 derived HDR environment subresources containing 284,608 meaningful
@@ -201,11 +201,12 @@ bounded fence wait releases temporary upload storage.
 
 Each non-minimized frame then:
 
-1. extracts the current Direct3D frustum and selects visible terrain chunks;
+1. extracts the current Direct3D frustum, selects visible terrain chunks, and
+   chooses each visible chunk's LOD from camera-to-AABB distance;
 2. stages one 256-byte constants/probe record;
 3. composes the exact 15-import/four-pass HDR frame graph;
-4. executes `Terrain`, including one surface and one magenta-bounds draw per
-   visible chunk plus the sphere and marker draws;
+4. executes `Terrain`, including one selected LOD0/coarse surface and one
+   magenta-bounds draw per visible chunk plus the sphere and marker draws;
 5. executes `TexturedCube`;
 6. executes the far-depth `Skybox`;
 7. executes `ToneMap` to the current back buffer;
@@ -213,10 +214,12 @@ Each non-minimized frame then:
 9. submits, signals the context fence, and presents without an unconditional
    post-frame drain.
 
-For `V` visible chunks, the submitted-frame draw contract is:
+For `V0` visible LOD0 chunks, `Vc` visible coarse chunks, and `V=V0+Vc`, the
+submitted-frame draw contract is:
 
 ```text
-visible terrain chunks   V * DrawIndexedInstanced(384, ...)
+LOD0 terrain chunks      V0 * DrawIndexedInstanced(384, ...)
+coarse terrain chunks    Vc * DrawIndexedInstanced(240, ...)
 material sphere          DrawIndexedInstanced(1,584, ...)
 visible chunk AABBs      V * DrawIndexedInstanced(24, ...)
 terrain query marker     DrawIndexedInstanced(6, ...)
@@ -225,23 +228,26 @@ skybox                   DrawIndexedInstanced(36, ...)
 tone map                 DrawInstanced(3, 1, 0, 0)
 ```
 
-Each chunk selects one contiguous first-index/count range into the shared
-1,089-vertex stream. The matching bounds draw selects its own packed
-eight-vertex/24-index range. The sphere remains in those terrain buffers, so
-the variable `2V + 4` indexed draws still use four geometry buffers. The smoke
-poses produce 36 indexed draws at `V=16` and 14 at `V=5`. Exact per-frame graph
-accounting remains 15 imports, four passes, three dependencies, six
-transitions, and 31 elisions. Diagnostics retain ten timestamps per context:
-frame begin/end plus begin/end for each pass.
+Each chunk selects one contiguous LOD0 or coarse first-index/count range into
+the shared 1,089-vertex stream. The matching bounds draw selects its own packed
+eight-vertex/24-index range. Fine and coarse terrain indices occupy the
+`0..6,143` and `6,144..9,983` ranges; bounds, marker, and sphere begin at
+9,984, 10,368, and 10,374. The sphere remains in those terrain buffers, so the
+variable `2V + 4` indexed draws still use four geometry buffers. The smoke
+poses produce 36 indexed draws/7,038 indices at `V0/Vc=8/8`, then 14 indexed
+draws/3,414 indices at `V0/Vc=3/2`. Exact per-frame graph accounting remains
+15 imports, four passes, three dependencies, six transitions, and 31 elisions.
+Diagnostics retain ten timestamps per context: frame begin/end plus begin/end
+for each pass.
 
 ## Acceptance and non-goals
 
 The hardware and normal packaged-WARP smoke paths require 1,000 successful
 presents; focused packaged WARP with GPU-based validation requires 120. They
-exercise both terrain fill modes, all three terrain material views, both
-environment modes, resize, camera rotation, frame retirement, and clean
-DirectX validation. The smoke validates resources, commands, counts, and
-lifetime; it does not compare pixels.
+exercise both terrain fill modes, both terrain LODs, the exact `8/8 -> 3/2`
+LOD split, all three terrain material views, both environment modes, resize,
+camera rotation, frame retirement, and clean DirectX validation. The smoke
+validates resources, commands, counts, and lifetime; it does not compare pixels.
 
 Manual acceptance requires coherent environment response on terrain and the
 glossy sphere, a translation-invariant HDR sky, clean `F3` switching to the
@@ -255,6 +261,6 @@ exposure, HDR display output, or image-comparison testing. Those omissions
 preserve the bounded San Andreas-class product scope while allowing modern HDR
 implementation quality.
 
-`T-004` was completed on July 19, 2026 without adding or changing HLSL, root
-signatures, or PSOs. The next increment is `T-005`, one bounded coarser terrain
-LOD with crack-free seams and full-resolution canonical queries.
+`T-005` was completed on July 19, 2026 without adding or changing HLSL, root
+signatures, or PSOs. The next increment is `R-001`, seeded, bounded GPU rain
+driven by adjustable precipitation rate and wind.

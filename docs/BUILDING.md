@@ -1,6 +1,6 @@
 # Building Shark
 
-- **Completed through:** `T-004`
+- **Completed through:** `T-005`
 - **Last verified:** July 19, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
@@ -113,8 +113,9 @@ local development and testing only and must never enter a packaged product.
 
 With no arguments, `SharkSandbox` initializes the highest-priority eligible
 hardware device, creates the validated canonical `HeightTileSurface`, and
-continuously draws its deterministic terrain, query-derived cyan normal pin,
-material sphere, procedural-checker cube, and HDR environment through named
+continuously draws its deterministic terrain with bounded distance-selected
+LOD, query-derived cyan normal pin, material sphere, procedural-checker cube,
+and HDR environment through named
 `Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` graph passes. The first
 three render into a resize-owned `R16G16B16A16_FLOAT` scene target; `ToneMap`
 writes the final back buffer. The triple frame-resource lifecycle reports
@@ -170,11 +171,14 @@ height tile must show tiled ground and rock materials blended by slope and
 height, mapped surface detail, and direct-sun plus environment response. The
 glossy neutral material sphere must reflect the same environment used by the
 terrain. The initial pose must show 16 magenta depth-tested chunk AABBs and log
-`Terrain chunks: 16 / 16 visible`. Surface chunks and matching bounds must
-disappear together when the camera turns away; the deterministic smoke pose
-must reach `5 / 16`. The cyan query pin must begin on the visible LOD0 surface
-and extend along its exact triangle normal. `F1` must reveal the fixed triangle
-split in wireframe without disconnecting or hiding the pin. `F2` must cycle
+`Terrain chunks: 16 / 16 visible (LOD0=8, coarse=8)`. Surface chunks and
+matching bounds must disappear together when the camera turns away; the
+deterministic smoke pose must reach
+`5 / 16 visible (LOD0=3, coarse=2)`. In `F1` wireframe, equal and mixed LOD
+neighbors must retain every shared edge segment without cracks, skirts, or
+missing corners. The cyan query pin must begin on the canonical LOD0 surface
+and extend along its exact triangle normal. `F1` must keep the pin connected
+and visible. `F2` must cycle
 shaded, complementary material-weight, and mapped world-normal views without
 changing the canonical geometry.
 The textured cube must retain correct hidden-surface occlusion and perspective.
@@ -264,7 +268,7 @@ destination.
 
 Creation records one `StaticSceneUpload` PIX event, one static direct-queue
 upload submission, and one bounded wait for the cube and packed shared
-terrain/chunk-bounds/marker/sphere vertex/index buffers, deterministic `8x8`
+terrain-LOD/chunk-bounds/marker/sphere vertex/index buffers, deterministic `8x8`
 checker, all six faces of the app-local `8x8` sRGB DDS cubemap, the three
 two-layer `32x32` full-mip terrain
 material arrays, and four derived HDR environment textures. The deterministic
@@ -272,21 +276,28 @@ material arrays, and four derived HDR environment textures. The deterministic
 six-mip radiance cube, `8x8` one-mip diffuse-irradiance cube, `32x32` six-mip
 GGX-prefiltered specular cube, and `32x32` split-sum BRDF LUT: 79 subresources
 and 284,608 meaningful RGBA32-float bytes. The 16 row-major chunks use the
-same 1,089 terrain vertices and 16 contiguous 384-index surface ranges. Their
-128 bounds vertices and 384 bounds indices, the query marker, and the
-266-vertex/1,584-index material sphere remain packed into the same terrain
-buffers, so startup still creates four geometry buffers. The retained DDS
+same 1,089 terrain vertices, 16 contiguous 384-index LOD0 ranges, and 16
+contiguous 240-index boundary-preserving coarse ranges. The 9,984 surface
+indices are followed by 128 bounds vertices/384 bounds indices, the query
+marker, and the 266-vertex/1,584-index material sphere in the same terrain
+buffers, so startup still creates four geometry buffers. The packed terrain
+index offsets are 0 for LOD0, 6,144 for coarse, 9,984 for bounds, 10,368 for
+the marker, and 10,374 for the sphere; the buffer contains 11,958 indices.
+The retained DDS
 cubemap remains a separate asset/upload proof. The startup list ends with 13
 initialization barriers.
 
 Every submitted frame records one outer `Frame` event with nested `Terrain`,
 `TexturedCube`, `Skybox`, and `ToneMap` events. Its exact graph has 15 imports,
 four passes, three dependencies, six recorded transitions, and 31 elided
-transitions. With `V` visible chunks it issues `2V + 4` indexed draws: `V`
-384-index terrain surfaces, the material sphere, `V` matching 24-index chunk
-bounds, the terrain query marker, 36-index textured cube, and 36-index skybox.
+transitions. With `V0` visible LOD0 chunks, `Vc` visible coarse chunks, and
+`V=V0+Vc`, it issues `2V + 4` indexed draws: `V0` 384-index terrain surfaces,
+`Vc` 240-index terrain surfaces, the material sphere, `V` matching 24-index
+chunk bounds, the terrain query marker, 36-index textured cube, and 36-index
+skybox.
 One non-indexed fullscreen-triangle tone-map draw follows. The fixed smoke
-poses therefore issue 36 indexed draws at `V=16` and 14 at `V=5`. The frame
+poses therefore issue 36 indexed draws/7,038 indices at `V0/Vc=8/8`, then 14
+indexed draws/3,414 indices at `V0/Vc=3/2`. The frame
 retains four texture-table bindings and one reversed-Z depth clear. Terrain
 owns the clear, cube preserves it, sky uses the read-only DSV, and `ToneMap`
 reads the HDR scene target while writing the swap-chain back buffer.
@@ -304,7 +315,8 @@ resize/shutdown drain; timing adds no normal-frame drain.
 The summary reports graph pass/barrier counts, PIX event counts, query
 high-water/capacity, timing sample count, average/maximum frame,
 `Terrain`, `TexturedCube`, `Skybox`, and `ToneMap` milliseconds, terrain
-solid/wireframe/bounds/query-marker counts, chunk last/min/max/total and
+solid/wireframe/bounds/query-marker counts, chunk last/min/max/total,
+LOD0/coarse last/draw/index counts, measured maximum geometric error,
 tested/visible/culled counts, all draw/index counts,
 scene/sky matrix changes, `depth_clear_count`, depth-resource/read-only-view
 creation counts, other resource creation counts,
@@ -326,7 +338,9 @@ GPU timestamp-state unit coverage directly with:
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][query]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][height-tile][chunks]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][height-tile][lod]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[renderer][terrain][culling]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[renderer][terrain][lod]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][material]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[assets][dds][cubemap]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[assets][environment][ibl]"
@@ -376,11 +390,11 @@ capture acceptance. See [the DDS cubemap contract](DDS_CUBEMAP.md) for the
 tracked fixture, strict loader, app-local deployment, retained startup upload,
 and deliberately absent per-frame sky read. See
 [the terrain contract](TERRAIN.md) for canonical ownership, exact query
-semantics, full-resolution chunks, frustum culling, material fixture,
-render-mesh separation, and diagnostic rules. `T-004` completed terrain chunk
-culling on July 19, 2026. The upcoming increment is `T-005`, one bounded
-coarser terrain LOD with crack-free seams and full-resolution canonical
-queries.
+semantics, full-resolution chunks, bounded visual LOD, frustum culling,
+material fixture, render-mesh separation, and diagnostic rules. `T-005`
+completed one boundary-preserving coarse terrain LOD on July 19, 2026 without
+changing canonical queries. The upcoming increment is `R-001`, seeded, bounded
+GPU rain driven by adjustable precipitation rate and wind.
 
 ## Visual Studio
 

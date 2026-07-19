@@ -42,6 +42,8 @@ add_library(SharkEngine STATIC
     renderer/src/frame_pipeline.hpp
     renderer/src/terrain_frustum_culling.cpp
     renderer/src/terrain_frustum_culling.hpp
+    renderer/src/terrain_lod_selection.cpp
+    renderer/src/terrain_lod_selection.hpp
     rhi/d3d12/include/shark/rhi/d3d12/device.hpp
     rhi/d3d12/src/device.cpp
     rhi/d3d12/src/device_access.hpp

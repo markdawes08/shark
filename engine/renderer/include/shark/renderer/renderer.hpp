@@ -87,14 +87,21 @@ struct Texture2DArrayUploadView final {
 struct TerrainChunkUploadView final {
     std::uint32_t first_index{};
     std::uint32_t index_count{};
+    std::uint32_t coarse_first_index{};
+    std::uint32_t coarse_index_count{};
     math::Float3 bounds_minimum{};
     math::Float3 bounds_maximum{};
+
+    // Maximum vertical separation from the canonical LOD0 surface, in
+    // world-space meters.
+    double maximum_geometric_error{};
 };
 
 // Terrain chunks, their diagnostic bounds, and the query marker are copied
 // synchronously during create(). Every vertex stream uses interleaved float3
 // POSITION / float3 NORMAL data; every index stream uses uint16_t. Chunk
-// index ranges must be contiguous and cover the full triangle index stream.
+// LOD0 chunk ranges form one contiguous prefix; coarse ranges form the
+// contiguous suffix and together cover the full triangle index stream.
 // Bounds contain exactly eight vertices and 24 local indices per chunk.
 struct TerrainMeshUploadView final {
     const void* vertices{};
@@ -278,6 +285,8 @@ struct RendererStats final {
     std::uint64_t skybox_draw_calls{};
     std::uint64_t skybox_indices{};
     std::uint64_t terrain_draw_calls{};
+    std::uint64_t terrain_lod0_draw_calls{};
+    std::uint64_t terrain_coarse_draw_calls{};
     std::uint64_t terrain_solid_draw_calls{};
     std::uint64_t terrain_wireframe_draw_calls{};
     std::uint64_t terrain_shaded_draw_calls{};
@@ -294,12 +303,19 @@ struct RendererStats final {
     std::uint64_t terrain_visible_chunk_min{};
     std::uint64_t terrain_visible_chunk_max{};
     std::uint64_t terrain_visible_chunk_last{};
+    std::uint64_t terrain_lod0_chunks_last{};
+    std::uint64_t terrain_coarse_chunks_last{};
     std::uint64_t terrain_indices{};
+    std::uint64_t terrain_lod0_indices{};
+    std::uint64_t terrain_coarse_indices{};
     std::uint64_t terrain_bounds_indices{};
     std::uint64_t terrain_query_marker_indices{};
     std::uint64_t material_sphere_indices{};
     std::uint64_t terrain_vertex_count{};
     std::uint64_t terrain_index_count{};
+    std::uint64_t terrain_lod0_index_count{};
+    std::uint64_t terrain_coarse_index_count{};
+    double terrain_maximum_geometric_error{};
     std::uint64_t terrain_bounds_vertex_count{};
     std::uint64_t terrain_bounds_index_count{};
     std::uint64_t terrain_query_marker_vertex_count{};

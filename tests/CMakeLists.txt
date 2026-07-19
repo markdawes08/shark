@@ -27,6 +27,7 @@ add_executable(SharkTests
     unit/renderer_d3d12_terrain_scene_data_tests.cpp
     unit/renderer_frame_pipeline_tests.cpp
     unit/renderer_terrain_frustum_culling_tests.cpp
+    unit/renderer_terrain_lod_selection_tests.cpp
     unit/result_tests.cpp
     unit/sandbox_options_tests.cpp
     unit/terrain_height_tile_tests.cpp

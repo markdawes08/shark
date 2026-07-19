@@ -1,18 +1,19 @@
 # Renderer and Direct3D 12 Presentation/Frame-Resource Contract
 
-- **Completed through:** `T-004`
+- **Completed through:** `T-005`
 - **Last verified:** July 19, 2026
 
 `shark::renderer::Renderer` owns Shark's focused D3D12 scene/presentation
-backend. T-004 preserves the triple-buffered fence-gated HDR lifecycle and
-adds CPU frustum culling for 16 full-resolution terrain chunks. Normal frames
-still submit and present without an unconditional post-frame queue drain.
+backend. T-005 preserves the triple-buffered fence-gated HDR lifecycle and
+adds stateless, camera-distance selection between each visible terrain chunk's
+full-resolution and boundary-preserving coarse ranges. Normal frames still
+submit and present without an unconditional post-frame queue drain.
 
 ## Public boundary and ownership
 
 `Renderer` is a move-only public PIMPL. Its COM-free public records include
 `RendererConfig`, `RenderFrameData`, `RenderStatus`, `RendererStats`,
-shader-bytecode views, mesh/chunk-range views, and generic 2D/cube upload
+shader-bytecode views, mesh/chunk/LOD-range views, and generic 2D/cube upload
 views.
 `Renderer::create` consumes every pointer-based upload/bytecode view
 synchronously and retains no caller CPU pointer.
@@ -28,8 +29,10 @@ synchronously and retains no caller CPU pointer.
 `RenderFrameData` carries finite scene/sky matrices, daylight settings, camera
 world position, terrain fill/material views, and the environment mode. `F3`
 selects image-based lighting or the retained procedural-daylight fallback.
-The renderer receives query-derived terrain marker geometry but does not own or
-perform canonical terrain queries.
+Each `TerrainChunkUploadView` carries contiguous LOD0/coarse ranges, exact
+bounds, and the measured maximum geometric error. The renderer receives
+query-derived terrain marker geometry but does not own or perform canonical
+terrain queries.
 
 At the sandbox composition root, `Renderer::create` borrows the authoritative
 `shark::rhi::d3d12::Device`. Private `DeviceAccess` exposes native device/factory
@@ -57,7 +60,7 @@ The private backend owns:
 - cube, sky, terrain solid/wireframe/line, material-sphere, and tone-map PSOs
   plus their focused root signatures;
 - four committed geometry buffers: cube vertex/index and packed shared
-  terrain/chunk-bounds/query-marker/material-sphere vertex/index;
+  terrain-LOD/chunk-bounds/query-marker/material-sphere vertex/index;
 - checker and retained S-001 DDS cubemap textures;
 - three two-layer `32x32`, six-mip terrain material arrays;
 - a `32x32` six-mip radiance cube, `8x8` irradiance cube, `32x32` six-mip
@@ -80,7 +83,7 @@ substituted. Fence zero means never submitted or already retired.
 
 Renderer creation records one `StaticSceneUpload` direct-queue submission:
 
-- cube and packed terrain/chunk-bounds/marker/sphere vertex/index data;
+- cube and packed terrain-LOD/chunk-bounds/marker/sphere vertex/index data;
 - deterministic checker;
 - six retained DDS cubemap faces;
 - 36 terrain-material subresources containing 32,760 meaningful bytes; and
@@ -107,17 +110,22 @@ submission signals the normal fence, performs one bounded startup wait, and
 releases temporary upload resources before the first frame. No static upload
 occurs in the frame loop.
 
-The terrain buffers contain one 1,089-vertex stream, 16 contiguous 384-index
-surface ranges, 16 eight-vertex/24-index bounds ranges, the query marker, and
-the 266-vertex/1,584-index material sphere. The sphere remains packed after the
-marker; chunking adds no fifth geometry buffer.
+The terrain buffers contain one unchanged 1,089-vertex surface stream, 16
+contiguous 384-index LOD0 ranges, 16 contiguous 240-index coarse ranges, 16
+eight-vertex/24-index bounds ranges, the query marker, and the
+266-vertex/1,584-index material sphere. The complete vertex buffer contains
+1,489 vertices. Index offsets are 0 for LOD0, 6,144 for coarse, 9,984 for
+bounds, 10,368 for the marker, and 10,374 for the sphere, for 11,958 total
+indices. The sphere remains packed after the marker; T-005 adds no fifth
+geometry buffer.
 
 ## Frame acquisition, recording, and present
 
 One frame:
 
-1. extracts the current Direct3D frustum, tests all 16 terrain AABBs, and logs
-   a changed visible/total count;
+1. extracts the current Direct3D frustum, tests all 16 terrain AABBs, chooses
+   each visible chunk's LOD from finite camera-to-AABB distance, and logs a
+   changed visible/total/LOD split;
 2. obtains DXGI's current back-buffer index and selects that context;
 3. waits only if that context's preceding submission is still in flight;
 4. consumes its completed ten-timestamp sample, retires the submission, and
@@ -151,11 +159,12 @@ elided transitions      31
 transitions cover scene-color render/read state, depth write/read state, and
 back-buffer present/render state.
 
-For `V` visible chunks, the submitted commands contain `2V + 4` indexed scene
-draws:
+For `V0` visible LOD0 chunks, `Vc` visible coarse chunks, and `V=V0+Vc`, the
+submitted commands contain `2V + 4` indexed scene draws:
 
 ```text
-visible terrain chunks      384 * V indices
+LOD0 terrain chunks         384 * V0 indices
+coarse terrain chunks       240 * Vc indices
 material sphere          1,584 indices
 visible chunk AABBs           24 * V indices
 terrain query marker          6 indices
@@ -165,8 +174,8 @@ skybox                        36 indices
 
 `ToneMap` adds `DrawInstanced(3, 1, 0, 0)`. Per frame there is one depth clear
 and four texture-table binds: terrain/IBL, checker, sky radiance, and HDR scene
-color. The fixed smoke poses produce `V=16`, then `V=5`: 36 then 14 indexed
-draws, respectively.
+color. The fixed smoke poses produce `V0/Vc=8/8`, then `3/2`: 36 indexed
+draws/7,038 indices, then 14 indexed draws/3,414 indices.
 
 The 256-byte frame record remains:
 
@@ -258,14 +267,15 @@ GPU-validated WARP requires 120, a 180-second application deadline, and a
 240-second CTest timeout. The paths:
 
 - resize `1280x720` to `960x600`;
-- start with all 16 terrain chunks visible, then script yaw `1.25` radians so
-  exactly five remain visible;
+- start with all 16 terrain chunks visible at an `8/8` LOD0/coarse split, then
+  script yaw `1.25` radians so exactly five remain visible at a `3/2` split;
 - exercise all three contexts;
 - exercise both terrain fill modes, all three material views, and both
   environment modes;
 - prove `16 * frame_submissions` chunk tests, visible-plus-culled conservation,
-  actual visible surface/bounds draws and indices, min/max/last visibility,
-  graph, texture-binding, upload, descriptor, and timestamp accounting;
+  actual LOD0/coarse surface and bounds draws/indices, min/max/last visibility,
+  exact `0.140625` maximum geometric error, graph, texture-binding, upload,
+  descriptor, and timestamp accounting;
 - prove one static upload, four geometry buffers, three material arrays, four
   HDR environment textures, ten persistent descriptors, and 79/284,608
   environment upload accounting;
@@ -280,7 +290,7 @@ commands and accounting, not pixels.
 
 ## Explicit non-goals
 
-T-004 does not expose a public/general upload allocator, global upload ring,
+T-005 does not expose a public/general upload allocator, global upload ring,
 persistent descriptor allocator, generic deferred-destruction service, or
 image readback. Its fixed scene, ten-slot heap, query storage, HDR target, and
 environment maps are focused infrastructure, not a general scene/material/
@@ -292,6 +302,7 @@ parallel recording, copy queue, async compute, enhanced barriers, automatic
 exposure, HDR display output, or texture streaming.
 
 This modern chunked HDR implementation does not broaden Shark beyond its
-approved San Andreas-class local-sandbox feature ceiling. `T-004` was
-completed on July 19, 2026. The next increment is `T-005`, one bounded coarser
-terrain LOD with crack-free seams and full-resolution canonical queries.
+approved San Andreas-class local-sandbox feature ceiling. `T-005` was
+completed on July 19, 2026 with one bounded coarse terrain LOD and unchanged
+canonical queries. The next increment is `R-001`, seeded, bounded GPU rain
+driven by adjustable precipitation rate and wind.

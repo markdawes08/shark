@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 19, 2026
-- **Latest completed:** `T-007` - natural rolling landscape
-- **Next increment:** `T-008` - dry spawn and lake-basin shaping
+- **Latest completed:** `T-008` - dry spawn and lake-basin shaping
+- **Next increment:** `W-001` - bounded visual lake surface
 
 ## 1. Project direction
 
@@ -344,9 +344,11 @@ triangles at or below 12 degrees, an 11.251308698-degree maximum slope, and a
 0.1171875-meter maximum coarse error without changing topology or resource
 budgets. Its four-phase presentation smoke preserves the interactive overview
 while finishing from a smoke-only near pose with one LOD0 and 60 coarse chunks,
-so both packed D3D12 index ranges stay live. T-008 adds scenario-owned spawn and
-lake-basin metadata plus the dry terrain indentation. Only W-001 adds water
-pixels.
+so both packed D3D12 index ranges stay live. T-008 composes that untouched
+rolling-height oracle with a deterministic Q8 basin post-process and publishes
+scenario-owned spawn, footprint, core, and future-waterline metadata. The
+composite checksum is `0x4890DE3E1AA063A9`; topology and resource sizes remain
+unchanged. Only W-001 adds water pixels.
 
 ### Non-negotiable ownership rules
 
@@ -574,9 +576,10 @@ across resources or frames.
    acceptance limit. It avoids periodic seams, spikes, external assets, and
    unbounded procedural work.
 8. Add a deterministic dry spawn and closed lake-like indentation near it.
-   T-008 will publish the future waterline and footprint as scenario metadata,
-   prove the basin is closed below that waterline, and stop before rendering or
-   simulating water.
+   T-008 completes this with an analytic warped upper-support footprint centered at
+   `(-128,-128)`, a `-4`-meter future waterline, a closed raised rim, and a dry
+   spawn overlooking the basin. It publishes those values as scenario metadata
+   and stops before rendering or simulating water.
 9. Add streaming, virtual texturing, render sections, wider indices, or
    mesh-shader meshlets only when measured scale or fidelity exceeds the
    bounded resident `R16_UINT` contract.
@@ -605,10 +608,12 @@ render frame rate changes.
 ### Water and fluids
 
 The first water is explicitly visual and begins only after T-008 defines the
-dry basin, spawn, footprint, and future waterline. W-001 adds a bounded static
-lake surface with Fresnel response, depth tint/absorption,
-refraction/reflection approximation, and animated normals (**V**). It is not
-called a fluid simulation.
+dry basin, spawn, upper support, and future waterline. W-001 clips a static
+water plane to the analytic `rho <= 1` support. Its visible shoreline is the
+waterline/depth-test intersection with canonical terrain, so bank triangles may
+occlude a narrow edge. Fresnel response, depth tint/absorption,
+refraction/reflection approximation, and animated normals remain visual
+effects (**V**), not a fluid simulation.
 
 The first simulated fluid is a conservative 2.5D shallow-water grid storing
 water depth and horizontal momentum (**S**). A small CPU reference solver comes
@@ -759,8 +764,8 @@ presentation stays within the documented continuous vertical-error limit.
 |---|---:|---|---|
 | `T-006` | V | Complete: add a separate bounded resident capacity region with `241x241` samples at four-meter spacing (`960x960` meters), 225 `16x16`-cell chunks, 58,081 shared vertices, 345,600 LOD0 indices, and 194,400 boundary-preserving coarse indices; retain the compact fixture as the regression oracle, stay on global `R16_UINT`, scale the camera/smoke contract, and verify a 2,473,944-byte surface payload, 2,621,440-byte committed D3D12 allocation, and 6,049.240/82.738-ms Debug/Release CPU build | `feat(terrain): add bounded large terrain region` |
 | `T-007` | V | Complete: replace the capacity region's checker heights with five fixed-point, fixed-seed, project-owned value-noise bands; lock exact sample anchors and FNV-1a checksum `0xC0FB1097EBCB8B7B`, bound offsets to `-12.30078125..13.5234375` meters and relief to `25.82421875` meters, keep all 115,200 triangles at or below 12 degrees with an `11.251308698`-degree maximum, retain T-006 topology/resources, and finish the smoke at a `61 (1/60)` near pose so both D3D12 index ranges remain exercised; add no lake, erosion, vegetation, roads, or external height asset | `feat(terrain): generate natural rolling landscape` |
-| `T-008` | V | Add a scenario-owned dry spawn overlooking a nearby smoothly irregular 80-120-meter lake indentation; publish its footprint and future waterline, place the basin core at least six meters below that level and its complete flood-fill rim at least one meter above it, keep spawn at least two meters above and 20 meters outside the shoreline with validation props dry, and render no water | `feat(terrain): add spawn-side lake basin` |
-| `W-001` | V | Render a bounded static surface at the T-008 lake waterline with Fresnel response, depth tint/absorption, reflection/refraction approximation, and animated normal waves; change no terrain height and claim no fluid simulation | `feat(water): render a visual lake surface` |
+| `T-008` | V | Complete: compose the unchanged T-007 rolling oracle with a deterministic Q8 basin post-process; publish an analytic warped approximately `112x96`-meter upper support centered at `(-128,-128)` and a `-4`-meter future waterline; lock composite checksum `0x4890DE3E1AA063A9`, a `(-124,-10.47265625,-128)` core, a complete `-2.5`-meter spill rim, and a dry spawn at `(-128,1.34375,-20)` about 58.5 meters outside the support boundary; retain topology/resources and render no water | `feat(terrain): add spawn-side lake basin` |
+| `W-001` | V | Clip a static water plane to T-008's analytic `rho <= 1` upper support at the published waterline; let the visible shoreline emerge through canonical-terrain depth testing, including narrow bank-triangle occlusion near the edge; add Fresnel response, depth tint/absorption, reflection/refraction approximation, and animated normal waves; change no terrain height and claim no fluid simulation | `feat(water): render a visual lake surface` |
 
 **M4 exit / Environment Lab 0.1:** the camera starts on dry natural terrain
 overlooking a visually convincing static lake inside a bounded `960x960`-meter
@@ -841,7 +846,7 @@ this section competes with the coupled-environment critical path through M7.
 ### Deferred visual-weather track
 
 The owner deferred these effects on July 19, 2026. They remain approved but
-have no position on the active `T-008 -> W-001 -> PHY-001`
+have no position on the active `W-001 -> PHY-001`
 path. Resuming one requires a small plan update; skipping them does not remove
 the numerical precipitation rate used by later hydrology.
 
@@ -944,21 +949,20 @@ online architecture is not implied.
 
 ## 14. Immediate next increment
 
-After T-007 is reviewed and committed by the owner, implement only `T-008`:
+After T-008 is reviewed and committed by the owner, implement only `W-001`:
 
-- preserve the T-007 natural generator, `241x241` samples, four-meter spacing,
-  `960x960`-meter footprint, 225 chunks, global `R16_UINT` indices, canonical
-  query ownership, LOD construction, resource budgets, and compact oracle;
-- add scenario-owned metadata for a dry spawn overlooking one nearby, smoothly
-  irregular lake indentation whose shoreline spans 80-120 meters;
-- publish the future waterline and the complete lake footprint without
-  rendering water;
-- place the basin core at least six meters below the future waterline and prove
-  the complete flood-fill rim remains at least one meter above it;
-- keep the spawn at least two meters above and 20 meters outside the shoreline,
-  and keep the existing validation cube and material sphere dry; and
-- stop before water pixels, fluid state, rain, erosion, vegetation, roads,
-  external terrain assets, streaming, wider indices, or physics.
+- consume T-008's immutable analytic `rho <= 1` upper support and `-4`-meter
+  future waterline as the single source of truth for one bounded static water
+  plane; derive its visible shoreline from the canonical-terrain depth test,
+  allowing narrow bank-triangle occlusion near the support edge;
+- add Fresnel response, depth tint/absorption, a bounded
+  reflection/refraction approximation, and animated normal waves;
+- preserve canonical terrain heights, the dry spawn, basin metadata, global
+  `R16_UINT` terrain indices, and all existing terrain queries;
+- measure the added water resources, descriptors, pass/draw work, and GPU
+  timing through the existing diagnostics; and
+- stop before fluid state, buoyancy, rainfall coupling, erosion, volumetric
+  water, or any claim of physical simulation.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -968,8 +972,8 @@ error. T-006's capacity topology, resource sizes, camera scale, canonical
 queries, graph, shader, PSO, HDR-lighting, and crack-free boundary contracts
 remain unchanged. Measured construction times are `8098.750` ms on Debug
 hardware, `87.203` ms on Release
-hardware, and `7699.463` ms on Debug WARP. The active smoke uses eighth-sized
-phases with `A/B/C/D = 93/93/72/61` visible chunks and ends at
+hardware, and `7699.463` ms on Debug WARP. The then-active T-007 smoke used
+eighth-sized phases with `A/B/C/D = 93/93/72/61` visible chunks and ended at
 `61 (LOD0=1, coarse=60)` without changing the ordinary interactive start.
 Debug hardware passed all 1,000 frames with exact
 `225000/86375/138625` tested/visible/culled accounting, both index ranges,
@@ -979,8 +983,44 @@ WARP+GBV passed 120 with their scaled exact totals and the same clean Direct3D
 state. Final Debug and Release `SharkTests` each passed 135 cases and 303,048
 assertions.
 
-The active queue after T-008 is `W-001` visual lake water, then `PHY-001`
-fixed-step physics. `R-001` through `R-004` remain deferred.
+T-008 composes that unchanged T-007 base with a bounded Q8 basin profile. Its
+analytic warped upper support is centered at `(-128,-128)` with `56/48`-meter
+nominal semi-axes and dense-sampled continuous spans of approximately
+`111.998421x95.998672` meters.
+The future waterline is `-4` meters; the core sample at
+`(-124,-10.47265625,-128)` is `6.47265625` meters below it, while all 260
+sampled rim points are `-2.5` meters, or `1.5` meters above it. The footprint
+contains 530 canonical samples. The dry spawn ground is
+`(-128,1.34375,-20)`, its camera eye is two meters higher with pitch `-0.1`,
+and sampled support-boundary distance is approximately 58.496138 meters.
+Validation cube and material sphere remain outside the shaping support, dry,
+and unburied. The shaper rejects input tiles containing any non-Q8 height
+sample, plus non-Q8-representable shape/grid values, unsafe-extreme, malformed,
+unordered, or open-rim inputs. Success proves one connected lattice footprint
+inside a closed canonical-triangle rim.
+
+The composite checksum is `0x4890DE3E1AA063A9`, maximum LOD0 slope is
+`18.681598` degrees, maximum adjacent X/Z steps are
+`1.16015625/1.33203125` meters, and maximum coarse deviation is
+`0.603515625` meter. Extrema, AABB, topology, index/resource sizes, and the
+`93/93/72/61` visibility plus `0/93,0/93,0/72,1/60` LOD smoke schedule remain
+unchanged. Focused Debug verification passes the lake-basin suites with 56,792
+assertions across three cases, scenario suites with 4,732 assertions
+across three cases, culling suites with 23 assertions across two cases, and LOD
+suites with 367 assertions across two cases. Active T-008 validation passed the
+Debug build and all `150/150` tests in 195.60 seconds; hardware, WARP, and
+WARP+GBV presentation took 8.61, 83.60, and 66.85 seconds. The Release build
+and all `150/150` tests passed in 157.45 seconds; the same gates took 2.06,
+78.66, and 60.14 seconds. Both configurations retained exact smoke accounting.
+The separate final Debug RTX 4070 smoke submitted 1,000 frames with
+86,375/138,625 visible/culled chunks, 125/86,250 LOD0/coarse draws,
+192,000/74,520,000 LOD0/coarse indices, 0.125/0.681-ms GPU-frame
+average/maximum, and 0.105/0.285-ms Terrain average/maximum. It reported zero
+corruption, zero errors, zero live child objects, and only the two expected
+`ReportLiveDeviceObjects` warnings.
+
+The active queue is `W-001` visual lake water, then `PHY-001` fixed-step
+physics. `R-001` through `R-004` remain deferred.
 
 ## 15. Primary technical references
 

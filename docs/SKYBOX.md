@@ -1,8 +1,8 @@
 # Sky and HDR Environment-Lighting Contract
 
-- **Completed through:** `T-007`
+- **Completed through:** `T-008`
 - **Last verified:** July 19, 2026
-- **Next planned increment:** `T-008` - dry spawn and lake-basin shaping
+- **Next planned increment:** `W-001` - bounded visual lake surface
 
 Shark still uses a skybox as the background rasterization technique: a cube is
 drawn around the camera with a translation-free view matrix and forced to the
@@ -230,8 +230,10 @@ Verify:
    procedural fallback. Both modes remain finite and visually usable.
 5. `F1`/`F2`, resize, minimize/restore, and clean shutdown preserve depth,
    material diagnostics, tone mapping, and Direct3D validation.
-6. The T-007 landscape reads as broad natural rolling ground under both
-   lighting modes; the cube and material sphere remain dry and unburied.
+6. The T-008 landscape reads as broad natural rolling ground with a smoothly
+   irregular dry basin visible from the scenario-owned spawn under both
+   lighting modes; no water pixels exist, and the cube and material sphere
+   remain dry and unburied.
 7. `--present-smoke` ends at the smoke-only `(16, -1, 0)` near pose with the
    preceding yaw/pitch unchanged. Its exact scene/sky matrix-change counts are
    `4/3`: translation changes terrain visibility to `61 (1/60)` without
@@ -254,9 +256,17 @@ It does not broaden Shark beyond the approved San Andreas-class local-sandbox
 ceiling. T-006 historically completed the bounded `241x241`-sample resident
 terrain capacity while preserving sky pixels, resources, shaders, and the
 one-draw sky policy. `T-007` completed its fixed-seed natural rolling heights
-on July 19, 2026; its final near-pose smoke phase keeps both terrain index
+on July 19, 2026; its final near-pose smoke phase kept both terrain index
 ranges live without changing those sky contracts. Hardware Debug/Release,
-normal WARP, and focused GBV validation passed. The next increment is `T-008`:
-add a dry spawn and
-validated 80-120-meter lake indentation with future waterline metadata, but
-render no water.
+normal WARP, and focused GBV validation passed as historical evidence.
+
+`T-008` composes the CPU terrain and publishes dry spawn/basin metadata without
+changing sky pixels, environment textures, daylight settings, shaders,
+descriptors, or the one-draw sky policy. Active T-008 validation passed the
+Debug build and all `150/150` tests in 195.60 seconds and the Release build and
+all `150/150` in 157.45 seconds, including the registered graphics gates. Rain
+remains deferred under the San Andreas-class ceiling. The next increment is
+`W-001`: clip a static water plane to the immutable T-008 analytic upper
+support at the published waterline. Canonical-terrain depth testing determines
+the visible shoreline; terrain remains unchanged and no fluid simulation is
+claimed.

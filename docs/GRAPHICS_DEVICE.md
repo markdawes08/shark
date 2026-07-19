@@ -1,6 +1,6 @@
 # Direct3D 12 Device Contract
 
-- **Completed through:** `T-007`
+- **Completed through:** `T-008`
 - **Last verified:** July 19, 2026
 
 G-001 establishes adapter discovery, diagnostics, capability reporting, and
@@ -197,10 +197,10 @@ reused, every submission compiles and executes exactly four graph passes with
 transitions plus four texture-table bindings, and every submission retires
 during explicit shutdown before frame resources are released. T-006
 historically established four geometry buffers, ten timestamps per frame, and
-the active 225-chunk capacity; T-007 retains them. Each visible surface selects a
+the active 225-chunk capacity; T-008 retains them. Each visible surface selects a
 1,536-index LOD0 or
 864-index coarse range; default frames omit bounds/query diagnostics, while
-`F4` adds them without another resource. The T-007 smoke poses expect `V=93`
+`F4` adds them without another resource. The unchanged T-008 smoke poses expect `V=93`
 and `V=72` for the overview phases, with LOD0/coarse splits of `0/93` and
 `0/72`. Its final smoke-only near phase moves to `(16, -1, 0)` with the same
 yaw/pitch and expects `V=61` at `1/60`, keeping both packed terrain index ranges
@@ -231,10 +231,19 @@ REN-001, T-003, and S-003 likewise change no device capability or selection
 policy. T-006 historically completed its Debug/Release hardware, WARP, and
 focused GPU-validation gates without changing adapter, debug-layer, device, or
 lifetime policy. `T-007` completed the natural-height contract on July 19,
-2026 and likewise introduces no device-policy change. Active hardware
+2026 and likewise introduced no device-policy change. Its hardware
 Debug/Release, normal WARP, and focused GBV validation passed the four-phase
-smoke with zero corruption/errors and zero live child objects. The next
-increment is `T-008`:
-add a dry spawn
-and validated 80-120-meter lake indentation with future waterline metadata, but
-render no water.
+smoke with zero corruption/errors and zero live child objects; that evidence is
+historical.
+
+`T-008` composes the CPU height tile and publishes scenario metadata. It changes
+no adapter selection, capability gate, queue, fence, heap, descriptor, resource
+lifetime, or D3D12 object count, and it creates no water resource. Active T-008
+validation passed the Debug build and all `150/150` tests in 195.60 seconds and
+the Release build and all `150/150` in 157.45 seconds. Hardware, WARP, and
+WARP+GBV presentation passed in both configurations with exact accounting.
+Rain remains deferred under the approved San Andreas-class ceiling. The next
+increment is `W-001`: add a static water plane clipped to T-008's immutable
+analytic upper support at its published waterline. Canonical-terrain depth
+testing determines the visible shoreline; terrain remains unchanged and no
+fluid simulation is claimed.

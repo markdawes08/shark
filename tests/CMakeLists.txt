@@ -32,7 +32,9 @@ add_executable(SharkTests
     unit/sandbox_options_tests.cpp
     unit/terrain_height_tile_tests.cpp
     unit/terrain_height_tile_query_tests.cpp
+    unit/terrain_lake_basin_tests.cpp
     unit/terrain_material_palette_tests.cpp
+    unit/environment_lab_scenario_tests.cpp
     unit/windows_application_tests.cpp
 )
 

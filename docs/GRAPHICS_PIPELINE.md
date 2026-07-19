@@ -1,12 +1,13 @@
 # HLSL Graphics Pipeline Contract
 
-- **Completed through:** `T-007`
+- **Completed through:** `T-008`
 - **Last verified:** July 19, 2026
 
 Shark compiles all production HLSL at build time with a pinned retail DXC and
-creates immutable Direct3D 12 pipeline state during renderer startup. T-007
+creates immutable Direct3D 12 pipeline state during renderer startup. T-008
 retains T-006's cube, terrain, sky, material-sphere, and tone-map programs while
-changing only the CPU-generated heights in the bounded 225-chunk fixture. The
+composing only the CPU-generated heights and scenario metadata in the bounded
+225-chunk fixture. The
 pipeline still includes S-003's shared image-based-lighting helpers,
 material-sphere proof, linear-HDR scene target, and final tone-map program.
 This remains a focused scene contract, not a general shader asset,
@@ -251,8 +252,10 @@ WARP requires 600, and focused packaged WARP with GPU-based validation requires
 `0/93 -> 0/72 -> 1/60` schedule, both D3D12 terrain index ranges, all three
 terrain material views, both environment modes, resize, camera rotation,
 translation-only near motion, and frame retirement; compact/focused CPU tests
-retain broader mixed-LOD coverage. Hardware Debug/Release, normal WARP, and
-focused GBV validation passed. The focused path alone uses
+retain broader mixed-LOD coverage. T-007 hardware Debug/Release, normal WARP,
+and focused GBV validation passed; T-008 retains these acceptance requirements
+and passed them in both active Debug and Release test runs. The focused path
+alone uses
 `640x360 -> 480x300`; normal paths retain `1280x720 -> 960x600`, with identical
 aspect changes. The smoke validates resources, commands, counts, and lifetime;
 it does not compare pixels.
@@ -260,7 +263,9 @@ it does not compare pixels.
 Manual acceptance requires coherent environment response on terrain and the
 glossy sphere, a translation-invariant HDR sky, clean `F3` switching to the
 procedural fallback, stable reversed-Z occlusion, and a finite tone-mapped
-back-buffer result through resize/minimize/restore.
+back-buffer result through resize/minimize/restore. T-008's dry basin must use
+the existing terrain material pipeline, and no water shader, PSO, draw, or pixel
+may exist.
 
 S-003 adds no shader reflection, artifact database, root-signature versioning,
 PSO hash/cache, runtime compilation, hot reload, general material graph,
@@ -272,8 +277,18 @@ implementation quality.
 T-006 historically completed its hardware, WARP, and focused GPU-validation
 presentation gates without adding or changing HLSL, root signatures, or PSOs.
 `T-007` completed the fixed-seed natural-height contract on July 19, 2026 and
-also changes none of those pipeline objects. Hardware Debug/Release, normal
-WARP, and focused GBV passed the active four-phase graphics-validation
-contract. The next increment is `T-008`: add a dry spawn and
-validated 80-120-meter lake indentation with future waterline metadata, but
-render no water.
+changed none of those pipeline objects. Hardware Debug/Release, normal WARP,
+and focused GBV passed its four-phase graphics-validation contract; that
+evidence remains historical.
+
+`T-008` adds no HLSL source, compiled shader, root-signature parameter, PSO,
+input element, texture binding, water draw, or water pixel. The composite
+terrain retains the exact `0/93 -> 0/72 -> 1/60` smoke schedule. The full Debug
+build and all `150/150` tests passed in 195.60 seconds; the Release build and
+all `150/150` passed in 157.45 seconds. Registered shader and graphics gates
+retained exact smoke accounting in both active configurations. Rain remains
+deferred and the San Andreas-class ceiling is unchanged. The next increment is
+`W-001`: clip a static water plane to T-008's immutable analytic upper support
+at the published waterline; canonical-terrain depth testing determines the
+visible shoreline, terrain remains unchanged, and no fluid simulation is
+claimed.

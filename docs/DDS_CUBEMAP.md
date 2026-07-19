@@ -1,6 +1,6 @@
 # DDS Cubemap Asset and Upload Contract
 
-- **Completed through:** `T-007`
+- **Completed through:** `T-008`
 - **Last verified:** July 19, 2026
 
 S-001 establishes Shark's first file-backed texture asset. It loads one
@@ -177,12 +177,11 @@ transitions, 31 elisions, four texture-table binds, and ten timestamps per
 frame. With `V` visible terrain chunks it contains `V + 3` indexed terrain/
 sphere/cube/sky draws plus the tone-map draw; `F4` optionally adds `V` chunk
 bounds and one query marker. Each visible terrain draw selects its 1,536-index
-LOD0 or 864-index coarse range. T-007 retains T-006's 540,000 surface indices,
-chunk bounds,
-query marker, and S-003 material sphere remain packed into the existing terrain
+LOD0 or 864-index coarse range. T-008 retains T-006's 540,000 surface indices,
+chunk bounds, query marker, and S-003 material sphere in the existing terrain
 buffers, preserving four total geometry buffers. The DDS-backed cube/sky draw
 and upload counts do not vary with terrain visibility, LOD, or diagnostics.
-T-007's final smoke-only near pose selects one LOD0 and 60 coarse chunks
+T-008's unchanged final smoke-only near pose selects one LOD0 and 60 coarse chunks
 (`1/60`) so both terrain ranges are exercised without changing any cubemap
 work.
 Cubemap creation/upload counters remain startup invariants, but there is no
@@ -211,9 +210,17 @@ project-generated environment-lighting asset contract without treating this
 orientation fixture as production content. T-006 historically established the
 bounded `241x241`-sample terrain capacity. T-007 completed its fixed-seed
 natural rolling heights on July 19, 2026 without changing any DDS resource,
-descriptor, upload, or color-space contract. Active Debug/Release hardware,
-normal WARP, and focused GBV validation passed. The next increment is `T-008`:
-add a
-dry spawn and validated
-80-120-meter lake indentation with future waterline metadata, but render no
-water.
+descriptor, upload, or color-space contract. T-007 Debug/Release hardware,
+normal WARP, and focused GBV validation passed; that evidence remains
+historical.
+
+T-008 applies a CPU-only deterministic basin post-process and publishes
+scenario metadata. It adds no DDS file, texture, descriptor, upload,
+color-space conversion, shader, or water resource. Active T-008 validation
+passed the Debug build and all `150/150` tests in 195.60 seconds and the Release
+build and all `150/150` in 157.45 seconds, including the registered graphics
+gates. Rain remains deferred and the approved San Andreas-class ceiling is
+unchanged. The next increment is `W-001`: clip a static water plane to T-008's
+immutable analytic upper support at the published waterline;
+canonical-terrain depth testing determines the visible shoreline, terrain
+remains unchanged, and no fluid simulation is claimed.

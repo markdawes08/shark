@@ -1,6 +1,6 @@
 # Building Shark
 
-- **Completed through:** `T-007`
+- **Completed through:** `T-008`
 - **Last verified:** July 19, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
@@ -172,17 +172,24 @@ For the visual acceptance check, run `SharkSandbox` without arguments. A solid
 height tile must show tiled ground and rock materials blended by slope and
 height, mapped surface detail, and direct-sun plus environment response. The
 glossy neutral material sphere must reflect the same environment used by the
-terrain. The initial pose must log
-`Terrain chunks: 93 / 225 visible (LOD0=0, coarse=93)`. The diagnostics start
-off; press `F4` and confirm the 93 magenta depth-tested chunk AABBs and cyan
-query pin appear. Surface chunks and matching bounds must disappear together
-when the camera turns away. The deterministic smoke must retain the start split
-after resize, reach `72 / 225 visible (LOD0=0, coarse=72)` after its yaw, then
+terrain. The interactive camera now starts at scenario-owned eye
+`(-128,3.34375,-20)` with pitch `-0.1`, overlooking a dry, smoothly irregular
+approximately `112x96`-meter lake indentation. No water plane, tint,
+reflection, animated surface, water resource, or water pass may exist.
+Diagnostics start off; press `F4` and confirm the magenta depth-tested chunk
+AABBs match the currently logged visible count and that the cyan query pin
+appears. Surface chunks and matching bounds must disappear together when the
+camera turns away.
+
+The separate deterministic `--present-smoke` path must start at
+`93 / 225 visible (LOD0=0, coarse=93)`, retain that split after resize, reach
+`72 / 225 visible (LOD0=0, coarse=72)` after its yaw, then
 finish from the smoke-only `(16, -1, 0)` pose with the same yaw/pitch at
-`61 / 225 visible (LOD0=1, coarse=60)`. The ordinary interactive start remains
-unchanged. The broad landscape must appear
-natural, mostly flat, and nonperiodic without spikes, abrupt boundary
-artifacts, lake shaping, or water. In `F1` wireframe, shared chunk edges must
+`61 / 225 visible (LOD0=1, coarse=60)`. Those smoke-only poses do not replace
+the scenario-owned interactive spawn. The broad landscape must appear natural, mostly flat, and
+nonperiodic without spikes or abrupt boundary artifacts. The dry basin must
+read as a smooth irregular depression rather than a perfect circle, sharp
+crater, repeated stamp, or stepped terrace. In `F1` wireframe, shared chunk edges must
 remain connected without cracks, skirts, or missing corners. The cyan query pin
 must begin on the canonical LOD0 surface
 and extend along its exact triangle normal. `F1` must keep the enabled pin
@@ -294,14 +301,14 @@ material arrays, and four derived HDR environment textures. The deterministic
 `64x32` linear-HDR source is CPU-only. Its GPU derivatives are a `32x32`
 six-mip radiance cube, `8x8` one-mip diffuse-irradiance cube, `32x32` six-mip
 GGX-prefiltered specular cube, and `32x32` split-sum BRDF LUT: 79 subresources
-and 284,608 meaningful RGBA32-float bytes. T-007 retains T-006's capacity
+and 284,608 meaningful RGBA32-float bytes. T-008 retains T-006's capacity
 topology:
 `241x241` samples/`240x240` cells at four-meter spacing over `960x960` meters,
 58,081 shared vertices, and 225
 row-major `16x16`-cell chunks. Its contiguous ranges contain 115,200 LOD0
 triangles/345,600 indices (1,536 per chunk) followed by 64,800
 boundary-preserving coarse triangles/194,400 indices (864 per chunk), with a
-measured 0.1171875-meter maximum coarse error. The 540,000 surface indices are
+measured active `0.603515625`-meter maximum coarse error. The 540,000 surface indices are
 followed by 1,800
 bounds vertices/5,400 bounds indices, the query marker, and the
 266-vertex/1,584-index material sphere in the same terrain buffers, so startup
@@ -311,10 +318,16 @@ the sphere; the buffer contains 546,990 indices. The retained DDS
 cubemap remains a separate asset/upload proof. The startup list ends with 13
 initialization barriers.
 
-T-007's height generator uses seed `0x4FFB0830`, five Q23/Q30 fixed-point
+The historical T-007 height generator uses seed `0x4FFB0830`, five Q23/Q30 fixed-point
 value-noise bands, and Q8 output. Its row-major float-byte FNV-1a checksum is
 `0xC0FB1097EBCB8B7B`; relief is 25.82421875 meters, all 115,200 triangles are
-at or below 12 degrees, and the maximum slope is 11.251308698 degrees.
+at or below 12 degrees, and the maximum slope is 11.251308698 degrees. T-008
+keeps that generator as a base oracle and applies a bounded Q8 basin
+post-process. The active composite checksum is `0x4890DE3E1AA063A9`, maximum
+slope is `18.681598` degrees, and maximum adjacent X/Z steps are
+`1.16015625/1.33203125` meters. Its analytic upper-support footprint is centered at
+`(-128,-128)`, spans approximately `112x96` meters, and publishes a `-4`-meter
+future waterline plus dry spawn ground `(-128,1.34375,-20)`.
 
 The meaningful terrain surface payload is 1,393,944 vertex bytes plus 1,080,000
 index bytes, or 2,473,944 bytes. Bounds and marker diagnostics add 54,156
@@ -325,7 +338,9 @@ construction through chunk/LOD generation and query proof. T-006 historically
 measured 6,049.240 ms in Debug and 82.738 ms in Release. T-007 measured
 8,098.750 ms on Debug hardware, 87.203 ms on Release hardware, and 7,699.463 ms
 on Debug WARP; focused WARP+GBV measured 6,008.669 ms. These observations are
-not cross-machine performance gates.
+not cross-machine performance gates. No separate T-008 construction time is
+promoted as an acceptance threshold; the active suite and presentation-gate
+timings are recorded below.
 
 Every submitted frame records one outer `Frame` event with nested `Terrain`,
 `TexturedCube`, `Skybox`, and `ToneMap` events. Its exact graph has 15 imports,
@@ -339,7 +354,8 @@ fullscreen-triangle tone-map draw follows. The initial and resized smoke poses
 show 93 chunks at `V0/Vc=0/93`; the turned overview shows 72 at `0/72` from
 three quarters through seven eighths; and the final eighth moves only the smoke
 camera to `(16, -1, 0)` with the same yaw/pitch, exposing 61 chunks at `1/60`.
-The ordinary interactive start is unchanged. The frame retains four
+Those smoke-only poses do not replace T-008's scenario-owned interactive
+spawn. The frame retains four
 texture-table bindings and one reversed-Z depth clear. Terrain owns the clear,
 cube preserves it, sky uses the read-only DSV, and `ToneMap` reads the HDR
 scene target while writing the swap-chain back buffer.
@@ -389,7 +405,7 @@ each configuration. The latest focused capacity contract measured 5.98 seconds
 in Debug and 0.09 seconds in Release; the large-fixture LOD smoke measured 5.91
 and 0.09 seconds.
 
-T-007's active deterministic acceptance totals are:
+Historical T-007 deterministic acceptance totals are:
 
 - hardware, 1,000 frames: 225,000/86,375/138,625 chunks
   tested/visible/culled, 125/86,250 LOD0/coarse draws,
@@ -412,17 +428,35 @@ with visibility last/min/max `61/61/93`, final LOD split `1/60`, and exact
 scene/sky matrix-change counts `4/3`.
 
 Each path requires 2,790 bounds draws, 66,960 bounds indices, 30 marker draws,
-and 180 marker indices. Active Debug/Release hardware, normal WARP, and focused
+and 180 marker indices. T-007 Debug/Release hardware, normal WARP, and focused
 GBV passed these totals with zero corruption/errors and zero live child objects.
-The final Debug and Release `SharkTests` runs each passed 135 cases and 303,048
+Its final Debug and Release `SharkTests` runs each passed 135 cases and 303,048
 assertions, including direct relief, near-camera clearance, and smoke-pose
 checks; Debug `ctest -L unit` also passed `135/135`.
+
+T-008 retains those exact four smoke poses, visibility/LOD splits, resource
+counts, and expected aggregate totals. Focused Debug results pass
+56,792 lake-basin assertions across three cases, 4,732 scenario assertions across
+three cases, 23 culling assertions across two cases, and 367 LOD assertions
+across two cases. Active T-008 validation passed the Debug build and all
+`150/150` tests in 195.60 seconds; hardware, WARP, and WARP+GBV presentation
+took 8.61, 83.60, and 66.85 seconds. The Release build and all `150/150` tests
+passed in 157.45 seconds; the same gates took 2.06, 78.66, and 60.14 seconds.
+Both configurations retained exact smoke accounting.
+
+The separate final Debug RTX 4070 hardware smoke submitted 1,000 frames with
+86,375 visible and 138,625 culled chunks, 125/86,250 LOD0/coarse draws, and
+192,000/74,520,000 LOD0/coarse indices. It retained the 0.603516-meter logged
+coarse error, measured GPU frame average/maximum 0.125/0.681 ms and Terrain
+average/maximum 0.105/0.285 ms, and reported zero corruption, zero errors, zero
+live child objects, and only the two expected `ReportLiveDeviceObjects`
+warnings.
 
 The earlier all-coarse focused WARP+GBV attempt retained the original full resolution and
 reached 83 clean frames before its existing 180-second deadline. It exposed a
 focused-test cost, not a product failure. Its predecessor 120-frame rerun at the
-bounded focused resolution passed in about 69 seconds. The active four-phase
-focused rerun also passed. Shutdown retained the usual two device-only RLDO
+bounded focused resolution passed in about 69 seconds. The subsequent
+four-phase T-007 focused rerun also passed. Shutdown retained the usual two device-only RLDO
 warnings; they were not renderer-owned live-child failures.
 
 Run the focused renderer composer, planner, D3D12 executor, scene helpers, and
@@ -439,6 +473,8 @@ GPU timestamp-state unit coverage directly with:
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][height-tile][chunks]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][height-tile][lod]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][height-tile][capacity]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][lake-basin]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[world][scenario][environment-lab]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[renderer][terrain][culling]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[renderer][terrain][lod]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[renderer][terrain][lod][smoke]"
@@ -495,12 +531,16 @@ semantics, full-resolution chunks, bounded visual LOD, frustum culling,
 material fixture, render-mesh separation, and diagnostic rules. `T-007`
 completed the fixed-seed, Q8 natural rolling-height contract on July 19, 2026
 while retaining T-006's topology, resource budgets, canonical queries, and
-global `R16_UINT` indices. Construction timings are recorded above, and
-the active four-phase smoke now exercises both terrain index ranges. Debug
-and Release hardware, normal WARP, and focused GBV validation passed. The next
-increment is `T-008`: add a dry spawn and a validated
-80-120-meter lake indentation with future waterline metadata, but render no
-water.
+global `R16_UINT` indices. Its historical construction timings and graphics
+evidence are recorded above.
+
+`T-008` composes that unchanged base with an analytic, closed dry basin and
+scenario-owned spawn/upper-support/waterline metadata. It retains the approved
+San Andreas-class feature ceiling, and rain remains deferred. The next
+increment is `W-001`: clip a static water plane to the immutable analytic
+`rho <= 1` upper support at the published waterline. The visible shoreline
+comes from canonical-terrain depth testing; terrain remains unchanged and no
+fluid-simulation claim is made.
 
 ## Visual Studio
 

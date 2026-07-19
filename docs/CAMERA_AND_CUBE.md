@@ -1,6 +1,6 @@
 # Camera, Reversed-Z Depth, Cube, and Skybox Contract
 
-- **Completed through:** `T-007`
+- **Completed through:** `T-008`
 - **Last verified:** July 19, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
@@ -103,7 +103,7 @@ records do not multiply a held action, and releasing a key or right mouse
 button ends that action.
 
 T-006 historically scaled the default translation speed to `32 m/s` with the
-existing `4x` Shift multiplier; T-007 retains it. Mouse sensitivity remains
+existing `4x` Shift multiplier; T-008 retains it. Mouse sensitivity remains
 `0.0025` radians per pixel.
 Movement is scaled by elapsed render time and clamps one update to at most
 `0.1 s`, preventing a long minimize or debugger stall from producing a large
@@ -227,12 +227,15 @@ with GPU-based validation. Hardware and normal WARP change from `1280x720` to
 `960x600`; focused GPU validation alone uses `640x360 -> 480x300`. Both
 sequences intentionally change aspect from `16:9` to `1.6`, and each applies
 `1.25` radians of scripted yaw at three quarters.
-The camera starts at `(0, 28, 112)` with pitch `-0.25` radians and a 1,500-meter
-far plane. Initial and resized views expose 93 terrain chunks at a `0/93`
+The interactive camera starts at T-008's scenario-owned
+`(-128,3.34375,-20)` eye with pitch `-0.1` radians and a 1,500-meter far plane,
+overlooking the dry basin. Presentation smoke deliberately retains the
+separate deterministic `(0,28,112)` start with pitch `-0.25`. Its initial and
+resized views expose 93 terrain chunks at a `0/93`
 LOD0/coarse split. The turned overview exposes 72 at `0/72` from three quarters
 through seven eighths. For the final eighth, presentation smoke alone moves to
 `(16, -1, 0)` with the same yaw/pitch and exposes 61 at `1/60`, keeping both
-terrain index ranges live without changing the ordinary interactive start.
+terrain index ranges live without replacing the scenario-owned interactive start.
 Hardware and normal WARP minimize/restore at halfway; focused validation
 intentionally skips that already-covered interval.
 
@@ -280,8 +283,11 @@ after resize. Press `F4` and verify the magenta bounds and cyan terrain pin
 appear, with the pin anchored to the displayed surface and pointing along its
 exact geometric normal; press it again and verify both disappear. Resize,
 minimize/restore, and shutdown must remain clean.
-The validation cube and material sphere must remain above the natural surface,
-dry, and unburied; T-007 adds no lake or water.
+The validation cube and material sphere must remain outside the analytic basin
+support, above the `-4`-meter future waterline, and unburied. T-008 adds the dry
+indentation and metadata but creates no water. The scenario-owned camera must
+begin on dry ground overlooking the basin without changing the sky under
+translation.
 When running `--present-smoke`, its final reported state must be 61 visible
 chunks at `LOD0=1, coarse=60`; this final near pose is not an interactive camera
 default.
@@ -309,7 +315,7 @@ streaming, additional LOD levels, or content database.
 
 The query marker, CPU chunk culling, stateless LOD choice, and F4 diagnostic
 gate add no camera matrix, GPU resource, PSO, graph pass, dependency, barrier,
-PIX event, or timestamp. T-007 retains 15 imports, four passes, three
+PIX event, or timestamp. T-008 retains 15 imports, four passes, three
 dependencies, six barriers, 31 elisions, four geometry buffers, and ten
 timestamps as the current exact contract.
 
@@ -332,9 +338,18 @@ culling, bounded LOD, and canonical query/material/diagnostic rendering
 contract. T-006's camera start, 1,500-meter far plane, and 32 m/s navigation
 remain the historical capacity-scale foundation. `T-007` completed the
 fixed-seed natural rolling surface on July 19, 2026 without changing cube, sky
-motion, depth, or canonical query conventions. Its active smoke adds only a
+motion, depth, or canonical query conventions. Its historical smoke added only a
 final translation-only near pose to exercise both terrain index ranges;
 Debug/Release hardware, normal WARP, and focused GBV validation passed. The
-next increment is `T-008`: add a dry spawn and validated
-80-120-meter lake indentation with future waterline metadata, but no water
-pixels.
+evidence remains historical.
+
+`T-008` publishes the interactive spawn, dry basin, analytic footprint, core,
+and future waterline without changing cube geometry, sky motion, depth, input,
+or the deterministic smoke schedule. Active T-008 validation passed the Debug
+build and all `150/150` tests in 195.60 seconds and the Release build and all
+`150/150` in 157.45 seconds, including exact hardware/WARP/WARP+GBV
+presentation accounting. Rain remains deferred under the San Andreas-class
+ceiling. The next increment is `W-001`: clip a static water plane to T-008's
+immutable analytic upper support at its published waterline; canonical-terrain
+depth testing determines the visible shoreline, terrain remains unchanged, and
+no fluid simulation is claimed.

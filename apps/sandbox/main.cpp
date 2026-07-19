@@ -10,6 +10,7 @@
 #include <shark/terrain/height_tile.hpp>
 #include <shark/terrain/material_palette.hpp>
 #include <shark/world/camera.hpp>
+#include <shark/world/environment_lab_scenario.hpp>
 
 #include "camera_controller.hpp"
 #include "options.hpp"
@@ -826,8 +827,16 @@ void log_platform_event(const shark::platform::Event& event)
 
     const auto terrain_build_started =
         std::chrono::steady_clock::now();
+    auto environment_scenario_result =
+        world::make_environment_lab_scenario();
+    if (!environment_scenario_result) {
+        return core::Result<void>::failure(
+            std::move(environment_scenario_result).error());
+    }
+    auto environment_scenario =
+        std::move(environment_scenario_result).value();
     auto terrain_surface_result = terrain::HeightTileSurface::create(
-        terrain::make_large_capacity_height_tile());
+        std::move(environment_scenario.terrain));
     if (!terrain_surface_result) {
         return core::Result<void>::failure(
             std::move(terrain_surface_result).error());
@@ -871,13 +880,14 @@ void log_platform_event(const shark::platform::Event& event)
         terrain_coarse_layout.indices.size() !=
             terrain::large_capacity_tile_coarse_index_count ||
         terrain_coarse_layout.maximum_geometric_error !=
-            terrain::
-                large_capacity_tile_coarse_maximum_geometric_error) {
+            world::
+                environment_lab_coarse_maximum_geometric_error) {
         return core::Result<void>::failure(core::Error{
             core::ErrorCategory::simulation,
             core::ErrorCode::invalid_state,
-            "The large capacity terrain did not produce the fixed "
-            "15x15 two-level chunk layout and error bound",
+            "The Environment Lab terrain did not produce the fixed "
+            "15x15 two-level chunk layout and fixed composite error "
+            "bound",
         });
     }
     std::vector<std::uint16_t> terrain_surface_indices;
@@ -1307,7 +1317,7 @@ void log_platform_event(const shark::platform::Event& event)
         core::LogLevel::info,
         "terrain",
         std::string{
-            "Built bounded fixed-seed rolling terrain: samples="} +
+            "Built bounded Environment Lab terrain: samples="} +
             std::to_string(terrain_tile.sample_columns) + "x" +
             std::to_string(terrain_tile.sample_rows) +
             ", spacing=" +
@@ -1340,11 +1350,11 @@ void log_platform_event(const shark::platform::Event& event)
     core::log_message(
         core::LogLevel::info,
         "terrain.shape",
-        std::string{"Natural terrain contract: seed="} +
+        std::string{"Natural base-terrain oracle: seed="} +
             format_hexadecimal(
                 terrain::large_capacity_tile_generation_seed,
                 8) +
-            ", height-checksum=" +
+            ", base-height-checksum=" +
             format_hexadecimal(
                 terrain::large_capacity_tile_height_checksum,
                 16) +
@@ -1363,6 +1373,51 @@ void log_platform_event(const shark::platform::Event& event)
                 terrain::
                     large_capacity_tile_maximum_lod0_slope_degrees) +
             " degrees");
+
+    const auto& lake_basin = environment_scenario.lake_basin;
+    core::log_message(
+        core::LogLevel::info,
+        "terrain.basin",
+        std::string{
+            "Closed dry lake scenario: composite-height-checksum="} +
+            format_hexadecimal(
+                world::environment_lab_terrain_height_checksum,
+                16) +
+            ", footprint-center=(" +
+            std::to_string(lake_basin.footprint.center.x) + ", " +
+            std::to_string(lake_basin.footprint.center.z) +
+            "), semi-axes=(" +
+            std::to_string(lake_basin.footprint.semi_axis_x) + ", " +
+            std::to_string(lake_basin.footprint.semi_axis_z) +
+            ")m, future-waterline=" +
+            std::to_string(lake_basin.future_waterline_y) +
+            "m, sampled-core=(" +
+            std::to_string(
+                environment_scenario.lake_core_position.x) + ", " +
+            std::to_string(
+                environment_scenario.lake_core_position.y) + ", " +
+            std::to_string(
+                environment_scenario.lake_core_position.z) +
+            "), spawn-ground=(" +
+            std::to_string(
+                environment_scenario.spawn_ground_position.x) + ", " +
+            std::to_string(
+                environment_scenario.spawn_ground_position.y) + ", " +
+            std::to_string(
+                environment_scenario.spawn_ground_position.z) +
+            "), maximum-adjacent-step-x/z=" +
+            std::to_string(
+                world::
+                    environment_lab_maximum_x_adjacent_height_step) +
+            "/" +
+            std::to_string(
+                world::
+                    environment_lab_maximum_z_adjacent_height_step) +
+            "m, maximum-LOD0-slope=" +
+            std::to_string(
+                world::
+                    environment_lab_maximum_lod0_slope_degrees) +
+            " degrees; no water resource or pass exists");
 
     core::log_message(
         core::LogLevel::info,
@@ -1469,9 +1524,14 @@ void log_platform_event(const shark::platform::Event& event)
               "terrain chunk/query diagnostics");
 
     world::Camera camera;
-    camera.transform.position = {0.0F, 28.0F, 112.0F};
-    camera.transform.pitch_radians = -0.25F;
-    camera.lens.far_plane = 1'500.0F;
+    if (smoke_mode) {
+        camera.transform.position = {0.0F, 28.0F, 112.0F};
+        camera.transform.pitch_radians = -0.25F;
+        camera.lens.far_plane = 1'500.0F;
+    }
+    else {
+        camera = environment_scenario.spawn_camera;
+    }
     const renderer::DaylightSettings daylight{};
     sandbox::CameraController camera_controller{
         sandbox::CameraControllerConfig{
@@ -1925,8 +1985,8 @@ void log_platform_event(const shark::platform::Event& event)
         constexpr auto near_visible_chunks =
             near_lod0_chunks + near_coarse_chunks;
         constexpr auto expected_maximum_geometric_error =
-            terrain::
-                large_capacity_tile_coarse_maximum_geometric_error;
+            world::
+                environment_lab_coarse_maximum_geometric_error;
         const auto initial_window_frames = resize_after_frames;
         const auto resized_window_frames =
             change_camera_after_frames - resize_after_frames;

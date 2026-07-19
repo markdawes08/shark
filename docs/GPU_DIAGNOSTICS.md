@@ -1,6 +1,6 @@
 # Direct3D 12 GPU Diagnostics Contract
 
-- **Completed through:** `T-007`
+- **Completed through:** `T-008`
 - **Last verified:** July 19, 2026
 
 Shark's GPU diagnostics use fixed-capacity PIX events and direct-queue
@@ -8,9 +8,9 @@ timestamps whose readback is delayed until the owning frame-context fence
 completes. T-004 retains the exact four-pass, 15-import, six-transition,
 31-elision, four-texture-bind, ten-timestamp frame contract while making
 terrain surface and bounds draw counts proportional to visible chunks. It adds
-no normal-frame queue drain. T-007 preserves T-006's 225-chunk counters,
-payload/resource budgets, and default-off `F4` diagnostics while updating
-natural-height error, culling, and LOD expectations. Its final smoke-only near
+no normal-frame queue drain. T-008 preserves T-006's 225-chunk counters,
+payload/resource budgets, and default-off `F4` diagnostics while updating the
+composite terrain error to `0.603515625`. Its final smoke-only near
 pose keeps both packed terrain index ranges active.
 
 ## PIX marker contract
@@ -211,7 +211,7 @@ terrain_vertex_count == 58081
 terrain_index_count == 540000
 terrain_lod0_index_count == 345600
 terrain_coarse_index_count == 194400
-terrain_maximum_geometric_error == 0.1171875
+terrain_maximum_geometric_error == 0.603515625
 terrain_bounds_vertex_count == 1800
 terrain_bounds_index_count == 5400
 terrain_query_marker_vertex_count == 6
@@ -298,9 +298,18 @@ terrain_shaded_draw_calls/terrain_material_weight_draw_calls
 
 All three blocks additionally require visibility last/min/max `61/61/93`,
 final LOD0/coarse `1/60`, scene/sky matrix changes `4/3`, 2,790 bounds
-draws/66,960 indices, and 30 marker draws/180 indices. Active Debug/Release
+draws/66,960 indices, and 30 marker draws/180 indices. T-007 Debug/Release
 hardware, normal WARP, and focused GBV passed their blocks exactly with zero
-corruption/errors and zero live child objects. T-006 historically used
+corruption/errors and zero live child objects. T-008 retains these locked
+expected totals and passed them in both active Debug and Release runs. The
+direct final Debug RTX 4070 hardware smoke submitted 1,000 frames, found
+86,375 visible and 138,625 culled chunks, issued 125 LOD0 plus 86,250 coarse
+draws and 192,000 plus 74,520,000 indices, and retained a 0.603516-meter
+maximum coarse error. GPU frame time averaged/peaked at 0.125/0.681 ms and the
+Terrain pass at 0.105/0.285 ms. Validation reported zero corruption, zero
+errors, zero live child objects, and only the two expected
+`ReportLiveDeviceObjects` warnings.
+T-006 historically used
 `93 (3/90) -> 71 (4/67)`, a `0.5`-meter coarse error, and the aggregate totals
 preserved in the terrain contract.
 
@@ -315,6 +324,8 @@ through chunk/LOD generation and query proof. T-006 historically measured
 6,049.240 ms in Debug and 82.738 ms in Release. T-007 measured 8,098.750 ms on
 Debug hardware, 87.203 ms on Release hardware, 7,699.463 ms on Debug WARP, and
 6,008.669 ms on focused WARP+GBV. None is a portable performance threshold.
+No separate T-008 construction time is promoted as an acceptance threshold;
+the active suite and presentation-gate timings are recorded below.
 
 Both environment modes must run at least once and sum to frame submissions:
 
@@ -355,9 +366,17 @@ positive-scale-invariant extraction, ordinary and extreme-far reversed-Z
 ranges, invalid matrices, and the `93 -> 72 -> 61` smoke poses. Terrain-LOD tests
 lock shortest 3D camera-to-closed-AABB distance, the inclusive
 `error <= 0.008 * distance` threshold, invalid-input rejection, and the
-`0/93 -> 0/72 -> 1/60` LOD splits. The production frame-pipeline test locks 15
+`0/93 -> 0/72 -> 1/60` LOD splits. T-008 also locks 56,792 lake-basin
+assertions across three focused Debug cases, 4,732 scenario assertions across
+three cases, 23 culling assertions across two cases, and 367 LOD assertions
+across two cases. The production frame-pipeline test locks 15
 imports, four access sets, three dependencies, six transitions, 31 elisions,
 and exact callback order.
+
+Active T-008 validation passed the Debug build and all `150/150` tests in
+195.60 seconds; hardware, WARP, and WARP+GBV presentation took 8.61, 83.60,
+and 66.85 seconds. The Release build and all `150/150` tests passed in 157.45
+seconds; the same gates took 2.06, 78.66, and 60.14 seconds.
 
 Run the runtime paths with:
 
@@ -371,10 +390,11 @@ Hardware requires 1,000 successful presents, normal WARP requires 600, and
 focused WARP GPU validation requires 120. Hardware and normal WARP retain
 `1280x720 -> 960x600`; focused validation alone uses
 `640x360 -> 480x300`, preserving the same `16:9 -> 1.6` aspect sequence.
-Every path passed its exact terrain accounting with zero corruption/errors and
-zero live child objects under the predecessor all-coarse schedule. Active
-Debug/Release hardware, normal WARP, and focused GBV have now passed the
-four-phase schedule. The predecessor focused path completed in about 69
+Every T-007 path passed its exact terrain accounting with zero
+corruption/errors and zero live child objects. Debug/Release hardware, normal
+WARP, and focused GBV passed the four-phase schedule. T-008 retains that
+schedule and passed it in both active `150/150` runs. The predecessor
+focused path completed in about 69
 seconds; active shutdown retained only the usual two device-level RLDO warnings,
 not renderer-owned live-child failures.
 
@@ -398,10 +418,12 @@ For manual PIX acceptance:
 6. Confirm the log reports `10/30`, one timing sample per retired frame, and
    finite frame plus four-pass aggregates.
 7. Confirm no D3D12/DXGI error or corruption message.
+8. Confirm T-008 has no `Water` PIX scope, water draw, water resource, water
+   descriptor, or added timestamp pair.
 
 ## Explicit non-goals
 
-T-007 adds no live HUD, Dear ImGui, automated PIX capture, capture-file
+T-008 adds no live HUD, Dear ImGui, automated PIX capture, capture-file
 management, CPU profiler, pipeline-statistics or occlusion queries, static
 upload timing, dynamic pass profiler, query-heap growth, graph-wide automatic
 instrumentation, cross-queue clock calibration, stable-power-state control,
@@ -412,7 +434,15 @@ local-sandbox goal. T-006 historically completed the bounded
 `241x241`-sample capacity fixture, memory/startup evidence, and clean graphics
 runs. `T-007` completed its deterministic natural-height contract on July 19,
 2026 while retaining the diagnostics architecture and adding a final
-fine-plus-coarse smoke phase. Active Debug/Release hardware, normal WARP, and
-focused GBV validation passed. The next increment is
-`T-008`: add a dry spawn and validated 80-120-meter lake indentation with
-future waterline metadata, but render no water.
+fine-plus-coarse smoke phase. Its Debug/Release hardware, normal WARP, and
+focused GBV evidence remains historical.
+
+`T-008` adds the composite checksum, basin/core/rim/spawn assertions, and a
+`0.603515625`-meter active coarse-error gate without adding a diagnostic GPU
+resource or water pass. The active Debug and Release builds and their complete
+`150/150` test runs pass with exact smoke accounting; the timings are recorded
+above. Rain remains deferred and the approved San Andreas-class ceiling is
+unchanged. The next increment is `W-001`: clip a static water plane to T-008's
+immutable analytic `rho <= 1` upper support at the published waterline;
+canonical-terrain depth testing determines the visible shoreline, terrain
+remains unchanged, and no fluid simulation is claimed.

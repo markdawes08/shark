@@ -2,6 +2,7 @@
 
 #include <shark/terrain/height_tile.hpp>
 #include <shark/world/camera.hpp>
+#include <shark/world/environment_lab_scenario.hpp>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -275,14 +276,16 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "large natural terrain smoke poses exercise chunk culling",
+    "Environment Lab terrain smoke poses exercise chunk culling",
     "[renderer][terrain][culling][frustum][smoke]")
 {
     using namespace shark;
     using namespace shark::renderer::detail;
 
+    const auto scenario = world::make_environment_lab_scenario();
+    REQUIRE(scenario);
     const auto layout = terrain::build_lod0_chunk_layout(
-        terrain::make_large_capacity_height_tile(),
+        scenario.value().terrain,
         terrain::large_capacity_tile_chunk_cell_columns,
         terrain::large_capacity_tile_chunk_cell_rows);
     REQUIRE(layout);

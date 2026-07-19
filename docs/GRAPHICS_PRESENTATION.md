@@ -1,12 +1,12 @@
 # Renderer and Direct3D 12 Presentation/Frame-Resource Contract
 
-- **Completed through:** `T-007`
+- **Completed through:** `T-008`
 - **Last verified:** July 19, 2026
 
 `shark::renderer::Renderer` owns Shark's focused D3D12 scene/presentation
-backend. T-007 preserves T-006's triple-buffered fence-gated HDR lifecycle,
-225-chunk capacity, and default-off `F4` diagnostics while replacing only the
-CPU-generated height values. Normal frames still submit and present without an
+backend. T-008 preserves T-006's triple-buffered fence-gated HDR lifecycle,
+225-chunk capacity, and default-off `F4` diagnostics while composing only the
+CPU-generated height values and scenario metadata. Normal frames still submit and present without an
 unconditional post-frame queue drain.
 
 ## Public boundary and ownership
@@ -117,7 +117,7 @@ eight-vertex/24-index bounds ranges, the query marker, and the
 the complete vertex buffer contains 60,153 vertices. Index offsets are 0 for
 LOD0, 345,600 for coarse, 540,000 for bounds, 545,400 for the marker, and
 545,406 for the sphere, for 546,990 total indices. T-006 historically
-established that packing; T-007 adds no fifth geometry buffer.
+established that packing; T-008 adds no fifth geometry buffer.
 
 Meaningful surface payload is 1,393,944 vertex bytes plus 1,080,000 index
 bytes. Bounds/query diagnostics add 54,156 bytes, while the packed
@@ -128,6 +128,8 @@ boundary covers fixture construction through LOD/query proof. T-006
 historically measured 6,049.240 ms in Debug and 82.738 ms in Release; T-007
 measured 8,098.750 ms on Debug hardware, 87.203 ms on Release hardware,
 7,699.463 ms on Debug WARP, and 6,008.669 ms on focused WARP+GBV.
+No separate T-008 construction time is promoted as an acceptance threshold;
+the active suite and presentation-gate timings are recorded below.
 
 ## Frame acquisition, recording, and present
 
@@ -290,7 +292,7 @@ focused GPU-validated WARP requires 120. The paths:
   environment modes;
 - prove `225 * frame_submissions` chunk tests, visible-plus-culled conservation,
   actual LOD0/coarse surface and bounds draws/indices, min/max/last visibility,
-  exact `0.1171875`-meter maximum geometric error, graph, texture-binding, upload,
+  exact `0.603515625`-meter maximum geometric error, graph, texture-binding, upload,
   descriptor, and timestamp accounting;
 - prove scene/sky matrix-change counts `4/3`, because the final translation
   changes the scene matrix but not the translation-free sky matrix;
@@ -307,18 +309,30 @@ focused GPU-validated WARP requires 120. The paths:
 Hardware and normal WARP also minimize/restore and compare the complete
 statistics snapshot to prove no counter changes while minimized. T-006
 historically completed Debug/Release hardware, Debug WARP, and focused GPU
-validation with clean Direct3D state. T-007's active four-phase schedule uses
+validation with clean Direct3D state. T-007's historical four-phase schedule uses
 `Q=F/8` and `Q * (2*A + 4*B + C + D)`, with
 `A/B/C/D=93/93/72/61`. Its hardware/WARP/GBV paths produced
 86,375/51,825/10,365 visible chunks, including 125/75/15 LOD0 draws and
 86,250/51,750/10,350 coarse draws. Their total terrain surface-index counts
 were 74,712,000/44,827,200/8,965,440. Hardware Debug/Release, normal WARP, and
 focused GBV passed exact accounting with zero corruption/errors and zero live
-child objects. Smoke checks commands and accounting, not pixels.
+child objects. T-008 retains the same schedule and expected totals; its active
+Debug and Release test runs passed them exactly. Debug completed all
+`150/150` tests in 195.60 seconds, with hardware/WARP/WARP+GBV presentation
+times of 8.61/83.60/66.85 seconds. Release completed all `150/150` in 157.45
+seconds, with corresponding 2.06/78.66/60.14-second gates.
+
+The direct final Debug RTX 4070 hardware smoke submitted 1,000 frames with
+86,375 visible and 138,625 culled chunks, 125/86,250 LOD0/coarse draws, and
+192,000/74,520,000 LOD0/coarse indices. It retained a 0.603516-meter maximum
+coarse error, measured GPU frame average/maximum 0.125/0.681 ms and Terrain
+average/maximum 0.105/0.285 ms, and reported zero corruption, zero errors, zero
+live child objects, and only the two expected `ReportLiveDeviceObjects`
+warnings. Smoke checks commands and accounting, not pixels.
 
 ## Explicit non-goals
 
-T-007 does not expose a public/general upload allocator, global upload ring,
+T-008 does not expose a public/general upload allocator, global upload ring,
 persistent descriptor allocator, generic deferred-destruction service, or
 image readback. Its fixed scene, ten-slot heap, query storage, HDR target, and
 environment maps are focused infrastructure, not a general scene/material/
@@ -334,8 +348,15 @@ approved San Andreas-class local-sandbox feature ceiling. T-006 historically
 completed the bounded `241x241`-sample, `960x960`-meter capacity fixture.
 `T-007` completed its fixed-seed natural rolling heights on July 19, 2026 with
 unchanged topology, resources, and canonical queries. Its final near-pose phase
-keeps both terrain index ranges live; hardware Debug/Release, normal WARP, and
-focused GBV validation passed. The next increment is `T-008`:
-add a dry
-spawn and validated 80-120-meter lake indentation with future waterline
-metadata, but render no water.
+kept both terrain index ranges live; hardware Debug/Release, normal WARP, and
+focused GBV validation passed as historical evidence.
+
+`T-008` publishes the dry spawn, basin footprint, core, and future waterline
+while retaining four geometry buffers, 15 imports, four passes, and every
+frame-resource/lifetime rule. It creates no water resource or pass. The full
+Debug and Release builds and their active `150/150` test runs pass with exact
+smoke accounting and the timings recorded above. Rain remains deferred under
+the San Andreas-class ceiling. The next increment is `W-001`: clip a static
+water plane to the immutable T-008 analytic upper support at the published
+waterline. Canonical-terrain depth testing determines the visible shoreline;
+terrain remains unchanged and no fluid simulation is claimed.

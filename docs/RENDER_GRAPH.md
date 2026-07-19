@@ -1,14 +1,15 @@
 # Minimal Render-Graph Contract
 
-- **Completed through:** `T-007`
-- **Renderer integration verified through:** `T-007`
+- **Completed through:** `T-008`
+- **Renderer integration verified through:** `T-008` Debug and Release
+  `150/150` runs
 - **Last updated:** July 19, 2026
 
 Shark's render graph is a small platform-independent planner with a Direct3D
-12 legacy-barrier executor. T-007 keeps the existing frame-local,
+12 legacy-barrier executor. T-008 keeps the existing frame-local,
 whole-resource HDR composer introduced by S-003:
 `Terrain -> TexturedCube -> Skybox -> ToneMap`. It does not add graph-owned
-resources, subresource tracking, or multi-queue scheduling.
+resources, subresource tracking, multi-queue scheduling, or a water pass.
 
 ## Boundary and ownership
 
@@ -106,7 +107,7 @@ null native bindings fail even for an import whose transitions were elided.
 The renderer cross-checks compiled, executed, and recorded counts before
 submission.
 
-## T-007 frame graph
+## T-008 frame graph
 
 Every non-minimized frame imports:
 
@@ -217,7 +218,7 @@ per frame context.
 
 ## Explicit non-goals
 
-T-007 adds no graph-owned/transient resource creation, placed-resource pool,
+T-008 adds no graph-owned/transient resource creation, placed-resource pool,
 lifetime/aliasing analysis, resource pooling, subresource tracking, UAV state,
 automatic RTV/DSV binding, render-pass load/store policy, pass
 culling/merging, parallel recording, queue preference, copy/compute queue,
@@ -231,10 +232,19 @@ need appears.
 
 T-006 historically completed clean hardware, WARP, and GPU-validation runs
 without changing the exact `15/4/3/6/31` graph contract. `T-007` completed the
-fixed-seed natural-height contract on July 19, 2026 and changes no graph
-declaration or callback structure. Its active four-phase schedule changes draw
-ranges within `Terrain`, not graph topology. Hardware Debug/Release, normal
-WARP, and focused GBV graph/Direct3D validation passed. The next increment is `T-008`:
-add a dry spawn and validated
-80-120-meter lake indentation with future waterline metadata, but render no
-water.
+fixed-seed natural-height contract on July 19, 2026 and changed no graph
+declaration or callback structure. Its then-active four-phase schedule changed
+draw ranges within `Terrain`, not graph topology. Hardware Debug/Release, normal
+WARP, and focused GBV graph/Direct3D validation passed as historical evidence.
+
+`T-008` changes CPU terrain values, the active geometric-error constant, and
+scenario-owned spawn/basin metadata only. It adds no import, access set,
+dependency, transition, pass, PIX scope, timestamp pair, or water resource;
+`15/4/3/6/31` remains the exact active graph contract. The full Debug test run
+and Release test run each passed `150/150`, in 195.60 and 157.45 seconds
+respectively, including registered graphics gates with exact smoke accounting.
+Rain remains deferred under the San Andreas-class ceiling. The next increment
+is `W-001`: clip a static water plane to T-008's immutable analytic upper
+support at the published waterline; canonical-terrain depth testing determines
+the visible shoreline, and the increment must explicitly document and measure
+any graph extension.

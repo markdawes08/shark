@@ -1,9 +1,45 @@
 # Canonical Terrain-Tile Contract
 
-- **Completed through:** `T-007`
+- **Completed through:** `T-008`
 - **Last verified:** July 19, 2026
 
-T-007 deterministic-shape snapshot: seed `0x4FFB0830` and five fixed-point
+T-008 composes the untouched T-007 rolling-height oracle with a bounded
+deterministic Q8 lake-basin post-process. The active composite checksum is
+`0x4890DE3E1AA063A9`; extrema and world AABB remain unchanged, while maximum
+LOD0 slope becomes `18.681598` degrees, maximum adjacent X/Z steps become
+`1.16015625`/`1.33203125` meters, and maximum coarse deviation becomes
+`0.603515625` meter. The analytic upper-support footprint is centered at
+`(-128,-128)` with `56/48`-meter nominal semi-axes and dense-sampled continuous
+spans of approximately `111.998421x95.998672` meters. Its future waterline is
+`-4` meters. The
+sampled core at `(-124,-10.47265625,-128)` is `6.47265625` meters below that
+line; 260 canonical rim samples are fixed at `-2.5` meters, and the footprint
+contains 530 canonical samples.
+
+The scenario publishes dry spawn ground at `(-128,1.34375,-20)` and a camera eye
+at `(-128,3.34375,-20)` with pitch `-0.1`; sampled support-boundary distance is
+about 58.496138 meters. Cube and material sphere remain outside the shaping
+support, above the future waterline, and unburied. T-008 creates no water
+resource, shader, PSO, descriptor, graph pass, or pixel.
+
+Focused Debug verification passes 56,792 lake-basin assertions across three
+cases, 4,732 scenario assertions across three cases, 23 culling assertions
+across two cases, and 367 LOD assertions across two cases. Active T-008
+validation passed the Debug build and all `150/150` tests in 195.60 seconds;
+its hardware, WARP, and WARP+GBV presentation gates took 8.61, 83.60, and
+66.85 seconds. The Release build and all `150/150` tests passed in 157.45
+seconds, with the same gates taking 2.06, 78.66, and 60.14 seconds. Both
+configurations retained exact smoke accounting.
+
+The separate final Debug RTX 4070 smoke submitted 1,000 frames with
+86,375 visible and 138,625 culled chunks, 125/86,250 LOD0/coarse draws, and
+192,000/74,520,000 LOD0/coarse indices. It logged the active maximum coarse
+error as 0.603516 meter, GPU frame average/maximum 0.125/0.681 ms, and Terrain
+average/maximum 0.105/0.285 ms. Direct3D validation reported zero corruption,
+zero errors, zero live child objects, and only the two expected
+`ReportLiveDeviceObjects` warnings.
+
+Historical T-007 deterministic-shape snapshot: seed `0x4FFB0830` and five fixed-point
 value-noise bands produce the row-major height checksum
 `0xC0FB1097EBCB8B7B`. All 115,200 LOD0 triangles are at or below 12 degrees;
 the maximum is `11.251308698`, with `6.2933`/`8.7923`-degree p90/p99 slopes.
@@ -12,14 +48,14 @@ relief, and maximum adjacent X/Z steps are `0.79296875`/`0.6875` meters.
 Recorded construction times are `8098.750` ms on Debug hardware, `87.203` ms on
 Release hardware, and `7699.463` ms on Debug WARP. The final Debug and Release
 `SharkTests` runs each passed 135 cases and 303,048 assertions, including direct
-relief, near-camera clearance, and active smoke-pose checks. Debug
+relief, near-camera clearance, and then-active smoke-pose checks. Debug
 `ctest -L unit` also passed `135/135`. Shader, platform, hardware-device, and
 WARP-device probes passed earlier in the same increment.
 
-The active smoke now finishes with a smoke-only near-camera pose that selects
+The historical T-007 smoke finishes with a smoke-only near-camera pose that selects
 one LOD0 and 60 coarse chunks, keeping both D3D12 surface-index ranges live.
 Debug and Release hardware completed 1,000 frames, normal WARP completed 600,
-and focused WARP+GBV completed 120 with exact active accounting, zero
+and focused WARP+GBV completed 120 with the then-active exact accounting, zero
 corruption/errors, and zero live child objects. Presentation shutdown retained
 only the two expected device-level RLDO warnings. The focused path alone uses
 `640x360 -> 480x300`, preserving the normal `16:9 -> 1.6` aspect sequence;
@@ -90,7 +126,9 @@ separate bounded resident-capacity fixture: a `241x241` canonical surface,
 `R16_UINT` index contract. T-007 replaces only that capacity surface's
 alternating diagnostic heights with deterministic multi-scale rolling terrain;
 topology, queries, resource budgets, and the compact analytic oracle remain
-unchanged.
+unchanged. T-008 then applies one scenario-owned Q8 basin post-process whose
+support is bounded away from the tile edge and whose samples outside that
+support remain byte-identical to the T-007 base.
 
 ## Canonical height fixtures
 
@@ -98,9 +136,59 @@ unchanged.
 `+X`. `HeightTileSurface` takes ownership of one validated tile and caches its
 world-space AABB.
 
-### Active T-007 natural rolling fixture
+### Active T-008 Environment Lab scenario
 
-The sandbox uses `make_large_capacity_height_tile()` for a project-owned,
+`world::make_environment_lab_scenario()` is the composition root for the active
+sandbox terrain. It creates the unchanged T-007 base, applies
+`terrain::shape_closed_lake_basin`, validates core and spawn queries, and
+publishes the authoritative metadata W-001 must later consume:
+
+```text
+composite height checksum      0x4890DE3E1AA063A9
+footprint center               (-128, -128) m
+nominal semi-axes              56 / 48 m
+X warp                         dx + (dz^2 - 1,152) / 512
+Z warp                         dz + (dx^2 - 1,568) / 1,024
+approx. continuous X extrema   -181.753764 / -69.755343 m
+approx. continuous Z extrema   -174.473083 / -78.474411 m
+approx. continuous X/Z spans   111.998421 / 95.998672 m
+future waterline               -4.0 m
+profile core depth             6.5 m
+rise / rim-end / blend radii   1.15 / 1.35 / 2.0
+sampled core                   (-124, -10.47265625, -128) m
+sampled core clearance         6.47265625 m below waterline
+fixed rim height               -2.5 m
+fixed rim clearance            1.5 m above waterline
+footprint / rim samples        530 / 260
+spawn ground                   (-128, 1.34375, -20) m
+spawn camera eye               (-128, 3.34375, -20) m
+spawn yaw / pitch / far plane  0 / -0.1 rad / 1,500 m
+sampled support-boundary distance approximately 58.496138 m
+maximum adjacent X/Z step      1.16015625 / 1.33203125 m
+maximum LOD0 slope             18.681598 degrees
+maximum coarse deviation       0.603515625 m
+```
+
+The footprint is an analytic smoothly warped ellipse defining normalized
+squared radius `rho`. `rho <= 1` is the complete bounded upper support W-001 may
+use for its water plane; it is not itself the final visible shoreline. That
+shoreline will be the intersection of the `-4`-meter water plane with canonical
+terrain under the depth test, so canonical bank triangles may occlude a narrow
+part of the support near its edge. Terrain rises from the support boundary to a
+fixed rim, holds the rim, then smoothly returns to the T-007 base; samples
+beyond normalized radius `2.0` remain byte-identical.
+
+The shaper rejects any input tile containing a non-Q8 height sample, plus
+malformed/nonfinite, non-Q8-representable, unsafe-extreme, or unordered shape
+and grid inputs and any support that reaches the terrain boundary. Success is
+returned only after proving one connected lattice footprint inside a closed
+canonical-triangle rim. The post-process changes height values only: sample
+order, origin, spacing, topology, extrema, AABB, chunk layout, index domains,
+and resource sizes remain unchanged.
+
+### Historical T-007 natural rolling base oracle
+
+`make_large_capacity_height_tile()` remains the project-owned,
 fixed-seed rolling landscape over T-006's unchanged resident topology. Five
 smooth value-noise bands use integer hash/lattice arithmetic, Q23 lattice
 values, a Q30 quintic fade, and one symmetric final conversion to Q8 meters.
@@ -153,7 +241,7 @@ maximum coarse deviation    0.1171875 m
 ```
 
 The greatest referenced vertex is `58,080`, leaving `7,455` additional
-addressable indices below the maximum `uint16` value. T-007 retains T-006's
+addressable indices below the maximum `uint16` value. T-008 retains T-007's
 index format and renderer path.
 
 The canonical-height figure above is only the `58,081 * sizeof(float)` stored
@@ -181,7 +269,7 @@ T-006 used the same dimensions, topology, index ranges, and resource budgets
 with a deliberately shallow checker alternating `+0.25/-0.25` meter. Its world
 Y bounds were `-2.25..-1.75` meters, every chunk's coarse deviation was
 `0.5` meter, and its active smoke splits were `3/90 -> 4/67`. Those values
-remain historical capacity evidence and are not the active T-007 landscape.
+remain historical capacity evidence and are not the active T-008 scenario.
 
 ### Compact T-005 analytic regression oracle
 
@@ -327,7 +415,7 @@ requires positive chunk dimensions, supports partial chunks at the maximum
 appears exactly once. Its two triangles retain the fixed LOD0 winding and
 diagonal.
 
-The active T-007 fixture retains `16x16` cells per chunk. Its
+The active T-008 fixture retains `16x16` cells per chunk. Its
 `240x240` cells divide exactly into 225 complete chunks in a row-major
 `15x15` grid. Each chunk owns:
 
@@ -375,9 +463,12 @@ but it cannot discard one intersecting the frustum, which is the intersection
 of all six clip half-spaces. Nonfinite or rank-deficient view-projection
 matrices fail the frame before submission.
 
-The active camera starts at `(0, 28, 112)` meters with pitch `-0.25` radians
-and a 1,500-meter far plane. Normal movement is 32 meters/second and sprint is
-four times that speed. At both the initial `16:9` aspect and the scripted
+The interactive camera starts at the scenario-owned eye
+`(-128,3.34375,-20)` meters with pitch `-0.1` radians and a 1,500-meter far
+plane, overlooking the dry basin. Normal movement is 32 meters/second and
+sprint is four times that speed. Presentation smoke deliberately retains its
+separate deterministic `(0,28,112)` pose with pitch `-0.25`. At both its
+initial `16:9` aspect and the scripted
 `960x600` resize, the camera sees `93 / 225` chunks. Turning to yaw `1.25`
 radians at the resized aspect leaves `72 / 225` visible. The renderer logs
 `Terrain chunks: <visible> / <total> visible (LOD0=<fine>, coarse=<coarse>)`
@@ -407,10 +498,11 @@ Each coarse chunk records the exact maximum continuous vertical separation from
 the canonical LOD0 surface over its closed `X/Z` domain. Measurement overlays
 every coarse triangle with every overlapping fine triangle and evaluates all
 vertices of their clipped intersection polygon; a linear height difference
-reaches its extrema at those vertices. The active natural landscape's global
-maximum is `0.1171875` meter; the compact analytic oracle retains its exact
-`0.140625`-meter maximum. T-006's alternating capacity profile measured
-`0.5` meter and remains historical.
+reaches its extrema at those vertices. The active shaped landscape's global
+maximum is `0.603515625` meter. The historical T-007 base measured
+`0.1171875` meter; the compact analytic oracle retains its exact
+`0.140625`-meter maximum, while T-006's alternating capacity profile measured
+`0.5` meter.
 
 For each visible chunk, the renderer computes `D`, the shortest 3D Euclidean
 distance from the finite camera position to the chunk's closed AABB. It selects
@@ -425,7 +517,7 @@ exact-zero-error coarse range can be selected there. Selection is stateless and
 has no hysteresis or simulation effect. Nonfinite camera/bounds/error input,
 negative error, or unordered bounds fails the frame before submission.
 
-The unchanged interactive start and smoke phases A/B have zero visible LOD0
+The unchanged smoke start and smoke phases A/B have zero visible LOD0
 chunks and 93 visible coarse chunks. Phase C applies the scripted yaw and keeps
 all 72 overview chunks coarse from three quarters through seven eighths of the
 run. Smoke-only phase D then moves the camera to `(16, -1, 0)` with the same
@@ -605,7 +697,7 @@ elided transitions      31
 
 Chunk culling and LOD selection are CPU work before graph execution. All
 surface ranges and bounds share the existing two terrain-buffer imports, so
-T-007 adds no graph pass, dependency, barrier, PIX scope, shader, PSO, or
+T-008 adds no graph pass, dependency, barrier, PIX scope, shader, PSO, or
 timestamp. Let `V0` and `Vc` be the visible LOD0 and coarse chunks,
 `V = V0 + Vc`, and `D` be one when diagnostics are enabled and zero otherwise.
 The `Terrain` timing interval contains all of these commands:
@@ -647,8 +739,9 @@ GPU-based validation retains 120 frames. Every path exercises both fill modes,
 all three material views, both environment modes, the initial and resized
 93-chunk views, the turned 72-chunk overview, and the final smoke-only
 61-chunk near pose. Terrain diagnostics are enabled only for the first 30
-submitted frames. Active Debug/Release hardware, normal WARP, and focused GBV
-passed the four-phase contract exactly.
+submitted frames. T-007 Debug/Release hardware, normal WARP, and focused GBV
+passed the four-phase contract exactly. T-008 passed the same accounting in the
+active Debug and Release test runs.
 
 For `F` submitted frames and `V`, `V0`, and `Vc` cumulative visible, LOD0, and
 coarse chunks, smoke accounting requires:
@@ -695,7 +788,7 @@ pix_terrain_events + cube_draw_calls + skybox_draw_calls
     + tone_map_draw_calls == render_graph_pass_executions
 ```
 
-The T-007 deterministic expected totals are:
+The T-008 deterministic expected totals remain:
 
 | Gate | Frames | Tested / visible / culled chunks | LOD0 / coarse draws | LOD0 / coarse / total indices |
 |---|---:|---:|---:|---:|
@@ -712,13 +805,14 @@ The T-007 deterministic expected totals are:
 Every gate also requires 2,790 bounds draws/66,960 bounds indices and 30 marker
 draws/180 marker indices. These totals follow from `Q * (2*A + 4*B + C + D)`,
 where `Q = F/8` and `A/B/C/D = 93/93/72/61`; only phase D contributes `Q`
-LOD0 draws. Debug/Release hardware, normal WARP, and focused GBV verified every
-row as a deterministic acceptance result.
+LOD0 draws. T-007 verified every row on Debug/Release hardware, normal WARP,
+and focused GBV. T-008 verified these locked expectations in both active
+configurations.
 
 Static accounting requires 58,081 shared surface vertices, 345,600 LOD0
 indices, 194,400 coarse indices, 1,800 chunk-bounds vertices, 5,400
 chunk-bounds indices, and six marker vertices/indices. `terrain_index_count`
-is 540,000 and `terrain_maximum_geometric_error` is `0.1171875`. T-007 retains
+is 540,000 and `terrain_maximum_geometric_error` is `0.603515625`. T-008 retains
 `15/4/3/6/31` graph accounting, ten timestamps, four texture-table binds per
 frame, and one static upload producing four geometry buffers, three material
 arrays, and four HDR environment textures. Shader, PSO, graph, texture, and
@@ -755,6 +849,8 @@ Focused CPU and contract coverage:
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][height-tile][capacity]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][height-tile][chunks]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][height-tile][lod]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][lake-basin]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[world][scenario][environment-lab]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[renderer][terrain][culling]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[renderer][terrain][lod]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[renderer][terrain][smoke]"
@@ -779,13 +875,22 @@ row-major ordering, contiguous ranges, unchanged global vertex references,
 once-only cell coverage, fixed triangle order, sample-derived bounds and line
 geometry, partial edge chunks, one-chunk fallback, invalid dimensions,
 malformed/nonfinite tiles, and the `uint16` vertex ceiling. The capacity
-contract additionally locks the five fixed-point bands, seed/seed step, nine
-sample anchors, row-major FNV-1a checksum, Q8 quantization, exact extrema and
-bounds, 25.82421875-meter relief, 115,200 geometric-triangle slopes below 12
-degrees, 11.251308698-degree maximum slope, nonmatching opposite edges,
-0.79296875/0.6875-meter maximum adjacent X/Z steps, 225 complete row-major
-`16x16` chunks, 1,536/864 per-chunk indices, maximum referenced index 58,080,
-the 2.5-MiB surface-payload budget, and the 0.1171875-meter measured error.
+base contract additionally locks the five fixed-point bands, seed/seed step,
+nine sample anchors, row-major T-007 FNV-1a checksum, Q8 quantization, exact
+extrema and bounds, 25.82421875-meter relief, 115,200 base-triangle slopes below
+12 degrees, 11.251308698-degree base maximum slope, nonmatching opposite edges,
+and 0.79296875/0.6875-meter base maximum adjacent X/Z steps. The T-008 scenario
+coverage separately locks composite checksum `0x4890DE3E1AA063A9`, the analytic
+upper support, rejection of non-Q8 tile height samples or shape/grid inputs,
+unsafe-extreme, malformed, and open-rim inputs, 530 footprint and 260 rim
+samples, and byte identity outside the bounded support. A successful shape
+proves one connected lattice footprint inside a closed canonical-triangle rim.
+The same coverage locks the dry
+spawn/core/prop gates, 18.681598-degree composite maximum slope,
+1.16015625/1.33203125-meter adjacent steps, and 0.603515625-meter measured
+coarse error. Both retain 225 complete row-major `16x16` chunks, 1,536/864
+per-chunk indices, maximum referenced index 58,080, and the 2.5-MiB
+surface-payload budget.
 
 Renderer coverage locks all six Direct3D clip half-spaces, normalized planes,
 inside, intersecting, tangent, and outside AABBs, rejection of
@@ -798,24 +903,29 @@ Coarse-layout coverage retains the compact oracle's sixteen center-fan patches
 per complete `8x8` chunk, 240 indices, nine boundary samples/eight edge
 segments, exact `0.140625`-meter continuous bound, and conservative LOD0
 copies for odd/partial chunks. The capacity proof exercises 64 patches and 864
-indices in every complete `16x16` chunk, with a 0.1171875-meter bound.
+indices in every complete `16x16` chunk, with the active 0.603515625-meter
+bound.
 LOD-selection
 coverage locks shortest 3D camera-to-closed-AABB distance, the inclusive
 `error <= 0.008 * distance` threshold, inside/zero-error behavior,
 finite-input rejection, and all three active smoke splits.
 
 For manual acceptance, run `SharkSandbox` without arguments. The active
-960-meter landscape must read as broad, mostly flat rolling terrain without an
-obvious repeating tile, spike, abrupt boundary step, lake indentation, or water.
-Capture the initial, resized, and turned views at their deterministic camera
-poses for comparison. The initial log must report
-`Terrain chunks: 93 / 225 visible (LOD0=0, coarse=93)`. Terrain diagnostics
-start off; press `F4` and confirm the cyan pin begins on the terrain and follows
-its exact triangle normal while the visible magenta AABBs partition and enclose
-their chunks. Rotate away and confirm surface pieces and their matching bounds
+960-meter landscape must read as broad, mostly flat rolling terrain with a
+smoothly irregular dry basin visible from the scenario spawn. The basin must
+not resemble a perfect circle, sharp crater, repeated procedural stamp, or
+stepped terrace, and no water plane, tint, reflection, or animated water surface
+may exist. The numeric tests, not visual estimation, own the exact footprint,
+depth, rim, and spawn-distance gates. Capture the initial interactive view plus
+the resized and turned deterministic smoke views for comparison. Interactive
+terrain diagnostics start off; press `F4` and confirm the cyan pin begins on the
+terrain and follows its exact triangle normal while the visible magenta AABBs
+match the currently logged visible count, partition, and enclose their chunks.
+Rotate away and confirm surface pieces and their matching bounds
 disappear together without popping an intersecting chunk. Press `F4` again and
 confirm both diagnostic classes disappear without changing surfaces or LOD.
-The deterministic smoke must retain 93 visible after its resize, reach
+The separate deterministic smoke must begin at
+`93 / 225 visible (LOD0=0, coarse=93)`, retain 93 visible after its resize, reach
 `72 / 225 visible (LOD0=0, coarse=72)` after its yaw, then finish at the
 smoke-only `(16, -1, 0)` pose with
 `61 / 225 visible (LOD0=1, coarse=60)`. That final phase does not change the
@@ -833,16 +943,20 @@ and 1,500-meter far plane make the full footprint navigable. Move, rotate,
 resize, minimize, restore, and close; world-space material tiling, checker
 cube, sky, tone mapping, diagnostics, and Direct3D validation must remain
 clean. The validation cube and material sphere must remain dry and unburied.
+Fly around the complete basin rim and confirm the broad natural terrain resumes
+smoothly outside the bounded shaping support. The spawn must remain on dry
+ground overlooking the basin.
 
 ## Explicit non-goals and continuation
 
-T-007 adds no terrain collision response, rigid bodies, additional visual LOD
+T-008 adds no terrain collision response, rigid bodies, additional visual LOD
 levels, hysteresis, skirts, morphing, spatial acceleration for canonical
 queries or physics, streaming, occlusion culling, generalized world
 partition, authored/file-backed material assets, stored mesh UVs/tangents,
 arbitrary layer counts, painting, virtual texturing, mesh shaders, shadows,
-weather interaction, erosion, water, editor, dynamic mouse picking, general
-debug-draw service, or general scene/mesh/material resource system. The fixed
+weather interaction, erosion, water rendering or simulation, editor, dynamic
+mouse picking, general debug-draw service, or general scene/mesh/material
+resource system. The fixed
 ray proof, static pin, chunk bounds, and material sphere are diagnostics, not
 gameplay or editor selection. The bounded natural fixture is not a general
 procedural-world system or a promise that one resident tile is the eventual
@@ -859,13 +973,20 @@ and opt-in diagnostics, plus the compact T-005 analytic
 oracle, global `R16_UINT` indexing, `15/4/3/6/31` graph contract, four geometry
 buffers, three material arrays, four HDR environment textures, ten persistent
 texture descriptors, four per-frame texture-table binds, and the existing
-PIX/timestamp hierarchy. The active four-phase smoke passed on Debug/Release
-hardware, normal WARP, and focused 120-frame GBV with exact accounting, zero
-corruption/errors, and zero live child objects.
+PIX/timestamp hierarchy. The then-active four-phase T-007 smoke passed on
+Debug/Release hardware, normal WARP, and focused 120-frame GBV with exact
+accounting, zero corruption/errors, and zero live child objects.
 
-The upcoming increment is `T-008`: add a scenario-owned dry spawn overlooking
-a nearby smoothly irregular 80-120-meter lake indentation. Publish its complete
-footprint and future waterline, keep the basin core at least six meters below
-that level and its complete flood-fill rim at least one meter above it, and
-keep spawn at least two meters above and 20 meters outside the shoreline with
-the validation cube and material sphere dry. T-008 renders no water.
+T-008 composes that historical oracle with scenario-owned lake metadata and a
+bounded dry indentation. Its focused lake, scenario, culling, and LOD tests pass
+with the counts recorded above, and both complete active test runs pass
+`150/150`. It changes no San Andreas-class feature ceiling, and the visual-rain
+track remains deferred.
+
+The upcoming increment is `W-001`: clip a `-4`-meter water plane to T-008's
+immutable analytic `rho <= 1` upper support. Its visible shoreline must emerge
+from the depth-tested intersection with canonical terrain, including any narrow
+bank-triangle occlusion near the support edge. Add Fresnel response, depth
+tint/absorption, bounded reflection/refraction approximation,
+and animated normal waves. W-001 must not change canonical terrain or scenario
+metadata and must not claim a fluid simulation.

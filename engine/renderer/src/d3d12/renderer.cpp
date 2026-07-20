@@ -900,11 +900,22 @@ static_assert(
 [[nodiscard]] bool valid_frame_data(
     const RenderFrameData& frame_data) noexcept
 {
+    if (frame_data.material_sphere_count >
+        maximum_material_sphere_count) {
+        return false;
+    }
+    for (std::size_t sphere_index = 0;
+         sphere_index < frame_data.material_sphere_count;
+         ++sphere_index) {
+        if (!math::is_finite(
+                frame_data
+                    .material_sphere_world_positions[sphere_index])) {
+            return false;
+        }
+    }
     return math::is_finite(frame_data.view_projection) &&
         math::is_finite(frame_data.sky_view_projection) &&
         math::is_finite(frame_data.camera_world_position) &&
-        math::is_finite(
-            frame_data.material_sphere_world_position) &&
         backend_detail::valid_daylight_settings(frame_data.daylight) &&
         valid_terrain_mode(frame_data.terrain_mode) &&
         backend_detail::valid_terrain_material_view(
@@ -1673,7 +1684,11 @@ public:
         const UINT timestamp_query_base,
         const TerrainRenderMode mode,
         const math::Float3 camera_world_position,
-        const math::Float3 material_sphere_world_position,
+        const std::array<
+            math::Float3,
+            maximum_material_sphere_count>&
+            material_sphere_world_positions,
+        const std::uint32_t material_sphere_count,
         const TerrainMaterialView material_view,
         const EnvironmentLightingMode environment_mode,
         const bool terrain_diagnostics_enabled)
@@ -1880,27 +1895,32 @@ public:
         }
 
         command_list->SetPipelineState(material_sphere_pipeline.Get());
-        const auto material_sphere_translation =
-            backend_detail::make_material_sphere_translation(
-                material_sphere_world_position);
-        command_list->SetGraphicsRoot32BitConstants(
-            backend_detail::
-                material_sphere_translation_root_parameter,
-            backend_detail::
-                material_sphere_translation_root_constant_count,
-            &material_sphere_translation,
-            0);
-        command_list->DrawIndexedInstanced(
-            material_sphere_index_count,
-            1,
-            terrain_surface_index_count +
-                terrain_bounds_index_count +
-                terrain_query_marker_index_count,
-            static_cast<INT>(
-                terrain_vertex_count +
-                terrain_bounds_vertex_count +
-                backend_detail::terrain_query_marker_vertex_count),
-            0);
+        for (std::uint32_t sphere_index = 0;
+             sphere_index < material_sphere_count;
+             ++sphere_index) {
+            const auto material_sphere_translation =
+                backend_detail::make_material_sphere_translation(
+                    material_sphere_world_positions[sphere_index]);
+            command_list->SetGraphicsRoot32BitConstants(
+                backend_detail::
+                    material_sphere_translation_root_parameter,
+                backend_detail::
+                    material_sphere_translation_root_constant_count,
+                &material_sphere_translation,
+                0);
+            command_list->DrawIndexedInstanced(
+                material_sphere_index_count,
+                1,
+                terrain_surface_index_count +
+                    terrain_bounds_index_count +
+                    terrain_query_marker_index_count,
+                static_cast<INT>(
+                    terrain_vertex_count +
+                    terrain_bounds_vertex_count +
+                    backend_detail::
+                        terrain_query_marker_vertex_count),
+                0);
+        }
 
         if (terrain_diagnostics_enabled) {
             command_list->SetPipelineState(terrain_bounds_pipeline.Get());
@@ -5843,7 +5863,7 @@ core::Result<RenderStatus> Renderer::render_frame(
         return core::Result<RenderStatus>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
             "Renderer frame view-projection matrices must be finite "
-            "and its camera, material-sphere position, daylight "
+            "and its camera, material-sphere positions, daylight "
             "settings, terrain fill mode, and material/environment "
             "views must be valid"));
     }
@@ -5896,8 +5916,10 @@ core::Result<RenderStatus> Renderer::render_frame(
                  terrain_mode = frame_data.terrain_mode,
                  camera_world_position =
                     frame_data.camera_world_position,
-                 material_sphere_world_position =
-                    frame_data.material_sphere_world_position,
+                 material_sphere_world_positions =
+                    frame_data.material_sphere_world_positions,
+                 material_sphere_count =
+                    frame_data.material_sphere_count,
                  material_view =
                     frame_data.terrain_material_view,
                  environment_mode =
@@ -5922,7 +5944,8 @@ core::Result<RenderStatus> Renderer::render_frame(
                         timestamp_query_base,
                         terrain_mode,
                         camera_world_position,
-                        material_sphere_world_position,
+                        material_sphere_world_positions,
+                        material_sphere_count,
                         material_view,
                         environment_mode,
                         terrain_diagnostics_enabled);
@@ -6198,8 +6221,11 @@ core::Result<RenderStatus> Renderer::render_frame(
     ++implementation_->statistics.skybox_draw_calls;
     implementation_->statistics.skybox_indices +=
         backend_detail::skybox_index_count;
-    ++implementation_->statistics.material_sphere_draw_calls;
+    implementation_->statistics.material_sphere_draw_calls +=
+        frame_data.material_sphere_count;
     implementation_->statistics.material_sphere_indices +=
+        static_cast<std::uint64_t>(
+            frame_data.material_sphere_count) *
         implementation_->material_sphere_index_count;
     ++implementation_->statistics.tone_map_draw_calls;
     const auto visible_chunk_count = static_cast<std::uint64_t>(

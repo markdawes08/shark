@@ -1,6 +1,6 @@
 # Renderer and Direct3D 12 Presentation/Frame-Resource Contract
 
-- **Completed through:** `PHY-002`
+- **Completed through:** `PHY-003`
 - **Last verified:** July 19, 2026
 
 `shark::renderer::Renderer` owns Shark's focused D3D12 scene/presentation
@@ -27,8 +27,9 @@ synchronously and retains no caller CPU pointer.
   GGX-prefiltered specular, and split-sum BRDF LUT.
 
 `RenderFrameData` carries finite scene/sky matrices, daylight settings, camera
-and material-sphere world positions, terrain fill/material views, and the
-environment mode. `F3` selects image-based lighting or the retained
+position, a fixed four-entry material-sphere position array with active count,
+terrain fill/material views, and the environment mode. `F3` selects
+image-based lighting or the retained
 procedural-daylight fallback.
 Each `TerrainChunkUploadView` carries contiguous LOD0/coarse ranges, exact
 bounds, and the measured maximum geometric error. The renderer receives
@@ -173,13 +174,13 @@ six transitions cover scene-color render/read state, depth write/read state,
 and back-buffer present/render state.
 
 For `V0` visible LOD0 chunks, `Vc` visible coarse chunks, and `V=V0+Vc`, normal
-submitted commands contain `V + 3` indexed scene draws plus one non-indexed
+submitted commands contain `V + 6` indexed scene draws plus one non-indexed
 six-vertex water draw. `F4` adds `V + 1` diagnostic draws:
 
 ```text
 LOD0 terrain chunks       1,536 * V0 indices
 coarse terrain chunks       864 * Vc indices
-material sphere          1,584 indices
+four material spheres    6,336 indices
 visible chunk AABBs       F4 ? 24 * V indices : 0
 terrain query marker      F4 ? 6 indices : 0
 textured cube                 36 indices
@@ -364,8 +365,9 @@ or static upload. The frame now has 15 imports, five passes, five dependencies,
 six transitions, 34 elisions, and five texture bindings. Sky renders before
 premultiplied transparent water; canonical-terrain depth testing determines the
 visible shoreline. Terrain remains unchanged and no fluid simulation is
-claimed. PHY-002 feeds a supported simulation position through the existing
-three sphere-translation root constants without changing frame-resource or
-presentation accounting. Rain remains
+claimed. PHY-003 feeds four interpolated simulation positions through the
+existing three sphere-translation root constants. It records four draws per
+submitted frame without changing frame-resource, descriptor, or upload
+budgets. Rain remains
 deferred under the San Andreas-class ceiling. See
 [ENGINE_PLAN.md](ENGINE_PLAN.md) for the active increment queue.

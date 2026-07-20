@@ -1,6 +1,6 @@
 # HLSL Graphics Pipeline Contract
 
-- **Completed through:** `PHY-002`
+- **Completed through:** `PHY-003`
 - **Last verified:** July 19, 2026
 
 Shark compiles all production HLSL at build time with a pinned retail DXC and
@@ -11,6 +11,8 @@ pipeline still includes S-003's shared image-based-lighting helpers,
 material-sphere proof, linear-HDR scene target, and final tone-map program.
 PHY-001 changes only the material-sphere vertex transform: three `b2` root
 constants translate its existing geometry to an interpolated body position.
+PHY-003 rebinds those same constants for up to four indexed draws; no shader,
+root-signature, PSO, or geometry change is required.
 This remains a focused scene contract, not a general shader asset,
 material-graph, or pipeline-cache system.
 
@@ -230,8 +232,8 @@ Each non-minimized frame then:
 2. stages one 256-byte constants/probe record;
 3. composes the exact 15-import/five-pass HDR frame graph;
 4. executes `Terrain`, including one selected LOD0/coarse surface per visible
-   chunk plus the sphere translated from PHY-001's immutable interpolated body
-   snapshot; default-off `F4` diagnostics additionally draw each visible
+   chunk plus four spheres translated from PHY-003's immutable interpolated
+   body snapshots; default-off `F4` diagnostics additionally draw each visible
    chunk's magenta bounds and the query marker;
 5. executes `TexturedCube`;
 6. executes the far-depth `Skybox`;
@@ -247,8 +249,8 @@ submitted-frame draw contract is:
 ```text
 LOD0 terrain chunks      V0 * DrawIndexedInstanced(1,536, ...)
 coarse terrain chunks    Vc * DrawIndexedInstanced(864, ...)
-material sphere at b2 translation
-                         DrawIndexedInstanced(1,584, ...)
+four material spheres at b2 translations
+                         4 * DrawIndexedInstanced(1,584, ...)
 visible chunk AABBs      F4 ? V * DrawIndexedInstanced(24, ...) : 0
 terrain query marker     F4 ? DrawIndexedInstanced(6, ...) : 0
 textured cube            DrawIndexedInstanced(36, ...)
@@ -261,8 +263,8 @@ Each chunk selects one contiguous LOD0 or coarse first-index/count range into
 the shared 58,081-vertex stream; its maximum surface index is 58,080. The
 matching bounds draw selects its own packed eight-vertex/24-index range. Fine
 and coarse terrain indices occupy `0..345,599` and `345,600..539,999`; bounds,
-marker, and sphere begin at 540,000, 545,400, and 545,406. The sphere remains
-in those terrain buffers, so the normal `V + 3` indexed draws and optional
+marker, and sphere begin at 540,000, 545,400, and 545,406. The four sphere
+draws reuse that one geometry range, so the normal `V + 6` indexed draws and optional
 `F4` diagnostic draws still use four geometry buffers. Initial/resized smoke
 poses select `V0/Vc=0/93`; the turned overview selects `0/72`; and the final
 smoke-only `(16, -1, 0)` near pose selects `1/60` with unchanged yaw/pitch.
@@ -315,7 +317,8 @@ water texture, persistent descriptor, or simulated state. Terrain retains the
 exact `0/93 -> 0/72 -> 1/60` smoke schedule. Rain remains deferred and the San
 Andreas-class ceiling is unchanged.
 
-PHY-001 added the material-sphere `b2` translation. PHY-002 drives that same
-translation from a terrain-supported simulation snapshot and retargets the
-existing static cyan pin; it adds no shader stage, PSO, descriptor, geometry
-buffer, graph pass, water state, or fluid coupling.
+PHY-001 added the material-sphere `b2` translation. PHY-002 drives it from a
+terrain-supported simulation snapshot and retargets the existing static cyan
+pin. PHY-003 rebinds it in stable body-index order for four spheres; it adds no
+shader stage, PSO, descriptor, geometry buffer, graph pass, water state, or
+fluid coupling.

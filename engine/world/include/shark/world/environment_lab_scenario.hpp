@@ -5,6 +5,8 @@
 #include <shark/terrain/lake_basin.hpp>
 #include <shark/world/camera.hpp>
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace shark::world {
@@ -28,16 +30,28 @@ inline constexpr float
     environment_lab_water_render_half_extent_x = 64.0F;
 inline constexpr float
     environment_lab_water_render_half_extent_z = 56.0F;
+inline constexpr std::size_t
+    environment_lab_sphere_body_count = 4;
 inline constexpr float
-    environment_lab_ballistic_body_radius = 1.0F;
+    environment_lab_sphere_body_radius = 1.0F;
+inline constexpr float
+    environment_lab_sphere_restitution = 0.75F;
 
 struct EnvironmentLabScenario final {
     terrain::HeightTile terrain;
     terrain::LakeBasinShape lake_basin;
     math::Float3 lake_core_position;
     math::Float3 spawn_ground_position;
-    math::Float3 ballistic_body_spawn_position;
-    float ballistic_body_radius{};
+    std::array<
+        math::Float3,
+        environment_lab_sphere_body_count>
+        sphere_body_spawn_positions{};
+    std::array<
+        math::Float3,
+        environment_lab_sphere_body_count>
+        sphere_body_initial_velocities{};
+    float sphere_body_radius{};
+    float sphere_restitution{};
     Camera spawn_camera;
 };
 

@@ -3,6 +3,7 @@
 #include <shark/core/math.hpp>
 #include <shark/core/result.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -12,6 +13,9 @@ class Device;
 }
 
 namespace shark::renderer {
+
+inline constexpr std::size_t
+    maximum_material_sphere_count = 4;
 
 struct RenderExtent final {
     std::uint32_t width{};
@@ -235,11 +239,13 @@ struct RenderFrameData final {
     math::Matrix4x4 sky_view_projection{};
     DaylightSettings daylight{};
     math::Float3 camera_world_position{};
-    math::Float3 material_sphere_world_position{
-        3.0F,
-        1.25F,
-        -1.0F,
-    };
+    std::array<
+        math::Float3,
+        maximum_material_sphere_count>
+        material_sphere_world_positions{{
+            {3.0F, 1.25F, -1.0F},
+        }};
+    std::uint32_t material_sphere_count{1};
     TerrainRenderMode terrain_mode{TerrainRenderMode::solid};
     TerrainMaterialView terrain_material_view{
         TerrainMaterialView::shaded};

@@ -175,8 +175,8 @@ The startup path remains exactly one static submission, one
 frame graph now has 15 imports, five ordered
 `Terrain`/`TexturedCube`/`Skybox`/`Water`/`ToneMap` passes, five dependencies,
 six transitions, 34 elisions, five texture-table binds, and 12 timestamps per
-frame. With `V` visible terrain chunks it contains `V + 3` indexed terrain/
-sphere/cube/sky draws plus procedural water and tone-map draws; `F4` optionally
+frame. With `V` visible terrain chunks it contains `V + 6` indexed terrain/
+four-sphere/cube/sky draws plus procedural water and tone-map draws; `F4` optionally
 adds `V` chunk bounds and one query marker. Each visible terrain draw selects
 its 1,536-index LOD0 or 864-index coarse range. T-008 retains T-006's 540,000
 surface indices, chunk bounds, query marker, and S-003 material sphere in the

@@ -586,16 +586,16 @@ TEST_CASE(
     const auto surface = std::move(surface_result).value();
     const auto support_sample =
         surface.sample_lod0_surface(
-            scenario.ballistic_body_spawn_position.x,
-            scenario.ballistic_body_spawn_position.z);
+            scenario.sphere_body_spawn_positions[0].x,
+            scenario.sphere_body_spawn_positions[0].z);
     REQUIRE(support_sample);
 
     physics::BallisticBodyState state{
         .position =
-            scenario.ballistic_body_spawn_position,
+            scenario.sphere_body_spawn_positions[0],
     };
     const physics::SphereCollider collider{
-        scenario.ballistic_body_radius,
+        scenario.sphere_body_radius,
     };
     std::optional<physics::SphereTerrainContact> contact;
     constexpr std::uint32_t maximum_ticks = 180;
@@ -616,9 +616,9 @@ TEST_CASE(
     REQUIRE(contact);
     REQUIRE(contact->surface == *support_sample);
     REQUIRE(state.position.x ==
-        scenario.ballistic_body_spawn_position.x);
+        scenario.sphere_body_spawn_positions[0].x);
     REQUIRE(state.position.z ==
-        scenario.ballistic_body_spawn_position.z);
+        scenario.sphere_body_spawn_positions[0].z);
     REQUIRE(state.linear_velocity == math::Float3{});
     REQUIRE(
         center_plane_distance(state, contact->surface) ==

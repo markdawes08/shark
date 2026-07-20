@@ -1,24 +1,28 @@
-# Fixed-Step Simulation and Sphere-Terrain Contact Contract
+# Fixed-Step Sphere Simulation Contract
 
-- **Completed through:** `PHY-002`
+- **Completed through:** `PHY-003`
 - **Last verified:** July 19, 2026
 
 PHY-001 established Shark's fixed-clock ballistic path. PHY-002 gives that one
-sphere a one-meter collider and a deterministic contact response against the
-canonical LOD0 terrain. This is a focused resting proof, not a general
-rigid-body solver.
+sphere a one-meter collider and deterministic canonical-terrain support.
+PHY-003 expands the Environment Lab to a stable fixed array of four equal-unit-
+mass spheres and resolves their overlaps with restitution impulses. This is a
+bounded discrete collision proof, not a general rigid-body solver.
 
 ## Ownership and data flow
 
 The boundaries are intentionally narrow:
 
 - `Simulation` owns fixed-step time accounting, pause state, and step requests;
-- `Physics` owns ballistic state, the sphere collider, semi-implicit
-  integration, canonical-terrain response, and interpolation;
-- `World` publishes the scenario-owned body spawn beside the lake basin;
+- `Physics` owns the fixed four-body capacity, ballistic state, colliders,
+  semi-implicit integration, canonical-terrain response, sphere-pair response,
+  contact records, and interpolation;
+- `World` publishes four deterministic scenario-owned body spawns and initial
+  velocities beside the lake basin;
 - the sandbox composition root sequences input, fixed ticks, immutable
   previous/current snapshots, and render interpolation; and
-- `Renderer` receives only the interpolated material-sphere world position.
+- `Renderer` receives only an active count and four interpolated sphere
+  positions.
 
 Neither the clock nor ballistic body includes Win32 or Direct3D types. The
 platform continues to publish raw events, and the renderer cannot advance or
@@ -47,12 +51,14 @@ startup and supplies one fixed-step ceiling duration per frame.
 A single-step request is consumed once. It does not resume the clock or carry
 render-frame elapsed time into the simulation.
 
-## Ballistic body
+## Sphere body snapshots
 
-The Environment Lab scenario places one body at a validated dry position
-outside the analytic lake support and above the canonical LOD0 terrain. It
-starts with zero linear velocity and uses gravity
-`(0, -9.81, 0)` meters per second squared.
+The Environment Lab publishes an exact active count of four, all with a
+one-meter radius. Body 0 remains the original zero-velocity terrain-rest proof.
+Bodies 1 and 2 start at the same airborne Y coordinate, 12 meters apart, with
+X velocities of `+5` and `-3` meters per second. Body 3 is an isolated
+zero-velocity fall. Every body uses gravity `(0, -9.81, 0)` meters per second
+squared.
 
 For fixed delta `dt = 1/60` second, semi-implicit Euler advances:
 
@@ -61,10 +67,11 @@ velocity = velocity + gravity * dt
 position = position + velocity * dt
 ```
 
-Before each tick, the sandbox copies the current body state to the previous
-snapshot and then advances the current snapshot. Rendering linearly
-interpolates those two read-only states using the clock alpha. Interpolation
-returns a separate value and never modifies either authoritative snapshot.
+Before each tick, the sandbox copies the entire fixed current-state array to
+the previous-state array. It advances the active current states in stable body
+index order, resolves pairs, and publishes no partial state. Rendering
+interpolates each previous/current pair using the clock alpha and never mutates
+either authoritative snapshot.
 
 ## Canonical terrain contact
 
@@ -94,7 +101,8 @@ resolution. The corrected state is committed only after every calculation
 succeeds. A center outside the tile continues ballistically with no contact;
 the maximum X/Z edges retain the terrain query's inclusive ownership.
 
-PHY-002 gives the single proof sphere a temporary infinite-friction endpoint
+The terrain endpoint still gives each contacting sphere a temporary
+infinite-friction endpoint
 projection: every linear-velocity component becomes zero at contact. That
 deliberately feature-limited rule makes the sphere settle on the Environment
 Lab terrain without bounce, penetration, or drift; its correction/impulse
@@ -103,18 +111,71 @@ restitution/friction/contact-constraint model. Each fixed tick republishes an
 optional contact containing the untouched canonical sample, pre-resolution
 separation, and penetration depth.
 
+## Sphere-pair collision
+
+After every active sphere has completed ballistic prediction and terrain
+support, Physics tests the active pairs exactly once in lexicographic order:
+
+```text
+(0,1), (0,2), (0,3), (1,2), (1,3), (2,3)
+```
+
+The fixed capacity is four bodies and six possible pairs. There is no dynamic
+allocation and no broad phase. For centers `A` and `B`, radii `rA` and `rB`,
+and first-to-second normal `N`:
+
+```text
+offset      = B - A
+overlap     = rA + rB - length(offset)
+N           = normalize(offset)
+```
+
+Pairs with negative overlap are separated. Touching and overlapping pairs
+publish a contact. Coincident centers use `+X` as a deterministic,
+index-ordered fallback normal. Positive overlap is projected equally between
+the equal-unit-mass bodies:
+
+```text
+A = A - N * overlap / 2
+B = B + N * overlap / 2
+```
+
+With relative velocity `Vrel = Vb - Va`, an impulse is applied only when
+`dot(Vrel, N) < 0`:
+
+```text
+impulse = -(1 + restitution) * dot(Vrel, N) / 2
+Va      = Va - N * impulse
+Vb      = Vb + N * impulse
+```
+
+The Environment Lab restitution is `0.75`. Tangential velocity is untouched,
+and equal-unit-mass linear momentum is preserved. Each contact records stable
+body indices, normal, penetration, incoming relative normal velocity, and
+normal-impulse magnitude. Invalid counts, states, radii, restitution, or
+non-representable results fail transactionally without changing the input
+array.
+
+The first Environment Lab pair collision is deliberately airborne. Therefore
+the temporary terrain-sticking response cannot erase its proof impulse during
+that tick, while isolated body 0 continues to prove canonical support. Pair
+projection is a single discrete pass; it does not iterate a stack to
+convergence and it cannot prevent fast bodies from tunneling.
+
 ## Rendering boundary
 
 The existing material-sphere mesh remains packed in the terrain geometry
 buffers at its original authored center. Its vertex shader now reads three
-32-bit translation constants from `b2`. The renderer subtracts the authored
-center from the interpolated world position and binds that translation for the
-single sphere draw in `Terrain`.
+32-bit translation constants from `b2`. `RenderFrameData` owns a fixed
+four-position array and an active count in `[0, 4]`. The renderer binds the
+material-sphere PSO once, then visits active positions in index order, rebinds
+`b2`, and issues the existing indexed draw once per sphere inside `Terrain`.
 
 This adds no geometry buffer, descriptor, texture, graph pass, water resource,
-or upload-buffer allocation. A composition-level contract test validates the
-renderer fixture's one-meter visual radius against the scenario-owned
-one-meter collider radius.
+or upload-buffer allocation. Four active bodies produce exactly four draws and
+`4 * 1,584` indices per submitted frame. Composition-level tests lock the
+physics, world, and renderer capacities together and validate the renderer
+fixture's one-meter visual radius against the scenario-owned collider radius.
 
 `F4` retains the existing bounded six-vertex/six-index cyan normal pin and
 magenta visible-chunk bounds. The pin is now built at the proof sphere's fixed
@@ -139,7 +200,18 @@ Permanent CPU coverage checks:
 - diagonal, maximum-edge, immediately-outside, and separating transitions;
 - transactional rejection of invalid radii, state, deltas, and overflow; and
 - bit-identical resting state/contact count across 30/60/120/144 Hz render
-  partitions.
+  partitions;
+- fixed four-body/six-pair capacity and lexicographic pair traversal;
+- separated no-op, equal overlap projection, touching, and coincident-center
+  fallback behavior;
+- equal-mass restitution, unequal incoming speeds, tangential preservation,
+  momentum conservation, and separating-overlap behavior;
+- transactional count, restitution, state, collider, and numeric-overflow
+  rejection;
+- bit-identical sphere-collision results across 30/60/120/144 Hz render
+  partitions; and
+- the real Environment Lab pair impulse occurring before either pair body
+  touches terrain while body 0 reaches canonical support.
 
 After defining `$cmake` and `$ctest` with the discovery block in
 [Building Shark](BUILDING.md#fresh-command-line-build), build and run all
@@ -150,29 +222,30 @@ discovered unit cases with:
 & $ctest --preset windows-debug -R '^unit\.'
 ```
 
-For manual acceptance, launch `SharkSandbox`. The sphere must remain still at
-startup, advance by one deterministic amount for each `F6` press, fall after
-`F5`, contact the visible terrain, and remain at rest without hover or
-penetration. Pause/resume must not create a catch-up jump. Press `F4` and
-confirm the cyan preview begins at the fixed canonical support sample and
-follows its normal; it is intentionally available before and after contact.
-Camera motion and animated presentation-only water remain independent.
+For manual acceptance, launch `SharkSandbox`. Four spheres must remain still
+at startup. `F6` advances all four by one deterministic tick. After `F5`,
+bodies 1 and 2 collide while airborne and separate, while body 0 falls to the
+visible terrain and remains at rest without hover or penetration. Pause/resume
+must not create a catch-up jump. `F4` still previews only body 0's fixed
+canonical support normal and is intentionally available before and after
+contact. Camera motion and presentation-only water remain independent.
 
-The completed PHY-002 validation passed all `161/161` unit cases in both Debug
-and Release. The 1,000-frame presentation smoke passed on Debug hardware,
-Debug WARP, and Release hardware; each path now fails unless its final
-simulation snapshot contains the exact canonical support contact with zero
-velocity and one-radius face-plane clearance.
+PHY-003's focused collision suite passes `3,662` assertions across 12 cases in
+both Debug and Release. Both full unit suites pass `173/173`. The presentation
+smoke passes 1,000 frames on Debug hardware, 600 frames on Debug WARP, and
+1,000 frames on Release hardware. Every path observes the airborne `(1,2)`
+impulse and retains body 0's exact canonical support; they record exactly
+4,000, 2,400, and 4,000 sphere draws respectively, with no D3D12 corruption,
+errors, or live child objects.
 
 ## Explicit non-goals
 
-PHY-002 adds no body/body pair, arbitrary closest-feature sphere/triangle
-collision, edge collision when the center is outside the tile, continuous
-collision detection, generalized friction/restitution, angular state, torque,
-broad phase, sleeping, buoyancy, water displacement, reset control, entity
-system, or general debug-draw service. Its one-sample face support is intended
-for the current one-meter-radius, four-meter-cell, slope-bounded Environment
-Lab heightfield proof; it is not a general promise for arbitrary radius/cell
-ratios or near-vertical faces. The lake remains W-001
-presentation-only water, and `R-001` through `R-004` remain deferred. The
-active queue is centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).
+PHY-003 adds no unequal mass, angular state, torque, friction, persistent
+manifold, iterative constraint solve, continuous collision detection, broad
+phase, sleeping, arbitrary closest-feature sphere/triangle collision,
+buoyancy, water displacement, reset control, entity system, or general
+debug-draw service. Its one-sample face support remains intended for the
+current one-meter-radius, four-meter-cell, slope-bounded Environment Lab
+heightfield proof. The lake remains W-001 presentation-only water, and `R-001`
+through `R-004` remain deferred. The active queue is `PHY-004` angular
+rigid-body state and is centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).

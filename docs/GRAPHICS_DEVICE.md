@@ -112,12 +112,12 @@ Selection rules are strict:
 verification. `--present-smoke` accepts the normal GPU selectors and optional
 GPU-based validation, creates a real window, presents exactly 1,000 successful
 frames normally or 120 in the focused GPU-validation mode, containing the
-visible indexed terrain chunks, matching magenta chunk bounds, material sphere,
+visible indexed terrain chunks, matching magenta chunk bounds, four material spheres,
 cyan terrain-query marker, cube, skybox, visual water, and final tone mapping,
 verifies
 camera/depth/HDR/resource/graph lifecycles, and exits. The default interactive
 path keeps the device alive while the free-fly camera, IBL-lit terrain and
-query-normal pin, material sphere, textured cube, HDR sky, and visual lake run
+query-normal pin, four material spheres, textured cube, HDR sky, and visual lake run
 as `Terrain`, `TexturedCube`, `Skybox`, `Water`, and `ToneMap` passes. `F3`
 retains the procedural-daylight fallback. The startup DDS cubemap remains an
 asset/upload proof and is not imported, bound, or sampled per frame.
@@ -194,12 +194,13 @@ owner-scoped graph declarations, stable hazard-aware ordering,
 cycle/access/failure validation, transition elision, exact legacy state
 mapping/alias handling, and native binding rejection.
 The presentation smoke additionally verifies all three frame contexts are
-reused, every submission compiles and executes exactly four graph passes with
-15 imports, three dependencies, six emitted barriers, and 31 elided
-transitions plus four texture-table bindings, and every submission retires
+reused, every submission compiles and executes exactly five graph passes with
+15 imports, five dependencies, six emitted barriers, and 34 elided
+transitions plus five texture-table bindings, and every submission retires
 during explicit shutdown before frame resources are released. T-006
-historically established four geometry buffers, ten timestamps per frame, and
-the active 225-chunk capacity; T-008 retains them. Each visible surface selects a
+historically established four geometry buffers and the active 225-chunk
+capacity; T-008 retains them, while W-001 expands timing to 12 timestamps per
+frame. Each visible surface selects a
 1,536-index LOD0 or
 864-index coarse range; default frames omit bounds/query diagnostics, while
 `F4` adds them without another resource. The unchanged T-008 smoke poses expect `V=93`

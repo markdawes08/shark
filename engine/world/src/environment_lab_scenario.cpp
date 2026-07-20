@@ -2,6 +2,8 @@
 
 #include <shark/core/error.hpp>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <string>
 #include <utility>
@@ -34,12 +36,28 @@ inline constexpr terrain::HorizontalPoint environment_lab_spawn{
     -128.0F,
     -20.0F,
 };
-inline constexpr terrain::HorizontalPoint environment_lab_ballistic_body{
-    -128.0F,
-    -44.0F,
-};
+inline constexpr std::array<
+    terrain::HorizontalPoint,
+    environment_lab_sphere_body_count>
+    environment_lab_sphere_bodies{{
+        {-128.0F, -44.0F},
+        {-136.0F, -56.0F},
+        {-124.0F, -56.0F},
+        {-108.0F, -44.0F},
+    }};
+inline constexpr std::array<
+    math::Float3,
+    environment_lab_sphere_body_count>
+    environment_lab_sphere_initial_velocities{{
+        {},
+        {5.0F, 0.0F, 0.0F},
+        {-3.0F, 0.0F, 0.0F},
+        {},
+    }};
 inline constexpr float environment_lab_spawn_eye_height = 2.0F;
-inline constexpr float environment_lab_ballistic_body_height = 12.0F;
+inline constexpr float environment_lab_primary_body_height = 12.0F;
+inline constexpr float environment_lab_pair_body_height = 20.0F;
+inline constexpr float environment_lab_isolated_body_height = 14.0F;
 inline constexpr float environment_lab_spawn_pitch = -0.1F;
 inline constexpr float environment_lab_far_plane = 1'500.0F;
 inline constexpr float minimum_core_depth = 6.0F;
@@ -81,17 +99,31 @@ make_environment_lab_scenario()
     const auto spawn_height = surface.sample_lod0_height(
         environment_lab_spawn.x,
         environment_lab_spawn.z);
-    const auto ballistic_body_ground_height =
-        surface.sample_lod0_height(
-            environment_lab_ballistic_body.x,
-            environment_lab_ballistic_body.z);
-    if (!core_height ||
-        !spawn_height ||
-        !ballistic_body_ground_height) {
+    std::array<
+        float,
+        environment_lab_sphere_body_count>
+        sphere_body_ground_heights{};
+    for (std::size_t body_index = 0;
+         body_index < environment_lab_sphere_body_count;
+         ++body_index) {
+        const auto ground_height =
+            surface.sample_lod0_height(
+                environment_lab_sphere_bodies[body_index].x,
+                environment_lab_sphere_bodies[body_index].z);
+        if (!ground_height.has_value()) {
+            return core::Result<EnvironmentLabScenario>::failure(
+                scenario_error(
+                    "An Environment Lab sphere body lies outside the "
+                    "terrain"));
+        }
+        sphere_body_ground_heights[body_index] =
+            *ground_height;
+    }
+    if (!core_height || !spawn_height) {
         return core::Result<EnvironmentLabScenario>::failure(
             scenario_error(
-                "Environment Lab core, spawn, or ballistic body lies "
-                "outside the terrain"));
+                "Environment Lab core or spawn lies outside the "
+                "terrain"));
     }
     if (*core_height >
         environment_lab_lake_basin.future_waterline_y -
@@ -115,20 +147,28 @@ make_environment_lab_scenario()
         terrain::lake_basin_normalized_radius_squared(
             environment_lab_lake_basin.footprint,
             environment_lab_spawn);
-    const auto ballistic_body_field =
-        terrain::lake_basin_normalized_radius_squared(
-            environment_lab_lake_basin.footprint,
-            environment_lab_ballistic_body);
     if (!std::isfinite(core_field) ||
         !std::isfinite(spawn_field) ||
-        !std::isfinite(ballistic_body_field) ||
         core_field > 1.0 ||
-        spawn_field <= 1.0 ||
-        ballistic_body_field <= 1.0) {
+        spawn_field <= 1.0) {
         return core::Result<EnvironmentLabScenario>::failure(
             scenario_error(
-                "Environment Lab core/spawn/body footprint ownership "
+                "Environment Lab core/spawn footprint ownership "
                 "is invalid"));
+    }
+    for (const auto body_position :
+         environment_lab_sphere_bodies) {
+        const auto body_field =
+            terrain::lake_basin_normalized_radius_squared(
+                environment_lab_lake_basin.footprint,
+                body_position);
+        if (!std::isfinite(body_field) ||
+            body_field <= 1.0) {
+            return core::Result<EnvironmentLabScenario>::failure(
+                scenario_error(
+                    "An Environment Lab sphere body is not on the dry "
+                    "side of the lake footprint"));
+        }
     }
 
     const math::Float3 core_position{
@@ -141,12 +181,38 @@ make_environment_lab_scenario()
         *spawn_height,
         environment_lab_spawn.z,
     };
-    const math::Float3 ballistic_body_spawn{
-        environment_lab_ballistic_body.x,
-        *ballistic_body_ground_height +
-            environment_lab_ballistic_body_height,
-        environment_lab_ballistic_body.z,
-    };
+    const auto pair_spawn_y =
+        std::max(
+            sphere_body_ground_heights[1],
+            sphere_body_ground_heights[2]) +
+        environment_lab_pair_body_height;
+    const std::array<
+        math::Float3,
+        environment_lab_sphere_body_count>
+        sphere_body_spawns{{
+            {
+                environment_lab_sphere_bodies[0].x,
+                sphere_body_ground_heights[0] +
+                    environment_lab_primary_body_height,
+                environment_lab_sphere_bodies[0].z,
+            },
+            {
+                environment_lab_sphere_bodies[1].x,
+                pair_spawn_y,
+                environment_lab_sphere_bodies[1].z,
+            },
+            {
+                environment_lab_sphere_bodies[2].x,
+                pair_spawn_y,
+                environment_lab_sphere_bodies[2].z,
+            },
+            {
+                environment_lab_sphere_bodies[3].x,
+                sphere_body_ground_heights[3] +
+                    environment_lab_isolated_body_height,
+                environment_lab_sphere_bodies[3].z,
+            },
+        }};
     Camera spawn_camera;
     spawn_camera.transform.position = {
         spawn_ground.x,
@@ -163,10 +229,14 @@ make_environment_lab_scenario()
             .lake_basin = environment_lab_lake_basin,
             .lake_core_position = core_position,
             .spawn_ground_position = spawn_ground,
-            .ballistic_body_spawn_position =
-                ballistic_body_spawn,
-            .ballistic_body_radius =
-                environment_lab_ballistic_body_radius,
+            .sphere_body_spawn_positions =
+                sphere_body_spawns,
+            .sphere_body_initial_velocities =
+                environment_lab_sphere_initial_velocities,
+            .sphere_body_radius =
+                environment_lab_sphere_body_radius,
+            .sphere_restitution =
+                environment_lab_sphere_restitution,
             .spawn_camera = spawn_camera,
         });
 }

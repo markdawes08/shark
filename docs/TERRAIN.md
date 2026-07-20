@@ -1,6 +1,6 @@
 # Canonical Terrain-Tile Contract
 
-- **Completed through:** `PHY-002`
+- **Completed through:** `PHY-003`
 - **Last verified:** July 19, 2026
 
 T-008 composes the untouched T-007 rolling-height oracle with a bounded
@@ -18,9 +18,11 @@ contains 530 canonical samples.
 
 The scenario publishes dry spawn ground at `(-128,1.34375,-20)` and a camera eye
 at `(-128,3.34375,-20)` with pitch `-0.1`; sampled support-boundary distance is
-about 58.496138 meters. The scenario also publishes the PHY-002 proof-sphere
-spawn at `(-128,-44)` exactly 12 meters above its canonical LOD0 ground sample.
-Cube and body sphere remain outside the water support and initially unburied.
+about 58.496138 meters. The scenario also publishes four PHY-003 sphere
+spawns. Primary body 0 remains at `(-128,-44)` exactly 12 meters above its
+canonical LOD0 ground sample; bodies 1 and 2 share an airborne collision
+height, and body 3 remains isolated. Cube and all spheres remain outside the
+water support and initially unburied.
 W-001 consumes the basin metadata without changing any canonical terrain
 sample, query, topology, resource, or descriptor.
 
@@ -713,11 +715,11 @@ and `D` be one when diagnostics are enabled and zero otherwise. The `Terrain`
 timing interval contains all of these commands:
 
 ```text
-Terrain indexed draws       V + 1 + D * (V + 1)
-full-frame indexed draws     V + 3 + D * (V + 1)
+Terrain indexed draws       V + 4 + D * (V + 1)
+full-frame indexed draws     V + 6 + D * (V + 1)
 LOD0 terrain indices         1,536 * V0
 coarse terrain indices         864 * Vc
-material sphere indices      1,584
+material sphere indices      6,336
 diagnostic AABB indices      D * 24 * V
 diagnostic marker indices    D * 6
 textured-cube indices        36
@@ -787,7 +789,7 @@ terrain_coarse_chunks_last == 60
 scene_matrix_changes == 4
 sky_matrix_changes == 3
 
-material_sphere_draw_calls == F
+material_sphere_draw_calls == 4 * F
 cube_draw_calls == skybox_draw_calls == water_draw_calls
     == tone_map_draw_calls == F
 water_vertices == 6 * F
@@ -959,10 +961,11 @@ sphere switch coherently. Verify the 32-meter/second camera, four-times sprint,
 and 1,500-meter far plane make the full footprint navigable. Move, rotate,
 resize, minimize, restore, and close; world-space material tiling, checker
 cube, sky, tone mapping, diagnostics, and Direct3D validation must remain
-clean. The validation cube must remain dry and unburied; the material sphere
-must begin dry and unburied while paused, then fall and remain supported by
-the displayed canonical terrain once PHY-002 motion runs. The cyan preview
-marks that sphere's fixed supporting sample and exact triangle normal.
+clean. The validation cube and all four spheres must remain dry and unburied
+while paused. Once PHY-003 motion runs, bodies 1 and 2 must collide airborne;
+primary body 0 must fall and remain supported by the displayed canonical
+terrain. The cyan preview marks only body 0's fixed supporting sample and exact
+triangle normal.
 Fly around the complete basin rim and confirm the broad natural terrain resumes
 smoothly outside the bounded shaping support. The spawn must remain on dry
 ground overlooking the basin.
@@ -1022,3 +1025,8 @@ supported; a center immediately outside has no contact even when its radius
 overlaps the edge. Closest-feature edge collision, continuous collision, and
 general friction/restitution remain outside this proof. The active queue
 remains centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).
+
+PHY-003 repeats that terrain step for four fixed-index bodies before testing
+the six possible sphere pairs in lexicographic order. Pair response remains
+CPU-only and does not read or mutate terrain, its visual LODs, or GPU
+resources.

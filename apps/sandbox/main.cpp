@@ -4,6 +4,7 @@
 #include <shark/core/logging.hpp>
 #include <shark/core/result.hpp>
 #include <shark/physics/ballistic_body.hpp>
+#include <shark/physics/sphere_body_collision.hpp>
 #include <shark/physics/sphere_terrain_contact.hpp>
 #include <shark/platform/application.hpp>
 #include <shark/platform/events.hpp>
@@ -999,9 +1000,9 @@ void log_platform_event(const shark::platform::Event& event)
     }
 
     const auto query_marker_world_x =
-        environment_scenario.ballistic_body_spawn_position.x;
+        environment_scenario.sphere_body_spawn_positions[0].x;
     const auto query_marker_world_z =
-        environment_scenario.ballistic_body_spawn_position.z;
+        environment_scenario.sphere_body_spawn_positions[0].z;
     const auto query_marker_sample =
         terrain_surface.sample_lod0_surface(
             query_marker_world_x,
@@ -1017,7 +1018,7 @@ void log_platform_event(const shark::platform::Event& event)
     const terrain::Ray3 query_marker_ray{
         {
             query_marker_world_x,
-            environment_scenario.ballistic_body_spawn_position.y +
+            environment_scenario.sphere_body_spawn_positions[0].y +
                 50.0F,
             query_marker_world_z,
         },
@@ -1077,7 +1078,7 @@ void log_platform_event(const shark::platform::Event& event)
         1.0F,
     };
     const auto query_marker_length =
-        environment_scenario.ballistic_body_radius + 1.0F;
+        environment_scenario.sphere_body_radius + 1.0F;
     constexpr float query_marker_cross_radius = 0.20F;
     const math::Float3 query_marker_tip{
         marker_sample.position.x +
@@ -1561,13 +1562,13 @@ void log_platform_event(const shark::platform::Event& event)
                 (focused_gpu_validation
                     ? " with GPU-based validation"
                     : "")
-            : "Direct3D 12 terrain, material sphere, HDR environment, "
+            : "Direct3D 12 terrain, material spheres, HDR environment, "
               "and tone mapping initialized; F1 toggles "
               "solid/wireframe, F2 cycles terrain material views, and "
               "F3 toggles HDR IBL/procedural daylight, and F4 toggles "
               "terrain chunk/support-normal diagnostics; F5 "
               "resumes/pauses the "
-              "fixed 60 Hz ballistic simulation and F6 advances one "
+              "fixed 60 Hz sphere simulation and F6 advances one "
               "tick while paused");
 
     world::Camera camera;
@@ -1590,17 +1591,45 @@ void log_platform_event(const shark::platform::Event& event)
     }
     auto simulation_clock =
         std::move(simulation_clock_result).value();
-    const physics::BallisticBodyState initial_ballistic_body{
-        .position =
-            environment_scenario.ballistic_body_spawn_position,
-    };
-    const physics::SphereCollider ballistic_sphere_collider{
-        .radius = environment_scenario.ballistic_body_radius,
-    };
-    auto previous_ballistic_body = initial_ballistic_body;
-    auto current_ballistic_body = initial_ballistic_body;
-    std::optional<physics::SphereTerrainContact>
-        current_terrain_contact;
+    static_assert(
+        world::environment_lab_sphere_body_count ==
+        physics::sphere_body_capacity);
+    static_assert(
+        world::environment_lab_sphere_body_count ==
+        renderer::maximum_material_sphere_count);
+    physics::SphereBodyStates initial_sphere_bodies{};
+    physics::SphereColliders sphere_colliders{};
+    for (std::size_t body_index = 0;
+         body_index < world::environment_lab_sphere_body_count;
+         ++body_index) {
+        initial_sphere_bodies[body_index] =
+            physics::BallisticBodyState{
+                .position =
+                    environment_scenario
+                        .sphere_body_spawn_positions[body_index],
+                .linear_velocity =
+                    environment_scenario
+                        .sphere_body_initial_velocities[body_index],
+            };
+        sphere_colliders[body_index] =
+            physics::SphereCollider{
+                .radius =
+                    environment_scenario.sphere_body_radius,
+            };
+    }
+    auto previous_sphere_bodies = initial_sphere_bodies;
+    auto current_sphere_bodies = initial_sphere_bodies;
+    std::array<
+        std::optional<physics::SphereTerrainContact>,
+        physics::sphere_body_capacity>
+        current_terrain_contacts{};
+    const physics::SphereBodyCollisionSettings
+        sphere_collision_settings{
+            .restitution =
+                environment_scenario.sphere_restitution,
+        };
+    bool observed_airborne_pair_collision = false;
+    std::uint64_t sphere_pair_contact_count = 0;
     const renderer::DaylightSettings daylight{};
     sandbox::CameraController camera_controller{
         sandbox::CameraControllerConfig{
@@ -1616,7 +1645,7 @@ void log_platform_event(const shark::platform::Event& event)
     auto previous_frame_time = std::chrono::steady_clock::now();
     const auto reset_simulation_time_baseline = [&] {
         simulation_clock.discard_accumulated_time();
-        previous_ballistic_body = current_ballistic_body;
+        previous_sphere_bodies = current_sphere_bodies;
         previous_frame_time = std::chrono::steady_clock::now();
     };
     const auto visual_start_time = previous_frame_time;
@@ -2044,32 +2073,71 @@ void log_platform_event(const shark::platform::Event& event)
         for (std::uint32_t step = 0;
              step < simulation_frame.step_count;
              ++step) {
-            previous_ballistic_body = current_ballistic_body;
-            auto physics_result =
-                physics::advance_sphere_against_terrain(
-                    current_ballistic_body,
-                    ballistic_sphere_collider,
-                    terrain_surface,
-                    physics::standard_gravity,
-                    simulation_clock.fixed_delta_seconds());
-            if (!physics_result) {
-                return core::Result<void>::failure(
-                    std::move(physics_result).error());
+            previous_sphere_bodies = current_sphere_bodies;
+            for (std::size_t body_index = 0;
+                 body_index < world::environment_lab_sphere_body_count;
+                 ++body_index) {
+                auto terrain_result =
+                    physics::advance_sphere_against_terrain(
+                        current_sphere_bodies[body_index],
+                        sphere_colliders[body_index],
+                        terrain_surface,
+                        physics::standard_gravity,
+                        simulation_clock.fixed_delta_seconds());
+                if (!terrain_result) {
+                    return core::Result<void>::failure(
+                        std::move(terrain_result).error());
+                }
+                current_terrain_contacts[body_index] =
+                    terrain_result.value().contact;
             }
-            current_terrain_contact =
-                physics_result.value().contact;
+            auto collision_result =
+                physics::resolve_sphere_body_collisions(
+                    current_sphere_bodies,
+                    sphere_colliders,
+                    world::environment_lab_sphere_body_count,
+                    sphere_collision_settings);
+            if (!collision_result) {
+                return core::Result<void>::failure(
+                    std::move(collision_result).error());
+            }
+            const auto& collision_step =
+                collision_result.value();
+            sphere_pair_contact_count +=
+                collision_step.contact_count;
+            for (std::size_t contact_index = 0;
+                 contact_index < collision_step.contact_count;
+                 ++contact_index) {
+                const auto& contact =
+                    collision_step.contacts[contact_index];
+                if (contact.first_body_index == 1 &&
+                    contact.second_body_index == 2 &&
+                    contact.normal_impulse_magnitude > 0.0F &&
+                    !current_terrain_contacts[1].has_value() &&
+                    !current_terrain_contacts[2].has_value()) {
+                    observed_airborne_pair_collision = true;
+                }
+            }
         }
-        auto interpolated_body_result =
-            physics::interpolate_ballistic_body(
-                previous_ballistic_body,
-                current_ballistic_body,
-                simulation_frame.interpolation_alpha);
-        if (!interpolated_body_result) {
-            return core::Result<void>::failure(
-                std::move(interpolated_body_result).error());
+        std::array<
+            math::Float3,
+            renderer::maximum_material_sphere_count>
+            interpolated_sphere_positions{};
+        for (std::size_t body_index = 0;
+             body_index < world::environment_lab_sphere_body_count;
+             ++body_index) {
+            auto interpolated_body_result =
+                physics::interpolate_ballistic_body(
+                    previous_sphere_bodies[body_index],
+                    current_sphere_bodies[body_index],
+                    simulation_frame.interpolation_alpha);
+            if (!interpolated_body_result) {
+                return core::Result<void>::failure(
+                    std::move(interpolated_body_result).error());
+            }
+            interpolated_sphere_positions[body_index] =
+                interpolated_body_result.value().position;
         }
-        const auto interpolated_body =
-            std::move(interpolated_body_result).value();
         if (!smoke_mode &&
             simulation_clock.paused() &&
             simulation_frame.step_count != 0) {
@@ -2079,14 +2147,14 @@ void log_platform_event(const shark::platform::Event& event)
                 std::string{"Tick "} +
                     std::to_string(
                         simulation_clock.total_step_count()) +
-                    ": body position=(" +
+                    ": primary body position=(" +
                     std::to_string(
-                        current_ballistic_body.position.x) + ", " +
+                        current_sphere_bodies[0].position.x) + ", " +
                     std::to_string(
-                        current_ballistic_body.position.y) + ", " +
+                        current_sphere_bodies[0].position.y) + ", " +
                     std::to_string(
-                        current_ballistic_body.position.z) + ")");
-            if (current_terrain_contact.has_value()) {
+                        current_sphere_bodies[0].position.z) + ")");
+            if (current_terrain_contacts[0].has_value()) {
                 core::log_message(
                     core::LogLevel::info,
                     "physics",
@@ -2112,8 +2180,11 @@ void log_platform_event(const shark::platform::Event& event)
                 matrices_result.value().sky_view_projection,
             .daylight = daylight,
             .camera_world_position = camera.transform.position,
-            .material_sphere_world_position =
-                interpolated_body.position,
+            .material_sphere_world_positions =
+                interpolated_sphere_positions,
+            .material_sphere_count =
+                static_cast<std::uint32_t>(
+                    world::environment_lab_sphere_body_count),
             .terrain_mode = terrain_mode,
             .terrain_material_view = terrain_material_view,
             .environment_lighting_mode =
@@ -2144,22 +2215,30 @@ void log_platform_event(const shark::platform::Event& event)
 
     if (smoke_mode) {
         const auto& stats = renderer_instance.stats();
-        if (!current_terrain_contact.has_value() ||
-            current_ballistic_body.linear_velocity != math::Float3{} ||
-            current_ballistic_body.position.x !=
-                current_terrain_contact->surface.position.x ||
-            current_ballistic_body.position.z !=
-                current_terrain_contact->surface.position.z ||
+        if (!current_terrain_contacts[0].has_value() ||
+            current_sphere_bodies[0].linear_velocity !=
+                math::Float3{} ||
+            current_sphere_bodies[0].position.x !=
+                current_terrain_contacts[0]->surface.position.x ||
+            current_sphere_bodies[0].position.z !=
+                current_terrain_contacts[0]->surface.position.z ||
             std::abs(
-                (current_ballistic_body.position.y -
-                 current_terrain_contact->surface.position.y) *
-                    current_terrain_contact->surface.normal.y -
-                ballistic_sphere_collider.radius) >
+                (current_sphere_bodies[0].position.y -
+                 current_terrain_contacts[0]->surface.position.y) *
+                    current_terrain_contacts[0]->surface.normal.y -
+                sphere_colliders[0].radius) >
                 0.00001F) {
             return core::Result<void>::failure(
                 renderer_smoke_error(
                     "The presentation smoke did not finish with the "
-                    "sphere supported by canonical terrain"));
+                    "primary sphere supported by canonical terrain"));
+        }
+        if (!observed_airborne_pair_collision ||
+            sphere_pair_contact_count == 0) {
+            return core::Result<void>::failure(
+                renderer_smoke_error(
+                    "The presentation smoke did not observe the "
+                    "airborne sphere-pair impulse"));
         }
         if (stats.presented_frames != required_smoke_frames ||
             simulation_clock.total_step_count() !=
@@ -2321,7 +2400,8 @@ void log_platform_event(const shark::platform::Event& event)
                 stats.water_draw_calls * 6 ||
             stats.skybox_draw_calls != stats.frame_submissions ||
             stats.material_sphere_draw_calls !=
-                stats.frame_submissions ||
+                stats.frame_submissions *
+                    world::environment_lab_sphere_body_count ||
             stats.tone_map_draw_calls != stats.frame_submissions ||
             stats.terrain_query_marker_draw_calls !=
                 expected_diagnostic_frames ||
@@ -2671,7 +2751,7 @@ void log_platform_event(const shark::platform::Event& event)
         summary.append(std::to_string(stats.water_draw_calls));
         summary.push_back('/');
         summary.append(std::to_string(stats.skybox_draw_calls));
-        summary.append(", material-sphere/tone-map-draws=");
+        summary.append(", material-spheres/tone-map-draws=");
         summary.append(std::to_string(
             stats.material_sphere_draw_calls));
         summary.push_back('/');

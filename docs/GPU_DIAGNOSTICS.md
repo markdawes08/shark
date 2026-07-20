@@ -1,6 +1,6 @@
 # Direct3D 12 GPU Diagnostics Contract
 
-- **Completed through:** `PHY-002`
+- **Completed through:** `PHY-003`
 - **Last verified:** July 19, 2026
 
 Shark's GPU diagnostics use fixed-capacity PIX events and direct-queue
@@ -21,7 +21,7 @@ development prerequisite; Shark neither installs nor launches it.
 |---|---:|---:|---|
 | `StaticSceneUpload` | 3 | once | cube and packed terrain-LOD/chunk-bounds/marker/sphere buffer copies; checker and retained DDS copies; 36 terrain-material and 79 HDR-environment subresource copies; 13 initialization barriers |
 | `Frame` | 1 | per submission | frame timestamp interval, 256-byte probe copy, complete graph execution, and timestamp resolve |
-| `Terrain` | 4 | per frame | HDR/depth clear, material/IBL binding, selected LOD0/coarse chunk surfaces, sphere, matching visible chunk bounds, and marker draws |
+| `Terrain` | 4 | per frame | HDR/depth clear, material/IBL binding, selected LOD0/coarse chunk surfaces, four spheres, matching visible chunk bounds, and marker draws |
 | `TexturedCube` | 2 | per frame | HDR/depth binding, checker binding, and cube draw |
 | `Skybox` | 3 | per frame | HDR/read-only-depth binding, radiance/fallback state, and sky draw |
 | `Water` | 6 | per frame | HDR/read-only-depth binding after sky, radiance/fallback state, local-support constants, and six-vertex premultiplied draw |
@@ -202,7 +202,7 @@ terrain_visible_chunk_last == 61
 terrain_lod0_chunks_last == 1
 terrain_coarse_chunks_last == 60
 
-material_sphere_draw_calls == frame_submissions
+material_sphere_draw_calls == frame_submissions * 4
 terrain_bounds_draw_calls == 2790
 terrain_bounds_indices == 66960
 terrain_query_marker_draw_calls == 30
@@ -224,7 +224,7 @@ terrain_query_marker_vertex_count == 6
 terrain_query_marker_index_count == 6
 material_sphere_vertex_count == 266
 material_sphere_index_count == 1584
-material_sphere_indices == frame_submissions * 1584
+material_sphere_indices == material_sphere_draw_calls * 1584
 
 terrain_surface_vertex_payload_bytes == 1393944
 terrain_surface_index_payload_bytes == 1080000
@@ -409,7 +409,7 @@ For manual PIX acceptance:
 1. Capture a hardware frame and confirm one `Frame` with sequential nested
    `Terrain`, `TexturedCube`, `Skybox`, `Water`, and `ToneMap` scopes.
 2. At the initial pose, confirm `Terrain` contains 93 864-index coarse draws
-   and one sphere, with no LOD0 draw. Toggle `F4` and confirm 93 matching
+   and four spheres, with no LOD0 draw. Toggle `F4` and confirm 93 matching
    24-index bounds draws plus one marker; they are absent when the toggle is
    off. At the scripted overview, confirm 72 coarse and zero LOD0 draws. In the
    final smoke-only near phase, confirm one 1,536-index LOD0 draw and 60
@@ -448,7 +448,7 @@ pair. It reuses the radiance descriptor and creates no water GPU resource, so
 the static upload, four geometry buffers, and ten persistent descriptors stay
 unchanged. The active diagnostics contract is `15/5/5/6/34`, five texture
 bindings, and 12 timestamps per submitted frame. Rain remains deferred and
-the approved San Andreas-class ceiling is unchanged. PHY-002 preserves this
-accounting while CPU contact drives the already validated three-constant
-sphere transform binding. See [ENGINE_PLAN.md](ENGINE_PLAN.md) for the active
+the approved San Andreas-class ceiling is unchanged. PHY-003 preserves this
+accounting while four CPU simulation snapshots rebind the already validated
+three-constant sphere transform. See [ENGINE_PLAN.md](ENGINE_PLAN.md) for the active
 increment queue.

@@ -3,6 +3,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <shark/physics/sphere_body_collision.hpp>
+#include <shark/renderer/renderer.hpp>
 #include <shark/terrain/height_tile.hpp>
 #include <shark/terrain/lake_basin.hpp>
 #include <shark/world/camera.hpp>
@@ -248,10 +250,14 @@ TEST_CASE(
         second.lake_core_position);
     REQUIRE(first.spawn_ground_position ==
         second.spawn_ground_position);
-    REQUIRE(first.ballistic_body_spawn_position ==
-        second.ballistic_body_spawn_position);
-    REQUIRE(first.ballistic_body_radius ==
-        second.ballistic_body_radius);
+    REQUIRE(first.sphere_body_spawn_positions ==
+        second.sphere_body_spawn_positions);
+    REQUIRE(first.sphere_body_initial_velocities ==
+        second.sphere_body_initial_velocities);
+    REQUIRE(first.sphere_body_radius ==
+        second.sphere_body_radius);
+    REQUIRE(first.sphere_restitution ==
+        second.sphere_restitution);
     REQUIRE(first.spawn_camera.transform.position ==
         second.spawn_camera.transform.position);
     const auto coarse =
@@ -329,12 +335,39 @@ TEST_CASE(
         math::Float3{-124.0F, -10.47265625F, -128.0F});
     REQUIRE(first.spawn_ground_position ==
         math::Float3{-128.0F, 1.34375F, -20.0F});
-    REQUIRE(first.ballistic_body_spawn_position.x == -128.0F);
-    REQUIRE(first.ballistic_body_spawn_position.z == -44.0F);
-    REQUIRE(first.ballistic_body_radius ==
-        world::environment_lab_ballistic_body_radius);
-    REQUIRE(first.ballistic_body_radius ==
+    STATIC_REQUIRE(world::environment_lab_sphere_body_count == 4);
+    STATIC_REQUIRE(
+        world::environment_lab_sphere_body_count ==
+        physics::sphere_body_capacity);
+    STATIC_REQUIRE(
+        world::environment_lab_sphere_body_count ==
+        renderer::maximum_material_sphere_count);
+    REQUIRE(first.sphere_body_spawn_positions[0].x == -128.0F);
+    REQUIRE(first.sphere_body_spawn_positions[0].z == -44.0F);
+    REQUIRE(first.sphere_body_spawn_positions[1].x == -136.0F);
+    REQUIRE(first.sphere_body_spawn_positions[1].z == -56.0F);
+    REQUIRE(first.sphere_body_spawn_positions[2].x == -124.0F);
+    REQUIRE(first.sphere_body_spawn_positions[2].z == -56.0F);
+    REQUIRE(first.sphere_body_spawn_positions[3].x == -108.0F);
+    REQUIRE(first.sphere_body_spawn_positions[3].z == -44.0F);
+    REQUIRE(first.sphere_body_spawn_positions[1].y ==
+        first.sphere_body_spawn_positions[2].y);
+    REQUIRE(first.sphere_body_initial_velocities[0] ==
+        math::Float3{});
+    REQUIRE(first.sphere_body_initial_velocities[1] ==
+        math::Float3{5.0F, 0.0F, 0.0F});
+    REQUIRE(first.sphere_body_initial_velocities[2] ==
+        math::Float3{-3.0F, 0.0F, 0.0F});
+    REQUIRE(first.sphere_body_initial_velocities[3] ==
+        math::Float3{});
+    REQUIRE(first.sphere_body_radius ==
+        world::environment_lab_sphere_body_radius);
+    REQUIRE(first.sphere_body_radius ==
         renderer::d3d12::detail::material_sphere_radius);
+    REQUIRE(first.sphere_restitution ==
+        world::environment_lab_sphere_restitution);
+    REQUIRE(first.sphere_restitution ==
+        physics::SphereBodyCollisionSettings{}.restitution);
     REQUIRE(first.spawn_camera.transform.position ==
         math::Float3{-128.0F, 3.34375F, -20.0F});
     REQUIRE(first.spawn_camera.transform.yaw_radians == 0.0F);
@@ -391,13 +424,29 @@ TEST_CASE(
     const auto surface =
         terrain::HeightTileSurface::create(first.terrain);
     REQUIRE(surface);
-    const auto ballistic_body_ground =
-        surface.value().sample_lod0_height(
-            first.ballistic_body_spawn_position.x,
-            first.ballistic_body_spawn_position.z);
-    REQUIRE(ballistic_body_ground);
-    REQUIRE(first.ballistic_body_spawn_position.y ==
-        *ballistic_body_ground + 12.0F);
+    std::array<
+        float,
+        world::environment_lab_sphere_body_count>
+        sphere_body_ground_heights{};
+    for (std::size_t body_index = 0;
+         body_index < world::environment_lab_sphere_body_count;
+         ++body_index) {
+        const auto body_ground =
+            surface.value().sample_lod0_height(
+                first.sphere_body_spawn_positions[body_index].x,
+                first.sphere_body_spawn_positions[body_index].z);
+        REQUIRE(body_ground);
+        sphere_body_ground_heights[body_index] =
+            *body_ground;
+    }
+    REQUIRE(first.sphere_body_spawn_positions[0].y ==
+        sphere_body_ground_heights[0] + 12.0F);
+    REQUIRE(first.sphere_body_spawn_positions[1].y >=
+        sphere_body_ground_heights[1] + 20.0F);
+    REQUIRE(first.sphere_body_spawn_positions[2].y >=
+        sphere_body_ground_heights[2] + 20.0F);
+    REQUIRE(first.sphere_body_spawn_positions[3].y ==
+        sphere_body_ground_heights[3] + 14.0F);
     const auto spawn_sample =
         surface.value().sample_lod0_surface(
             first.spawn_ground_position.x,
@@ -432,14 +481,17 @@ TEST_CASE(
             first.lake_basin.footprint,
             spawn_xz) >
         1.0);
-    REQUIRE(
-        terrain::lake_basin_normalized_radius_squared(
-            first.lake_basin.footprint,
-            {
-                first.ballistic_body_spawn_position.x,
-                first.ballistic_body_spawn_position.z,
-            }) >
-        1.0);
+    for (const auto body_position :
+         first.sphere_body_spawn_positions) {
+        REQUIRE(
+            terrain::lake_basin_normalized_radius_squared(
+                first.lake_basin.footprint,
+                {
+                    body_position.x,
+                    body_position.z,
+                }) >
+            1.0);
+    }
 
     const auto camera_basis =
         world::camera_basis(first.spawn_camera.transform);

@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 19, 2026
-- **Latest completed:** `PHY-002` - sphere contact with canonical terrain
-- **Next increment:** `PHY-003` - sphere body collisions
+- **Latest completed:** `PHY-003` - deterministic sphere body collisions
+- **Next increment:** `PHY-004` - angular rigid-body state
 
 ## 1. Project direction
 
@@ -797,7 +797,7 @@ M5.
 |---|---:|---|---|
 | `PHY-001` | S | Complete: add an initially paused fixed 60 Hz clock, `F5` pause/resume, `F6` single-step, standard gravity, semi-implicit collision-free motion invariant across render rates, immutable previous/current interpolation, and a three-constant `b2` translation for the existing material sphere | `feat(physics): add deterministic fixed-step motion` |
 | `PHY-002` | S | Complete: give the scenario-owned one-meter sphere a transactional one-sample face-plane response against `HeightTileSurface`; correct vertically without changing canonical X/Z ownership, settle through an explicit temporary infinite-friction endpoint projection, retain exact triangle metadata, retarget the bounded `F4` cyan pin to its fixed support sample, and prove real-scenario support, flat rest, slope clearance/normal, tolerance, diagonal/edge ownership, invalid input, and 30/60/120/144 Hz invariance | `feat(physics): add sphere terrain contact` |
-| `PHY-003` | S | Add multiple spheres, brute-force pair generation, normal impulses, and restitution with analytic tests | `feat(physics): add sphere body collisions` |
+| `PHY-003` | S | Complete: publish exactly four scenario spheres in stable previous/current arrays; test six pairs in lexicographic brute-force order; split overlap between equal unit masses; apply approaching-only normal impulses with explicit `0.75` Environment Lab restitution; retain the isolated canonical-terrain proof; collide the first pair while airborne; and render four existing-mesh draws by rebinding `b2` without another resource, descriptor, or pass | `feat(physics): add sphere body collisions` |
 | `PHY-004` | S | Add orientation, angular velocity, inertia, torque, and angular integration with a torque-response test | `feat(physics): add angular rigid-body state` |
 | `PHY-005` | S | Add capsule contacts against terrain, spheres, and capsules with focused closest-feature tests | `feat(physics): add capsule collision` |
 | `PHY-006` | S | Add oriented-box SAT contacts and multi-point manifold generation with visual/contact tests | `feat(physics): add box contact manifolds` |
@@ -862,7 +862,7 @@ this section competes with the coupled-environment critical path through M7.
 ### Deferred visual-weather track
 
 The owner deferred these effects on July 19, 2026. They remain approved but
-have no position on the active `PHY-003 -> PHY-004`
+have no position on the active `PHY-004 -> PHY-005`
 path. Resuming one requires a small plan update; skipping them does not remove
 the numerical precipitation rate used by later hydrology.
 
@@ -965,21 +965,21 @@ online architecture is not implied.
 
 ## 14. Immediate next increment
 
-After PHY-002 is reviewed and committed by the owner, implement only `PHY-003`:
+After PHY-003 is reviewed and committed by the owner, implement only `PHY-004`:
 
-- introduce an exact capacity of four sphere bodies in stable index order,
-  with fixed previous/current snapshot arrays at 60 Hz;
-- generate sphere pairs by deterministic brute-force iteration;
-- resolve analytic sphere overlap with normal impulses and an explicit
-  restitution value; retain PHY-002's primary terrain-supported proof while
-  keeping the first pair-collision proof airborne so the sticking terrain
-  response cannot erase pair impulses;
-- render at most four draws of the existing sphere mesh by rebinding `b2`,
-  without another geometry buffer, descriptor, or pass, and test separated,
-  head-on, unequal-velocity, overlap, stable ordering, exact draw bounds, and
-  render-rate-invariant cases; and
-- stop before angular state, friction, persistent manifolds, broad phase,
-  sleeping, arbitrary convex shapes, buoyancy, or water coupling.
+- add normalized orientation and angular velocity to the fixed body snapshots,
+  with explicit equal sphere mass/inertia data and finite transactional
+  validation;
+- integrate torque and angular velocity at the fixed 60 Hz step, normalize the
+  orientation deterministically, and interpolate render orientation without
+  mutating simulation authority;
+- prove zero-torque preservation, constant-angular-velocity rotation, analytic
+  sphere torque response, invalid/overflow rejection, normalization, and
+  30/60/120/144 Hz render-partition invariance;
+- retain all PHY-003 pair ordering, linear momentum, terrain support, four-draw
+  bounds, and smoke gates; and
+- stop before friction, angular contact impulses, persistent manifolds, boxes,
+  broad phase, sleeping, arbitrary convex shapes, buoyancy, or water coupling.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -1042,16 +1042,20 @@ and a 12-query timing layout. The exact graph is `15/5/5/6/34` for
 imports/passes/dependencies/transitions/elisions. It adds no water GPU
 resource, descriptor, geometry buffer, terrain mutation, or simulation state.
 
-PHY-002 now makes the scenario-owned one-meter sphere settle against the exact
-canonical LOD0 face below its predicted center. Debug and Release pass all
-`161/161` unit cases. The 1,000-frame presentation smoke passes on Debug
-hardware, Debug WARP, and Release hardware and now requires the final sphere
-snapshot to contain its exact support sample, zero velocity, and one-radius
-plane clearance. No render pass, descriptor, geometry buffer, or per-frame
-upload was added.
+PHY-003 keeps a fixed capacity of four one-meter spheres and tests its six
+possible pairs in lexicographic order. Its equal-unit-mass resolver performs
+one transactional discrete overlap/normal-impulse pass with `0.75`
+Environment Lab restitution. The real `(1,2)` pair collides before either body
+touches terrain while isolated body 0 retains PHY-002's canonical support.
+The focused Debug and Release suites pass `3,662` assertions across 12 cases;
+both full unit suites pass `173/173`. Presentation smoke passes 1,000 frames on
+Debug hardware, 600 on Debug WARP, and 1,000 on Release hardware. Each observes
+the pair impulse and exact primary support while recording 4,000, 2,400, and
+4,000 existing-mesh sphere draws respectively, with no D3D12 errors or live
+child objects and no new resource, descriptor, pass, or upload allocation.
 
-The active queue is `PHY-003` sphere body collisions, then `PHY-004` angular
-rigid-body state. `R-001` through `R-004` remain deferred.
+The active queue is `PHY-004` angular rigid-body state, then `PHY-005` capsule
+collision. `R-001` through `R-004` remain deferred.
 
 ## 15. Primary technical references
 

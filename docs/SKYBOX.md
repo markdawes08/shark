@@ -187,9 +187,9 @@ color into shader-read state, then restore the back buffer and depth to their
 declared final states. Persistent environment and material resources remain in
 pixel-shader-read state.
 
-With `V` visible terrain chunks, a normal submitted frame issues `V + 3`
-indexed draws: `V` selected LOD0/coarse chunk surfaces, the material sphere,
-textured cube, and skybox. Water adds one non-indexed procedural six-vertex
+With `V` visible terrain chunks, a normal submitted frame issues `V + 6`
+indexed draws: `V` selected LOD0/coarse chunk surfaces, four material-sphere
+draws, the textured cube, and the skybox. Water adds one non-indexed procedural six-vertex
 draw after the sky, and `ToneMap` adds one non-indexed fullscreen-triangle
 draw. Default-off `F4` diagnostics add `V` matching
 magenta chunk bounds and the terrain query marker. LOD0 surfaces use 1,536

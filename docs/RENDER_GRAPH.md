@@ -1,7 +1,7 @@
 # Minimal Render-Graph Contract
 
 - **Completed through:** `W-001`
-- **Renderer integration verified through:** `PHY-002`
+- **Renderer integration verified through:** `PHY-003`
 - **Last updated:** July 19, 2026
 
 Shark's render graph is a small platform-independent planner with a Direct3D
@@ -168,7 +168,7 @@ uploads and per-frame diagnostic `CopyBufferRegion` remain outside the graph.
 The graph pass callbacks own commands, not graph policy:
 
 - `Terrain` clears scene/depth and issues one selected LOD0/coarse surface per
-  visible chunk plus the material sphere; default-off `F4` diagnostics add one
+  visible chunk plus four material-sphere draws; default-off `F4` diagnostics add one
   magenta-bounds draw per visible chunk and the query marker;
 - `TexturedCube` issues one checker-cube indexed draw;
 - `Skybox` binds read-only depth and issues one far-depth indexed draw;
@@ -176,8 +176,8 @@ The graph pass callbacks own commands, not graph policy:
   depth; and
 - `ToneMap` issues one non-indexed fullscreen-triangle draw.
 
-If `V` of the 225 chunks are visible, normal `Terrain` contains `V + 1`
-indexed draws and the frame contains `V + 3` indexed draws plus the water and
+If `V` of the 225 chunks are visible, normal `Terrain` contains `V + 4`
+indexed draws and the frame contains `V + 6` indexed draws plus the water and
 tone-map non-indexed draws. `F4` adds `V + 1` diagnostic draws without
 changing the graph. The
 initial/resized and scripted-overview smoke poses expose 93 and 72 chunks;
@@ -248,7 +248,7 @@ The procedural `SV_VertexID` quad therefore adds no import or GPU resource.
 Color and depth hazards produce five dependencies, while the six physical
 transitions stay unchanged and three additional accesses elide, yielding the
 exact active `15/5/5/6/34` contract. Rain remains deferred under the San
-Andreas-class ceiling. PHY-002 supplies the existing sphere with a
-terrain-supported position inside `Terrain` and preserves this graph exactly.
+Andreas-class ceiling. PHY-003 supplies four interpolated sphere positions
+inside the existing `Terrain` callback and preserves this graph exactly.
 This component page no longer
 duplicates the active queue; [ENGINE_PLAN.md](ENGINE_PLAN.md) is authoritative.

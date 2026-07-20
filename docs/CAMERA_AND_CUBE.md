@@ -1,7 +1,7 @@
 # Camera, Reversed-Z Depth, Cube, and Skybox Contract
 
 - **Camera/cube capability completed through:** `G-005`
-- **Renderer integration verified through:** `PHY-002`
+- **Renderer integration verified through:** `PHY-003`
 - **Last verified:** July 19, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
@@ -30,6 +30,8 @@ mapping; `F3` switches the environment mode without changing camera state.
 PHY-001 preserved the camera and cube contracts while driving the existing
 material sphere from an interpolated fixed-step body position. PHY-002 leaves
 those conventions unchanged while stopping that sphere on canonical terrain.
+PHY-003 retains them while publishing four interpolated positions and
+rebinding the existing translation constants for four sphere draws.
 
 This remains a deliberately narrow proof. It establishes conventions and
 lifetime rules that later sky, terrain, rain, and water passes can reuse; it is
@@ -262,16 +264,16 @@ intentionally skips that already-covered interval.
 The permanent accounting contract requires:
 
 - with `V0` visible LOD0 chunks and `Vc` visible coarse chunks, `V0`
-  1,536-index and `Vc` 864-index terrain draws, one 1,584-index material sphere,
-  one 36-index cube, and one 36-index skybox; `F4` optionally adds
+  1,536-index and `Vc` 864-index terrain draws, four 1,584-index material
+  spheres, one 36-index cube, and one 36-index skybox; `F4` optionally adds
   `V0+Vc` 24-index magenta chunk-bounds draws and one six-index cyan query
-  marker; plus one fullscreen tone-map draw, four texture-table bindings, one
-  frame-constant upload, and one depth clear;
+  marker; plus one six-vertex water draw, one fullscreen tone-map draw, five
+  texture-table bindings, one frame-constant upload, and one depth clear;
 - 225 chunk tests per submitted frame, visible-plus-culled conservation, exact
   `93 -> 72 -> 61` visibility, and exact `0/93 -> 0/72 -> 1/60` LOD0/coarse
   splits across the deterministic smoke poses;
-- one graph compilation/execution, four pass executions, 15 imports, three
-  dependencies, six recorded transitions, and 31 elided transitions per frame;
+- one graph compilation/execution, five pass executions, 15 imports, five
+  dependencies, six recorded transitions, and 34 elided transitions per frame;
 - frame submissions equal successful plus occluded present attempts;
 - all three DXGI-selected frame contexts are acquired and reused;
 - every submission retires before shutdown;
@@ -304,9 +306,10 @@ appear, with the pin anchored to the displayed surface and pointing along its
 exact geometric normal; press it again and verify both disappear. Resize,
 minimize/restore, and shutdown must remain clean.
 The validation cube must remain outside the analytic basin support, above the
-`-4`-meter future waterline, and unburied. The material sphere must meet those
-conditions at its initial paused spawn; after `F5`, PHY-002 makes it fall and
-settle on the visible canonical LOD0 face without hover or penetration. T-008
+`-4`-meter future waterline, and unburied. All four material spheres must meet
+those conditions at their initial paused spawns; after `F5`, bodies 1 and 2
+collide airborne while primary body 0 settles on the visible canonical LOD0
+face without hover or penetration. T-008
 adds the dry indentation and metadata but creates no water. The scenario-owned
 camera must begin on dry ground overlooking the basin without changing the sky
 under translation.
@@ -336,7 +339,7 @@ atmospheric scattering, cloud, automatic exposure, time of day, terrain
 streaming, additional LOD levels, or content database.
 
 The support-sample marker, CPU chunk culling, stateless LOD choice, F4
-diagnostic gate, and PHY-001/PHY-002 sphere translation add no camera matrix,
+diagnostic gate, and PHY-001 through PHY-003 sphere translation add no camera matrix,
 GPU resource, PSO, graph pass, dependency, barrier, PIX event, or timestamp.
 W-001 retains 15 imports, five passes, five dependencies, six barriers, 34
 elisions, four geometry buffers, and 12 timestamps as the current exact
@@ -345,8 +348,8 @@ contract.
 It also adds no general mesh/resource/descriptor manager, typed GPU handles,
 placed-resource pool, copy queue, deferred uploader, shader reflection, runtime
 shader compilation, hot reload, PSO cache, scene graph, ECS,
-multiple cameras, controllable entity, additional physics bodies, terrain or
-body collision, angular dynamics, animation, shadows, MSAA,
+multiple cameras, controllable entity, general scene entities, angular
+dynamics, animation, shadows, MSAA,
 additional terrain LOD levels, LOD hysteresis/morphing, instancing, raw mouse
 input, cursor lock, configurable action map, gamepad support, pixel readback,
 or golden-image testing.
@@ -371,8 +374,9 @@ evidence remains historical.
 `T-008` publishes the interactive spawn and basin metadata without changing
 cube geometry, sky motion, depth, input, or the deterministic smoke schedule.
 `W-001` adds only presentation-time water input and preserves those camera and
-cube contracts. `PHY-002` retains the independently interpolated sphere
-translation and adds only CPU terrain support; see
+cube contracts. `PHY-003` retains independently interpolated sphere
+translations, canonical terrain support, and a CPU-only four-sphere pair pass;
+see
 [the simulation contract](SIMULATION.md). This component page
 no longer duplicates the rolling project
 queue; [ENGINE_PLAN.md](ENGINE_PLAN.md) is the roadmap source of truth. Rain

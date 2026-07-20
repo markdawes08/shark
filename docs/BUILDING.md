@@ -1,6 +1,6 @@
 # Building Shark
 
-- **Completed through:** `PHY-002`
+- **Completed through:** `PHY-003`
 - **Last verified:** July 19, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
@@ -114,7 +114,7 @@ local development and testing only and must never enter a packaged product.
 With no arguments, `SharkSandbox` initializes the highest-priority eligible
 hardware device, creates the validated canonical `HeightTileSurface`, and
 continuously draws its deterministic terrain with bounded distance-selected
-LOD, material sphere, procedural-checker cube, and HDR environment through
+LOD, four material spheres, procedural-checker cube, and HDR environment through
 named
 `Terrain`, `TexturedCube`, `Skybox`, `Water`, and `ToneMap` graph passes. The
 first four render into a resize-owned `R16G16B16A16_FLOAT` scene target;
@@ -125,12 +125,14 @@ passes it to `Renderer::create` only at the composition root. Press `F1` to
 toggle terrain fill between solid and wireframe. Press `F2` to cycle shaded,
 ground/rock weight, and mapped world-normal views. Press `F3` to toggle between
 HDR image-based lighting and the retained procedural-daylight fallback. Press
-`F4` to toggle the proof sphere's canonical support-normal preview and magenta
+`F4` to toggle primary body 0's canonical support-normal preview and magenta
 chunk bounds, which are off by default. The preview is available while the
-sphere is airborne; it is not an active-contact indicator. The sphere starts
-paused at its scenario-owned spawn. Press `F6` to advance it by exactly one 60 Hz
+sphere is airborne; it is not an active-contact indicator. All four spheres
+start paused at their scenario-owned spawns. Press `F6` to advance all of them
+by exactly one 60 Hz
 simulation tick while paused, or press `F5` to resume/pause continuous
-fixed-step motion; it now settles on canonical LOD0 terrain. Use
+fixed-step motion. Bodies 1 and 2 collide while airborne, while primary body 0
+settles on canonical LOD0 terrain. Use
 `W`/`S` along the
 camera forward axis, `A`/`D` to strafe, `Q`/`E` to move down/up, hold `Shift`
 to move faster, and hold the right mouse button while dragging to look around.
@@ -175,8 +177,8 @@ Run only the normal shader target and focused build checks with:
 For the visual acceptance check, run `SharkSandbox` without arguments. A solid
 height tile must show tiled ground and rock materials blended by slope and
 height, mapped surface detail, and direct-sun plus environment response. The
-glossy neutral material sphere must reflect the same environment used by the
-terrain. The interactive camera starts at scenario-owned eye
+four glossy neutral material spheres must reflect the same environment used by
+the terrain. The interactive camera starts at scenario-owned eye
 `(-128,3.34375,-20)` with pitch `-0.1`, overlooking a smoothly irregular
 approximately `112x96`-meter lake. The surface must stay bounded to the basin,
 meet the terrain naturally at its depth-tested shoreline, transmit and tint
@@ -187,6 +189,10 @@ Diagnostics start off; press `F4` and confirm the magenta depth-tested chunk
 AABBs match the currently logged visible count and that the cyan query pin
 appears. Surface chunks and matching bounds must disappear together when the
 camera turns away.
+With the simulation initially paused, confirm all four spheres are visible.
+After `F5`, bodies 1 and 2 must collide and separate while airborne; primary
+body 0 must fall to its cyan support site and remain on canonical terrain
+without hover or penetration.
 
 The separate deterministic `--present-smoke` path must start at
 `93 / 225 visible (LOD0=0, coarse=93)`, retain that split after resize, reach
@@ -355,8 +361,8 @@ Every submitted frame records one outer `Frame` event with nested `Terrain`,
 15 imports, five passes, five dependencies, six recorded transitions, and 34 elided
 transitions. With `V0` visible LOD0 chunks, `Vc` visible coarse chunks, and
 `V=V0+Vc`, it issues `V0` 1,536-index terrain surfaces, `Vc` 864-index terrain
-surfaces, the material sphere, 36-index textured cube, one non-indexed
-36-index skybox, and one non-indexed six-vertex water quad.
+surfaces, four draws of the 1,584-index material sphere, one 36-index textured
+cube, one 36-index skybox, and one non-indexed six-vertex water quad.
 `F4` additionally enables `V` matching 24-index chunk bounds and the six-index
 query marker; those diagnostics are off by default. One non-indexed
 fullscreen-triangle tone-map draw follows. The initial and resized smoke poses
@@ -546,7 +552,8 @@ global `R16_UINT` indices. Its historical construction timings and graphics
 evidence are recorded above.
 See [the fixed-step simulation contract](SIMULATION.md) for the 60 Hz clock,
 pause/single-step controls, semi-implicit ballistic state, immutable render
-interpolation, and PHY-002's canonical one-sample sphere support.
+interpolation, canonical one-sample sphere support, and PHY-003's fixed
+four-body deterministic collision pass.
 
 W-001 consumes that scenario-owned waterline in a dedicated transparent pass
 after `Skybox`. The vertex shader expands a six-vertex quad from `SV_VertexID`
@@ -563,9 +570,10 @@ Debug hardware/WARP/GBV presentation gates plus a Release hardware smoke for
 ordinary pass/shader work; reserve the full Debug/Release graphics matrix for
 RHI, synchronization, lifetime, or milestone changes.
 
-PHY-002 leaves the W-001 lake presentation-only and adds no water resource,
-fluid state, or coupling. It also changes no render pass, descriptor, geometry
-buffer, or per-frame upload budget. Rain remains deferred; the active
+PHY-003 leaves the W-001 lake presentation-only and adds no water resource,
+fluid state, or coupling. Four existing sphere draws reuse one geometry range,
+PSO, and `b2` binding without changing render-pass, descriptor,
+geometry-buffer, or per-frame upload budgets. Rain remains deferred; the active
 increment queue is maintained in [ENGINE_PLAN.md](ENGINE_PLAN.md).
 
 ## Visual Studio

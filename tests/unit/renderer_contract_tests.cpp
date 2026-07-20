@@ -61,8 +61,17 @@ TEST_CASE(
     REQUIRE(
         frame.camera_world_position == shark::math::Float3{});
     REQUIRE(
-        frame.material_sphere_world_position ==
+        frame.material_sphere_world_positions[0] ==
         shark::math::Float3{3.0F, 1.25F, -1.0F});
+    REQUIRE(frame.material_sphere_count == 1);
+    STATIC_REQUIRE(maximum_material_sphere_count == 4);
+    for (std::size_t sphere_index = 1;
+         sphere_index < maximum_material_sphere_count;
+         ++sphere_index) {
+        REQUIRE(
+            frame.material_sphere_world_positions[sphere_index] ==
+            shark::math::Float3{});
+    }
     REQUIRE(
         frame.environment_lighting_mode ==
         EnvironmentLightingMode::image_based);

@@ -1,7 +1,7 @@
 # HLSL Graphics Pipeline Contract
 
-- **Completed through:** `PHY-003`
-- **Last verified:** July 19, 2026
+- **Completed through:** `PHY-004`
+- **Last verified:** July 21, 2026
 
 Shark compiles all production HLSL at build time with a pinned retail DXC and
 creates immutable Direct3D 12 pipeline state during renderer startup. W-001
@@ -9,10 +9,11 @@ adds one bounded visual-water program and immutable PSO to the existing cube,
 terrain, sky, material-sphere, and tone-map programs. The
 pipeline still includes S-003's shared image-based-lighting helpers,
 material-sphere proof, linear-HDR scene target, and final tone-map program.
-PHY-001 changes only the material-sphere vertex transform: three `b2` root
-constants translate its existing geometry to an interpolated body position.
-PHY-003 rebinds those same constants for up to four indexed draws; no shader,
-root-signature, PSO, or geometry change is required.
+PHY-001 introduced the material-sphere translation bridge, and PHY-003 reused
+it for four indexed draws. PHY-004 expands `b2` to seven root constants—one
+unit quaternion and one world position—so the vertex shader rotates existing
+geometry/normals around its authored center. It changes no PSO count, geometry,
+descriptor, or graph pass.
 This remains a focused scene contract, not a general shader asset,
 material-graph, or pipeline-cache system.
 
@@ -124,11 +125,12 @@ Specular reconstruction uses the fixed dielectric `F0` in
 `prefiltered * (F0 * scale + bias)` because the LUT's scale/bias already
 integrates angular Fresnel.
 
-The material-sphere shader consumes deterministic position/normal geometry,
-adds a three-float `b2` translation to each authored position, and uses the same
-sun and IBL functions on a glossy neutral dielectric. The translation is the
-only PHY-001 simulation/render bridge; the sphere remains a lighting proof,
-not a general material instance.
+The material-sphere shader consumes deterministic position/normal geometry and
+seven `b2` values ordered as quaternion `(x,y,z,w)` then world position. It
+rotates the authored-center-relative vertex and normal, then uses the same sun
+and IBL functions on a glossy neutral dielectric. A subtle local `+X` cap makes
+orientation inspectable without a texture. The transform remains the only
+simulation/render bridge; the sphere is not a general material instance.
 
 The cube shader samples the deterministic checker. The sky shader forces
 reversed-Z far depth, normalizes the world direction, and either samples the
@@ -164,8 +166,8 @@ descriptor allocator or bindless convention.
   point-wrap static sampler.
 - The terrain signature contains the frame CBV, material/environment root
   constants, one six-SRV table spanning slots 2-7, and an anisotropic-wrap
-  static sampler. The material sphere reuses it and reads three vertex-visible
-  translation constants from its `b2` root parameter.
+  static sampler. The material sphere reuses it and reads seven vertex-visible
+  transform constants from its `b2` root parameter.
 - The water signature contains the frame CBV, 20 surface root constants, one
   radiance SRV table, and a linear-clamp static sampler.
 - The sky signature contains the frame CBV, environment-mode constants, one
@@ -232,7 +234,7 @@ Each non-minimized frame then:
 2. stages one 256-byte constants/probe record;
 3. composes the exact 15-import/five-pass HDR frame graph;
 4. executes `Terrain`, including one selected LOD0/coarse surface per visible
-   chunk plus four spheres translated from PHY-003's immutable interpolated
+   chunk plus four spheres transformed from PHY-004's immutable interpolated
    body snapshots; default-off `F4` diagnostics additionally draw each visible
    chunk's magenta bounds and the query marker;
 5. executes `TexturedCube`;
@@ -249,7 +251,7 @@ submitted-frame draw contract is:
 ```text
 LOD0 terrain chunks      V0 * DrawIndexedInstanced(1,536, ...)
 coarse terrain chunks    Vc * DrawIndexedInstanced(864, ...)
-four material spheres at b2 translations
+four material spheres at b2 transforms
                          4 * DrawIndexedInstanced(1,584, ...)
 visible chunk AABBs      F4 ? V * DrawIndexedInstanced(24, ...) : 0
 terrain query marker     F4 ? DrawIndexedInstanced(6, ...) : 0
@@ -321,4 +323,6 @@ PHY-001 added the material-sphere `b2` translation. PHY-002 drives it from a
 terrain-supported simulation snapshot and retargets the existing static cyan
 pin. PHY-003 rebinds it in stable body-index order for four spheres; it adds no
 shader stage, PSO, descriptor, geometry buffer, graph pass, water state, or
-fluid coupling.
+fluid coupling. PHY-004 replaces those three translation values with seven
+transform values and adds only the bounded orientation marker/shader math; the
+same four draws and all resource/pass counts remain fixed.

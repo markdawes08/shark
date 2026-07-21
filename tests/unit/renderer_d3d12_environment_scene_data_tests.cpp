@@ -16,21 +16,38 @@ TEST_CASE(
     STATIC_REQUIRE(material_sphere_vertex_count == 266);
     STATIC_REQUIRE(material_sphere_index_count == 1'584);
     STATIC_REQUIRE(
-        material_sphere_translation_root_parameter == 3);
+        material_sphere_transform_root_parameter == 3);
     STATIC_REQUIRE(
-        material_sphere_translation_root_constant_count == 3);
+        material_sphere_transform_root_constant_count == 7);
     STATIC_REQUIRE(
-        sizeof(MaterialSphereTranslationRootConstants) == 12);
+        sizeof(MaterialSphereTransformRootConstants) == 28);
     STATIC_REQUIRE(sizeof(EnvironmentVertex) == sizeof(float) * 6U);
 
-    const auto identity_translation =
-        make_material_sphere_translation(material_sphere_center);
-    REQUIRE(identity_translation.translation ==
-        shark::math::Float3{});
-    const auto translated = make_material_sphere_translation(
+    const shark::math::Quaternion identity_orientation{};
+    const auto identity_transform = make_material_sphere_transform(
+        identity_orientation,
+        material_sphere_center);
+    REQUIRE(identity_transform.orientation.x == 0.0F);
+    REQUIRE(identity_transform.orientation.y == 0.0F);
+    REQUIRE(identity_transform.orientation.z == 0.0F);
+    REQUIRE(identity_transform.orientation.w == 1.0F);
+    REQUIRE(identity_transform.world_position == material_sphere_center);
+
+    const shark::math::Quaternion orientation{
+        0.0F,
+        0.70710677F,
+        0.0F,
+        0.70710677F,
+    };
+    const auto transformed = make_material_sphere_transform(
+        orientation,
         {-128.0F, 10.0F, -44.0F});
-    REQUIRE(translated.translation ==
-        shark::math::Float3{-131.0F, 8.75F, -43.0F});
+    REQUIRE(transformed.orientation.x == orientation.x);
+    REQUIRE(transformed.orientation.y == orientation.y);
+    REQUIRE(transformed.orientation.z == orientation.z);
+    REQUIRE(transformed.orientation.w == orientation.w);
+    REQUIRE(transformed.world_position ==
+        shark::math::Float3{-128.0F, 10.0F, -44.0F});
 
     const auto mesh = make_material_sphere_mesh();
     REQUIRE(mesh.vertices.size() == material_sphere_vertex_count);

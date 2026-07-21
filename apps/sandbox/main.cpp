@@ -4,6 +4,7 @@
 #include <shark/core/logging.hpp>
 #include <shark/core/result.hpp>
 #include <shark/physics/ballistic_body.hpp>
+#include <shark/physics/rigid_body.hpp>
 #include <shark/physics/sphere_body_collision.hpp>
 #include <shark/physics/sphere_terrain_contact.hpp>
 #include <shark/platform/application.hpp>
@@ -1603,13 +1604,20 @@ void log_platform_event(const shark::platform::Event& event)
          body_index < world::environment_lab_sphere_body_count;
          ++body_index) {
         initial_sphere_bodies[body_index] =
-            physics::BallisticBodyState{
+            physics::RigidBodyState{
                 .position =
                     environment_scenario
                         .sphere_body_spawn_positions[body_index],
+                .orientation =
+                    environment_scenario
+                        .sphere_body_initial_orientations[body_index],
                 .linear_velocity =
                     environment_scenario
                         .sphere_body_initial_velocities[body_index],
+                .angular_velocity =
+                    environment_scenario
+                        .sphere_body_initial_angular_velocities[
+                            body_index],
             };
         sphere_colliders[body_index] =
             physics::SphereCollider{
@@ -1617,6 +1625,16 @@ void log_platform_event(const shark::platform::Event& event)
                     environment_scenario.sphere_body_radius,
             };
     }
+    auto sphere_mass_properties_result =
+        physics::make_solid_sphere_mass_properties(
+            environment_scenario.sphere_body_mass,
+            environment_scenario.sphere_body_radius);
+    if (!sphere_mass_properties_result) {
+        return core::Result<void>::failure(
+            std::move(sphere_mass_properties_result).error());
+    }
+    const auto sphere_mass_properties =
+        std::move(sphere_mass_properties_result).value();
     auto previous_sphere_bodies = initial_sphere_bodies;
     auto current_sphere_bodies = initial_sphere_bodies;
     std::array<
@@ -1629,6 +1647,7 @@ void log_platform_event(const shark::platform::Event& event)
                 environment_scenario.sphere_restitution,
         };
     bool observed_airborne_pair_collision = false;
+    bool observed_torque_driven_rotation = false;
     std::uint64_t sphere_pair_contact_count = 0;
     const renderer::DaylightSettings daylight{};
     sandbox::CameraController camera_controller{
@@ -2118,16 +2137,42 @@ void log_platform_event(const shark::platform::Event& event)
                     observed_airborne_pair_collision = true;
                 }
             }
+            for (std::size_t body_index = 0;
+                 body_index < world::environment_lab_sphere_body_count;
+                 ++body_index) {
+                auto angular_result =
+                    physics::advance_rigid_body_angular_motion(
+                        current_sphere_bodies[body_index],
+                        sphere_mass_properties,
+                        environment_scenario
+                            .sphere_body_torques[body_index],
+                        simulation_clock.fixed_delta_seconds());
+                if (!angular_result) {
+                    return core::Result<void>::failure(
+                        std::move(angular_result).error());
+                }
+            }
+            observed_torque_driven_rotation =
+                observed_torque_driven_rotation ||
+                (current_sphere_bodies[3].angular_velocity.z > 0.0F &&
+                 current_sphere_bodies[3].orientation !=
+                    initial_sphere_bodies[3].orientation &&
+                 math::is_unit(
+                    current_sphere_bodies[3].orientation));
         }
         std::array<
             math::Float3,
             renderer::maximum_material_sphere_count>
             interpolated_sphere_positions{};
+        std::array<
+            math::Quaternion,
+            renderer::maximum_material_sphere_count>
+            interpolated_sphere_orientations{};
         for (std::size_t body_index = 0;
              body_index < world::environment_lab_sphere_body_count;
              ++body_index) {
             auto interpolated_body_result =
-                physics::interpolate_ballistic_body(
+                physics::interpolate_rigid_body(
                     previous_sphere_bodies[body_index],
                     current_sphere_bodies[body_index],
                     simulation_frame.interpolation_alpha);
@@ -2137,6 +2182,8 @@ void log_platform_event(const shark::platform::Event& event)
             }
             interpolated_sphere_positions[body_index] =
                 interpolated_body_result.value().position;
+            interpolated_sphere_orientations[body_index] =
+                interpolated_body_result.value().orientation;
         }
         if (!smoke_mode &&
             simulation_clock.paused() &&
@@ -2182,6 +2229,8 @@ void log_platform_event(const shark::platform::Event& event)
             .camera_world_position = camera.transform.position,
             .material_sphere_world_positions =
                 interpolated_sphere_positions,
+            .material_sphere_world_orientations =
+                interpolated_sphere_orientations,
             .material_sphere_count =
                 static_cast<std::uint32_t>(
                     world::environment_lab_sphere_body_count),
@@ -2215,6 +2264,15 @@ void log_platform_event(const shark::platform::Event& event)
 
     if (smoke_mode) {
         const auto& stats = renderer_instance.stats();
+        const auto expected_torque_body_angular_velocity_z =
+            static_cast<double>(
+                environment_scenario.sphere_body_torques[3].z) *
+            static_cast<double>(
+                sphere_mass_properties.inverse_moment_of_inertia) *
+            static_cast<double>(
+                simulation_clock.fixed_delta_seconds()) *
+            static_cast<double>(
+                simulation_clock.total_step_count());
         if (!current_terrain_contacts[0].has_value() ||
             current_sphere_bodies[0].linear_velocity !=
                 math::Float3{} ||
@@ -2239,6 +2297,32 @@ void log_platform_event(const shark::platform::Event& event)
                 renderer_smoke_error(
                     "The presentation smoke did not observe the "
                     "airborne sphere-pair impulse"));
+        }
+        if (!observed_torque_driven_rotation ||
+            current_sphere_bodies[3].angular_velocity.z <= 0.0F ||
+            !math::is_unit(current_sphere_bodies[3].orientation) ||
+            std::abs(
+                static_cast<double>(
+                    current_sphere_bodies[3].angular_velocity.z) -
+                expected_torque_body_angular_velocity_z) >
+                0.001) {
+            return core::Result<void>::failure(
+                renderer_smoke_error(
+                    "The presentation smoke did not observe finite "
+                    "normalized torque-driven sphere rotation"));
+        }
+        for (std::size_t body_index = 0;
+             body_index < 3;
+             ++body_index) {
+            if (current_sphere_bodies[body_index].angular_velocity !=
+                    initial_sphere_bodies[body_index].angular_velocity ||
+                current_sphere_bodies[body_index].orientation !=
+                    initial_sphere_bodies[body_index].orientation) {
+                return core::Result<void>::failure(
+                    renderer_smoke_error(
+                        "Linear terrain/pair response changed an "
+                        "uncoupled angular state"));
+            }
         }
         if (stats.presented_frames != required_smoke_frames ||
             simulation_clock.total_step_count() !=

@@ -3,6 +3,7 @@
 #include <shark/core/math.hpp>
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <numbers>
 #include <type_traits>
@@ -25,24 +26,23 @@ inline constexpr math::Float3 material_sphere_center{
 };
 inline constexpr float material_sphere_radius = 1.0F;
 inline constexpr std::uint32_t
-    material_sphere_translation_root_parameter = 3;
+    material_sphere_transform_root_parameter = 3;
 inline constexpr std::uint32_t
-    material_sphere_translation_root_constant_count = 3;
+    material_sphere_transform_root_constant_count = 7;
 
-struct MaterialSphereTranslationRootConstants final {
-    math::Float3 translation{};
+struct MaterialSphereTransformRootConstants final {
+    math::Quaternion orientation{};
+    math::Float3 world_position{};
 };
 
-[[nodiscard]] constexpr MaterialSphereTranslationRootConstants
-make_material_sphere_translation(
+[[nodiscard]] constexpr MaterialSphereTransformRootConstants
+make_material_sphere_transform(
+    const math::Quaternion orientation,
     const math::Float3 world_position) noexcept
 {
     return {
-        .translation = {
-            world_position.x - material_sphere_center.x,
-            world_position.y - material_sphere_center.y,
-            world_position.z - material_sphere_center.z,
-        },
+        .orientation = orientation,
+        .world_position = world_position,
     };
 }
 
@@ -159,8 +159,15 @@ struct MaterialSphereMesh final {
 static_assert(sizeof(EnvironmentVertex) == sizeof(float) * 6U);
 static_assert(
     std::is_standard_layout_v<
-        MaterialSphereTranslationRootConstants>);
-static_assert(sizeof(MaterialSphereTranslationRootConstants) == 12);
+        MaterialSphereTransformRootConstants>);
+static_assert(sizeof(MaterialSphereTransformRootConstants) == 28);
+static_assert(
+    sizeof(MaterialSphereTransformRootConstants) ==
+    material_sphere_transform_root_constant_count * sizeof(float));
+static_assert(
+    offsetof(MaterialSphereTransformRootConstants, orientation) == 0);
+static_assert(
+    offsetof(MaterialSphereTransformRootConstants, world_position) == 16);
 static_assert(material_sphere_vertex_count == 266);
 static_assert(material_sphere_index_count == 1'584);
 

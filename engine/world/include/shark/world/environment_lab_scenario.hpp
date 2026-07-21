@@ -35,6 +35,8 @@ inline constexpr std::size_t
 inline constexpr float
     environment_lab_sphere_body_radius = 1.0F;
 inline constexpr float
+    environment_lab_sphere_body_mass = 1.0F;
+inline constexpr float
     environment_lab_sphere_restitution = 0.75F;
 
 struct EnvironmentLabScenario final {
@@ -50,7 +52,20 @@ struct EnvironmentLabScenario final {
         math::Float3,
         environment_lab_sphere_body_count>
         sphere_body_initial_velocities{};
+    std::array<
+        math::Quaternion,
+        environment_lab_sphere_body_count>
+        sphere_body_initial_orientations{};
+    std::array<
+        math::Float3,
+        environment_lab_sphere_body_count>
+        sphere_body_initial_angular_velocities{};
+    std::array<
+        math::Float3,
+        environment_lab_sphere_body_count>
+        sphere_body_torques{};
     float sphere_body_radius{};
+    float sphere_body_mass{};
     float sphere_restitution{};
     Camera spawn_camera;
 };

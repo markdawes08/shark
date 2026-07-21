@@ -91,6 +91,42 @@ bool is_finite(const Float4 value) noexcept
         std::isfinite(value.w);
 }
 
+bool is_finite(const Quaternion value) noexcept
+{
+    return std::isfinite(value.x) &&
+        std::isfinite(value.y) &&
+        std::isfinite(value.z) &&
+        std::isfinite(value.w);
+}
+
+bool is_normalized(
+    const Quaternion value,
+    const float tolerance) noexcept
+{
+    if (!is_finite(value) ||
+        !std::isfinite(tolerance) ||
+        tolerance < 0.0F) {
+        return false;
+    }
+
+    const auto length_squared =
+        static_cast<double>(value.x) * value.x +
+        static_cast<double>(value.y) * value.y +
+        static_cast<double>(value.z) * value.z +
+        static_cast<double>(value.w) * value.w;
+    const auto length = std::sqrt(length_squared);
+    return std::isfinite(length) &&
+        std::abs(length - 1.0) <=
+            static_cast<double>(tolerance);
+}
+
+bool is_unit(
+    const Quaternion value,
+    const float tolerance) noexcept
+{
+    return is_normalized(value, tolerance);
+}
+
 bool is_finite(const Matrix4x4& value) noexcept
 {
     for (const auto& row : value.elements) {

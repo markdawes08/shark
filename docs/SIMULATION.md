@@ -1,30 +1,33 @@
 # Fixed-Step Sphere Simulation Contract
 
-- **Completed through:** `PHY-003`
-- **Last verified:** July 19, 2026
+- **Completed through:** `PHY-004`
+- **Last verified:** July 21, 2026
 
 PHY-001 established Shark's fixed-clock ballistic path. PHY-002 gives that one
 sphere a one-meter collider and deterministic canonical-terrain support.
 PHY-003 expands the Environment Lab to a stable fixed array of four equal-unit-
 mass spheres and resolves their overlaps with restitution impulses. This is a
-bounded discrete collision proof, not a general rigid-body solver.
+bounded discrete collision proof. PHY-004 adds normalized orientation, angular
+velocity, explicit solid-sphere inertia, torque integration, and render
+interpolation without yet coupling angular motion to contacts. It remains a
+focused rigid-body foundation rather than a general solver.
 
 ## Ownership and data flow
 
 The boundaries are intentionally narrow:
 
 - `Simulation` owns fixed-step time accounting, pause state, and step requests;
-- `Physics` owns the fixed four-body capacity, ballistic state, colliders,
-  semi-implicit integration, canonical-terrain response, sphere-pair response,
-  contact records, and interpolation;
-- `World` publishes four deterministic scenario-owned body spawns and initial
-  velocities beside the lake basin;
+- `Physics` owns the fixed four-body capacity, rigid state, solid-sphere mass
+  properties, linear/angular integration, colliders, canonical-terrain
+  response, sphere-pair response, contact records, and interpolation;
+- `World` publishes four deterministic scenario-owned body spawns, initial
+  linear/angular states, equal mass, and external torques beside the lake;
 - the sandbox composition root sequences input, fixed ticks, immutable
   previous/current snapshots, and render interpolation; and
 - `Renderer` receives only an active count and four interpolated sphere
-  positions.
+  positions/orientations.
 
-Neither the clock nor ballistic body includes Win32 or Direct3D types. The
+Neither the clock nor rigid body includes Win32 or Direct3D types. The
 platform continues to publish raw events, and the renderer cannot advance or
 mutate simulation state. Physics depends on the platform-independent
 `HeightTileSurface` query contract; Terrain has no dependency on Physics.
@@ -57,8 +60,10 @@ The Environment Lab publishes an exact active count of four, all with a
 one-meter radius. Body 0 remains the original zero-velocity terrain-rest proof.
 Bodies 1 and 2 start at the same airborne Y coordinate, 12 meters apart, with
 X velocities of `+5` and `-3` meters per second. Body 3 is an isolated
-zero-velocity fall. Every body uses gravity `(0, -9.81, 0)` meters per second
-squared.
+zero-velocity fall driven by a constant world-space torque of
+`(0, 0, 0.2)` newton-meters. Every body has one-kilogram mass, one-meter
+radius, identity orientation, zero initial angular velocity, and gravity
+`(0, -9.81, 0)` meters per second squared.
 
 For fixed delta `dt = 1/60` second, semi-implicit Euler advances:
 
@@ -69,9 +74,46 @@ position = position + velocity * dt
 
 Before each tick, the sandbox copies the entire fixed current-state array to
 the previous-state array. It advances the active current states in stable body
-index order, resolves pairs, and publishes no partial state. Rendering
-interpolates each previous/current pair using the clock alpha and never mutates
-either authoritative snapshot.
+index order, resolves pairs, advances angular motion, and publishes no partial
+state. Rendering interpolates each previous/current pair using the clock alpha
+and never mutates either authoritative snapshot.
+
+## Angular rigid-body state
+
+`RigidBodyState` contains position, a quaternion orientation `(x,y,z,w)`,
+linear velocity, and world-space angular velocity. Identity is `(0,0,0,1)`.
+Accepted simulation states must be finite and unit-oriented within the bounded
+normalization tolerance. A solid sphere publishes explicit mass, inverse mass,
+radius, moment of inertia, and inverse moment:
+
+```text
+I = 2/5 * mass * radius^2
+```
+
+The Environment Lab's one-kilogram, one-meter spheres therefore use
+`I = 0.4 kg*m^2`. Construction rejects nonpositive/nonfinite inputs and
+nonrepresentable derived values. With torque `T`, fixed delta `dt`, and the
+isotropic sphere inertia, one angular tick is:
+
+```text
+angularAcceleration = T / I
+angularVelocity     = angularVelocity + angularAcceleration * dt
+deltaOrientation    = axisAngle(normalize(angularVelocity),
+                                length(angularVelocity) * dt)
+orientation         = normalize(deltaOrientation * orientation)
+```
+
+The update is transactional and uses the new angular velocity, matching the
+linear semi-implicit convention. The exact axis-angle increment avoids
+first-order quaternion drift; deterministic normalization still enforces the
+unit contract. World-space angular velocity left-multiplies the increment.
+Zero torque preserves angular velocity, and zero torque plus zero angular
+velocity preserves an already normalized orientation.
+
+Render interpolation linearly blends position and both velocities while using
+normalized shortest-path quaternion interpolation. Quaternion sign equivalence
+is handled before interpolation, and rendering cannot write the authoritative
+previous/current simulation arrays.
 
 ## Canonical terrain contact
 
@@ -165,11 +207,14 @@ convergence and it cannot prevent fast bodies from tunneling.
 ## Rendering boundary
 
 The existing material-sphere mesh remains packed in the terrain geometry
-buffers at its original authored center. Its vertex shader now reads three
-32-bit translation constants from `b2`. `RenderFrameData` owns a fixed
-four-position array and an active count in `[0, 4]`. The renderer binds the
-material-sphere PSO once, then visits active positions in index order, rebinds
-`b2`, and issues the existing indexed draw once per sphere inside `Terrain`.
+buffers at its original authored center. Its vertex shader reads seven 32-bit
+`b2` constants: one quaternion followed by one world position.
+`RenderFrameData` owns fixed four-entry position/orientation arrays and an
+active count in `[0, 4]`. The renderer validates active transforms, binds the
+material-sphere PSO once, then visits active bodies in index order, rebinds
+`b2`, rotates each vertex/normal about the authored center, and issues the
+existing indexed draw once per sphere inside `Terrain`. A small local `+X`
+material cap makes rotation inspectable without another mesh or texture.
 
 This adds no geometry buffer, descriptor, texture, graph pass, water resource,
 or upload-buffer allocation. Four active bodies produce exactly four draws and
@@ -195,6 +240,12 @@ Permanent CPU coverage checks:
 - semi-implicit ballistic motion under standard gravity;
 - the same authoritative trajectory across different render rates;
 - interpolation endpoints, intermediate values, and finite-state validation;
+- identity/unit quaternion and explicit solid-sphere inertia contracts;
+- zero-torque preservation, exact constant-angular-velocity increments, and
+  analytic semi-implicit torque response;
+- deterministic normalization, shortest-path quaternion interpolation, and
+  invalid/overflow transactionality;
+- bit-identical angular state across 30/60/120/144 Hz render partitions;
 - flat-terrain fall, exact long-term support, and zero resting velocity;
 - exact sloped-face plane clearance and geometric normal ownership;
 - diagonal, maximum-edge, immediately-outside, and separating transitions;
@@ -226,26 +277,31 @@ For manual acceptance, launch `SharkSandbox`. Four spheres must remain still
 at startup. `F6` advances all four by one deterministic tick. After `F5`,
 bodies 1 and 2 collide while airborne and separate, while body 0 falls to the
 visible terrain and remains at rest without hover or penetration. Pause/resume
-must not create a catch-up jump. `F4` still previews only body 0's fixed
+must not create a catch-up jump. The local brown `+X` cap on body 3 must rotate
+under its constant torque while the sphere remains isolated; its angular motion
+continues after terrain support because contact friction is deferred. `F4`
+still previews only body 0's fixed
 canonical support normal and is intentionally available before and after
 contact. Camera motion and presentation-only water remain independent.
 
-PHY-003's focused collision suite passes `3,662` assertions across 12 cases in
-both Debug and Release. Both full unit suites pass `173/173`. The presentation
-smoke passes 1,000 frames on Debug hardware, 600 frames on Debug WARP, and
-1,000 frames on Release hardware. Every path observes the airborne `(1,2)`
-impulse and retains body 0's exact canonical support; they record exactly
-4,000, 2,400, and 4,000 sphere draws respectively, with no D3D12 corruption,
+PHY-004's focused rigid-body suite passes `1,540` assertions across nine cases
+in both Debug and Release; both full unit suites pass `182/182`. Presentation
+smoke passes 1,000 frames on Debug hardware, 600 on Debug WARP, 1,000 on
+Release hardware, and 120 on Debug WARP with GPU-based validation. Every path
+observes the airborne `(1,2)` impulse, body 0's exact canonical support, and
+finite normalized torque-driven body-3 rotation. They record exactly 4,000,
+2,400, 4,000, and 480 sphere draws respectively, with zero D3D12 corruption,
 errors, or live child objects.
 
 ## Explicit non-goals
 
-PHY-003 adds no unequal mass, angular state, torque, friction, persistent
-manifold, iterative constraint solve, continuous collision detection, broad
+PHY-004 adds no unequal per-body mass, angular contact impulse, rolling or
+sliding friction, persistent manifold, iterative constraint solve, continuous
+collision detection, broad
 phase, sleeping, arbitrary closest-feature sphere/triangle collision,
 buoyancy, water displacement, reset control, entity system, or general
 debug-draw service. Its one-sample face support remains intended for the
 current one-meter-radius, four-meter-cell, slope-bounded Environment Lab
 heightfield proof. The lake remains W-001 presentation-only water, and `R-001`
-through `R-004` remain deferred. The active queue is `PHY-004` angular
-rigid-body state and is centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).
+through `R-004` remain deferred. The active queue is `PHY-005` capsule
+collision and is centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).

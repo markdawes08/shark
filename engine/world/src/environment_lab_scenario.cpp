@@ -54,6 +54,23 @@ inline constexpr std::array<
         {-3.0F, 0.0F, 0.0F},
         {},
     }};
+inline constexpr std::array<
+    math::Quaternion,
+    environment_lab_sphere_body_count>
+    environment_lab_sphere_initial_orientations{};
+inline constexpr std::array<
+    math::Float3,
+    environment_lab_sphere_body_count>
+    environment_lab_sphere_initial_angular_velocities{};
+inline constexpr std::array<
+    math::Float3,
+    environment_lab_sphere_body_count>
+    environment_lab_sphere_torques{{
+        {},
+        {},
+        {},
+        {0.0F, 0.0F, 0.2F},
+    }};
 inline constexpr float environment_lab_spawn_eye_height = 2.0F;
 inline constexpr float environment_lab_primary_body_height = 12.0F;
 inline constexpr float environment_lab_pair_body_height = 20.0F;
@@ -233,8 +250,16 @@ make_environment_lab_scenario()
                 sphere_body_spawns,
             .sphere_body_initial_velocities =
                 environment_lab_sphere_initial_velocities,
+            .sphere_body_initial_orientations =
+                environment_lab_sphere_initial_orientations,
+            .sphere_body_initial_angular_velocities =
+                environment_lab_sphere_initial_angular_velocities,
+            .sphere_body_torques =
+                environment_lab_sphere_torques,
             .sphere_body_radius =
                 environment_lab_sphere_body_radius,
+            .sphere_body_mass =
+                environment_lab_sphere_body_mass,
             .sphere_restitution =
                 environment_lab_sphere_restitution,
             .spawn_camera = spawn_camera,

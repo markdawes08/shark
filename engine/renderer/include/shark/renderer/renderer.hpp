@@ -245,6 +245,10 @@ struct RenderFrameData final {
         material_sphere_world_positions{{
             {3.0F, 1.25F, -1.0F},
         }};
+    std::array<
+        math::Quaternion,
+        maximum_material_sphere_count>
+        material_sphere_world_orientations{};
     std::uint32_t material_sphere_count{1};
     TerrainRenderMode terrain_mode{TerrainRenderMode::solid};
     TerrainMaterialView terrain_material_view{

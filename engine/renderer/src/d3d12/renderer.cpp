@@ -909,7 +909,13 @@ static_assert(
          ++sphere_index) {
         if (!math::is_finite(
                 frame_data
-                    .material_sphere_world_positions[sphere_index])) {
+                    .material_sphere_world_positions[sphere_index]) ||
+            !math::is_finite(
+                frame_data
+                    .material_sphere_world_orientations[sphere_index]) ||
+            !math::is_unit(
+                frame_data
+                    .material_sphere_world_orientations[sphere_index])) {
             return false;
         }
     }
@@ -1688,6 +1694,10 @@ public:
             math::Float3,
             maximum_material_sphere_count>&
             material_sphere_world_positions,
+        const std::array<
+            math::Quaternion,
+            maximum_material_sphere_count>&
+            material_sphere_world_orientations,
         const std::uint32_t material_sphere_count,
         const TerrainMaterialView material_view,
         const EnvironmentLightingMode environment_mode,
@@ -1898,15 +1908,16 @@ public:
         for (std::uint32_t sphere_index = 0;
              sphere_index < material_sphere_count;
              ++sphere_index) {
-            const auto material_sphere_translation =
-                backend_detail::make_material_sphere_translation(
+            const auto material_sphere_transform =
+                backend_detail::make_material_sphere_transform(
+                    material_sphere_world_orientations[sphere_index],
                     material_sphere_world_positions[sphere_index]);
             command_list->SetGraphicsRoot32BitConstants(
                 backend_detail::
-                    material_sphere_translation_root_parameter,
+                    material_sphere_transform_root_parameter,
                 backend_detail::
-                    material_sphere_translation_root_constant_count,
-                &material_sphere_translation,
+                    material_sphere_transform_root_constant_count,
+                &material_sphere_transform,
                 0);
             command_list->DrawIndexedInstanced(
                 material_sphere_index_count,
@@ -5200,18 +5211,18 @@ core::Result<Renderer> Renderer::create(
         &terrain_material_range;
     terrain_table_parameter.ShaderVisibility =
         D3D12_SHADER_VISIBILITY_PIXEL;
-    auto& material_sphere_translation_parameter =
+    auto& material_sphere_transform_parameter =
         terrain_root_parameters[
             backend_detail::
-                material_sphere_translation_root_parameter];
-    material_sphere_translation_parameter.ParameterType =
+                material_sphere_transform_root_parameter];
+    material_sphere_transform_parameter.ParameterType =
         D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    material_sphere_translation_parameter.Constants.ShaderRegister = 2;
-    material_sphere_translation_parameter.Constants.RegisterSpace = 0;
-    material_sphere_translation_parameter.Constants.Num32BitValues =
+    material_sphere_transform_parameter.Constants.ShaderRegister = 2;
+    material_sphere_transform_parameter.Constants.RegisterSpace = 0;
+    material_sphere_transform_parameter.Constants.Num32BitValues =
         backend_detail::
-            material_sphere_translation_root_constant_count;
-    material_sphere_translation_parameter.ShaderVisibility =
+            material_sphere_transform_root_constant_count;
+    material_sphere_transform_parameter.ShaderVisibility =
         D3D12_SHADER_VISIBILITY_VERTEX;
 
     auto terrain_sampler = checker_sampler;
@@ -5863,7 +5874,7 @@ core::Result<RenderStatus> Renderer::render_frame(
         return core::Result<RenderStatus>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
             "Renderer frame view-projection matrices must be finite "
-            "and its camera, material-sphere positions, daylight "
+            "and its camera, material-sphere transforms, daylight "
             "settings, terrain fill mode, and material/environment "
             "views must be valid"));
     }
@@ -5918,6 +5929,8 @@ core::Result<RenderStatus> Renderer::render_frame(
                     frame_data.camera_world_position,
                  material_sphere_world_positions =
                     frame_data.material_sphere_world_positions,
+                 material_sphere_world_orientations =
+                    frame_data.material_sphere_world_orientations,
                  material_sphere_count =
                     frame_data.material_sphere_count,
                  material_view =
@@ -5945,6 +5958,7 @@ core::Result<RenderStatus> Renderer::render_frame(
                         terrain_mode,
                         camera_world_position,
                         material_sphere_world_positions,
+                        material_sphere_world_orientations,
                         material_sphere_count,
                         material_view,
                         environment_mode,

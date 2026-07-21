@@ -65,6 +65,13 @@ TEST_CASE(
         shark::math::Float3{3.0F, 1.25F, -1.0F});
     REQUIRE(frame.material_sphere_count == 1);
     STATIC_REQUIRE(maximum_material_sphere_count == 4);
+    for (const auto& orientation :
+         frame.material_sphere_world_orientations) {
+        REQUIRE(orientation.x == 0.0F);
+        REQUIRE(orientation.y == 0.0F);
+        REQUIRE(orientation.z == 0.0F);
+        REQUIRE(orientation.w == 1.0F);
+    }
     for (std::size_t sphere_index = 1;
          sphere_index < maximum_material_sphere_count;
          ++sphere_index) {

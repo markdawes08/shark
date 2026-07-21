@@ -1,7 +1,6 @@
 #pragma once
 
-#include <shark/core/math.hpp>
-#include <shark/core/result.hpp>
+#include <shark/physics/rigid_body.hpp>
 
 namespace shark::physics {
 
@@ -11,17 +10,7 @@ inline constexpr math::Float3 standard_gravity{
     0.0F,
 };
 
-struct BallisticBodyState final {
-    math::Float3 position{};
-    math::Float3 linear_velocity{};
-
-    [[nodiscard]] friend bool operator==(
-        const BallisticBodyState&,
-        const BallisticBodyState&) noexcept = default;
-};
-
-[[nodiscard]] bool is_valid(
-    const BallisticBodyState& state) noexcept;
+using BallisticBodyState = RigidBodyState;
 
 [[nodiscard]] core::Result<void> advance_ballistic_body(
     BallisticBodyState& state,

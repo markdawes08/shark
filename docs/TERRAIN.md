@@ -1,7 +1,7 @@
 # Canonical Terrain-Tile Contract
 
-- **Completed through:** `PHY-003`
-- **Last verified:** July 19, 2026
+- **Completed through:** `PHY-004`
+- **Last verified:** July 21, 2026
 
 T-008 composes the untouched T-007 rolling-height oracle with a bounded
 deterministic Q8 lake-basin post-process. The active composite checksum is
@@ -18,7 +18,7 @@ contains 530 canonical samples.
 
 The scenario publishes dry spawn ground at `(-128,1.34375,-20)` and a camera eye
 at `(-128,3.34375,-20)` with pitch `-0.1`; sampled support-boundary distance is
-about 58.496138 meters. The scenario also publishes four PHY-003 sphere
+about 58.496138 meters. The scenario also publishes four PHY-004 sphere
 spawns. Primary body 0 remains at `(-128,-44)` exactly 12 meters above its
 canonical LOD0 ground sample; bodies 1 and 2 share an airborne collision
 height, and body 3 remains isolated. Cube and all spheres remain outside the
@@ -962,9 +962,10 @@ and 1,500-meter far plane make the full footprint navigable. Move, rotate,
 resize, minimize, restore, and close; world-space material tiling, checker
 cube, sky, tone mapping, diagnostics, and Direct3D validation must remain
 clean. The validation cube and all four spheres must remain dry and unburied
-while paused. Once PHY-003 motion runs, bodies 1 and 2 must collide airborne;
+while paused. Once PHY-004 motion runs, bodies 1 and 2 must collide airborne;
 primary body 0 must fall and remain supported by the displayed canonical
-terrain. The cyan preview marks only body 0's fixed supporting sample and exact
+terrain, and isolated body 3's local material cap must rotate under constant
+torque. The cyan preview marks only body 0's fixed supporting sample and exact
 triangle normal.
 Fly around the complete basin rim and confirm the broad natural terrain resumes
 smoothly outside the bounded shaping support. The spawn must remain on dry
@@ -1029,4 +1030,5 @@ remains centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).
 PHY-003 repeats that terrain step for four fixed-index bodies before testing
 the six possible sphere pairs in lexicographic order. Pair response remains
 CPU-only and does not read or mutate terrain, its visual LODs, or GPU
-resources.
+resources. PHY-004 then advances orientation independently; terrain contact
+still affects only linear velocity and never reads angular state.

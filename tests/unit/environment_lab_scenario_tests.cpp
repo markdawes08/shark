@@ -3,6 +3,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <shark/physics/rigid_body.hpp>
 #include <shark/physics/sphere_body_collision.hpp>
 #include <shark/renderer/renderer.hpp>
 #include <shark/terrain/height_tile.hpp>
@@ -254,8 +255,16 @@ TEST_CASE(
         second.sphere_body_spawn_positions);
     REQUIRE(first.sphere_body_initial_velocities ==
         second.sphere_body_initial_velocities);
+    REQUIRE(first.sphere_body_initial_orientations ==
+        second.sphere_body_initial_orientations);
+    REQUIRE(first.sphere_body_initial_angular_velocities ==
+        second.sphere_body_initial_angular_velocities);
+    REQUIRE(first.sphere_body_torques ==
+        second.sphere_body_torques);
     REQUIRE(first.sphere_body_radius ==
         second.sphere_body_radius);
+    REQUIRE(first.sphere_body_mass ==
+        second.sphere_body_mass);
     REQUIRE(first.sphere_restitution ==
         second.sphere_restitution);
     REQUIRE(first.spawn_camera.transform.position ==
@@ -360,10 +369,32 @@ TEST_CASE(
         math::Float3{-3.0F, 0.0F, 0.0F});
     REQUIRE(first.sphere_body_initial_velocities[3] ==
         math::Float3{});
+    for (const auto orientation :
+         first.sphere_body_initial_orientations) {
+        REQUIRE(orientation == math::Quaternion{});
+    }
+    for (const auto angular_velocity :
+         first.sphere_body_initial_angular_velocities) {
+        REQUIRE(angular_velocity == math::Float3{});
+    }
+    REQUIRE(first.sphere_body_torques[0] == math::Float3{});
+    REQUIRE(first.sphere_body_torques[1] == math::Float3{});
+    REQUIRE(first.sphere_body_torques[2] == math::Float3{});
+    REQUIRE(first.sphere_body_torques[3] ==
+        math::Float3{0.0F, 0.0F, 0.2F});
     REQUIRE(first.sphere_body_radius ==
         world::environment_lab_sphere_body_radius);
     REQUIRE(first.sphere_body_radius ==
         renderer::d3d12::detail::material_sphere_radius);
+    REQUIRE(first.sphere_body_mass ==
+        world::environment_lab_sphere_body_mass);
+    const auto mass_properties =
+        physics::make_solid_sphere_mass_properties(
+            first.sphere_body_mass,
+            first.sphere_body_radius);
+    REQUIRE(mass_properties);
+    REQUIRE(mass_properties.value().mass == 1.0F);
+    REQUIRE(mass_properties.value().moment_of_inertia == 0.4F);
     REQUIRE(first.sphere_restitution ==
         world::environment_lab_sphere_restitution);
     REQUIRE(first.sphere_restitution ==

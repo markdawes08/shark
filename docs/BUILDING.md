@@ -1,7 +1,7 @@
 # Building Shark
 
-- **Completed through:** `PHY-003`
-- **Last verified:** July 19, 2026
+- **Completed through:** `PHY-004`
+- **Last verified:** July 21, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
 14.50 LTS toolset, CMake 4.2 or newer, and Windows SDK 10.0.26100 exactly.
@@ -132,7 +132,8 @@ start paused at their scenario-owned spawns. Press `F6` to advance all of them
 by exactly one 60 Hz
 simulation tick while paused, or press `F5` to resume/pause continuous
 fixed-step motion. Bodies 1 and 2 collide while airborne, while primary body 0
-settles on canonical LOD0 terrain. Use
+settles on canonical LOD0 terrain. Isolated body 3 receives a constant torque;
+its small brown local-axis cap makes the normalized rotation visible. Use
 `W`/`S` along the
 camera forward axis, `A`/`D` to strafe, `Q`/`E` to move down/up, hold `Shift`
 to move faster, and hold the right mouse button while dragging to look around.
@@ -192,7 +193,8 @@ camera turns away.
 With the simulation initially paused, confirm all four spheres are visible.
 After `F5`, bodies 1 and 2 must collide and separate while airborne; primary
 body 0 must fall to its cyan support site and remain on canonical terrain
-without hover or penetration.
+without hover or penetration. Body 3's local brown cap must accelerate around
+the sphere under constant torque, including after linear terrain support.
 
 The separate deterministic `--present-smoke` path must start at
 `93 / 225 visible (LOD0=0, coarse=93)`, retain that split after resize, reach
@@ -551,8 +553,8 @@ while retaining T-006's topology, resource budgets, canonical queries, and
 global `R16_UINT` indices. Its historical construction timings and graphics
 evidence are recorded above.
 See [the fixed-step simulation contract](SIMULATION.md) for the 60 Hz clock,
-pause/single-step controls, semi-implicit ballistic state, immutable render
-interpolation, canonical one-sample sphere support, and PHY-003's fixed
+pause/single-step controls, semi-implicit linear/angular state, normalized
+orientation interpolation, canonical one-sample sphere support, and the fixed
 four-body deterministic collision pass.
 
 W-001 consumes that scenario-owned waterline in a dedicated transparent pass
@@ -570,11 +572,12 @@ Debug hardware/WARP/GBV presentation gates plus a Release hardware smoke for
 ordinary pass/shader work; reserve the full Debug/Release graphics matrix for
 RHI, synchronization, lifetime, or milestone changes.
 
-PHY-003 leaves the W-001 lake presentation-only and adds no water resource,
+PHY-004 leaves the W-001 lake presentation-only and adds no water resource,
 fluid state, or coupling. Four existing sphere draws reuse one geometry range,
-PSO, and `b2` binding without changing render-pass, descriptor,
-geometry-buffer, or per-frame upload budgets. Rain remains deferred; the active
-increment queue is maintained in [ENGINE_PLAN.md](ENGINE_PLAN.md).
+PSO, and `b2` binding; only the bounded root constants and sphere vertex shader
+interpretation change. Render-pass, descriptor, geometry-buffer, and per-frame
+upload budgets remain fixed. Rain remains deferred; the active increment queue
+is maintained in [ENGINE_PLAN.md](ENGINE_PLAN.md).
 
 ## Visual Studio
 

@@ -61,44 +61,7 @@ inline constexpr float maximum_fixed_delta_seconds = 0.25F;
     });
 }
 
-[[nodiscard]] core::Result<math::Float3> interpolate_componentwise(
-    const math::Float3 first,
-    const math::Float3 second,
-    const double alpha)
-{
-    const std::array<double, 3> interpolated{
-        static_cast<double>(first.x) +
-            (static_cast<double>(second.x) -
-             static_cast<double>(first.x)) * alpha,
-        static_cast<double>(first.y) +
-            (static_cast<double>(second.y) -
-             static_cast<double>(first.y)) * alpha,
-        static_cast<double>(first.z) +
-            (static_cast<double>(second.z) -
-             static_cast<double>(first.z)) * alpha,
-    };
-    for (const auto component : interpolated) {
-        if (!representable_float(component)) {
-            return core::Result<math::Float3>::failure(
-                physics_error(
-                    core::ErrorCode::unavailable,
-                    "Ballistic interpolation exceeded finite float range"));
-        }
-    }
-    return core::Result<math::Float3>::success({
-        static_cast<float>(interpolated[0]),
-        static_cast<float>(interpolated[1]),
-        static_cast<float>(interpolated[2]),
-    });
-}
-
 } // namespace
-
-bool is_valid(const BallisticBodyState& state) noexcept
-{
-    return math::is_finite(state.position) &&
-        math::is_finite(state.linear_velocity);
-}
 
 core::Result<void> advance_ballistic_body(
     BallisticBodyState& state,
@@ -133,10 +96,10 @@ core::Result<void> advance_ballistic_body(
             std::move(position_result).error());
     }
 
-    state = BallisticBodyState{
-        .position = position_result.value(),
-        .linear_velocity = velocity_result.value(),
-    };
+    auto candidate = state;
+    candidate.position = position_result.value();
+    candidate.linear_velocity = velocity_result.value();
+    state = candidate;
     return core::Result<void>::success();
 }
 
@@ -145,39 +108,7 @@ core::Result<BallisticBodyState> interpolate_ballistic_body(
     const BallisticBodyState& current,
     const float alpha)
 {
-    if (!is_valid(previous) ||
-        !is_valid(current) ||
-        !std::isfinite(alpha) ||
-        alpha < 0.0F ||
-        alpha > 1.0F) {
-        return core::Result<BallisticBodyState>::failure(
-            physics_error(
-                core::ErrorCode::invalid_argument,
-                "Ballistic interpolation requires finite states and "
-                "alpha in [0, 1]"));
-    }
-
-    auto position_result = interpolate_componentwise(
-        previous.position,
-        current.position,
-        alpha);
-    if (!position_result) {
-        return core::Result<BallisticBodyState>::failure(
-            std::move(position_result).error());
-    }
-    auto velocity_result = interpolate_componentwise(
-        previous.linear_velocity,
-        current.linear_velocity,
-        alpha);
-    if (!velocity_result) {
-        return core::Result<BallisticBodyState>::failure(
-            std::move(velocity_result).error());
-    }
-    return core::Result<BallisticBodyState>::success(
-        BallisticBodyState{
-            .position = position_result.value(),
-            .linear_velocity = velocity_result.value(),
-        });
+    return interpolate_rigid_body(previous, current, alpha);
 }
 
 } // namespace shark::physics

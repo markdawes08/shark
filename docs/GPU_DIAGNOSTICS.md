@@ -1,7 +1,7 @@
 # Direct3D 12 GPU Diagnostics Contract
 
-- **Completed through:** `PHY-003`
-- **Last verified:** July 19, 2026
+- **Completed through:** `PHY-004`
+- **Last verified:** July 21, 2026
 
 Shark's GPU diagnostics use fixed-capacity PIX events and direct-queue
 timestamps whose readback is delayed until the owning frame-context fence
@@ -448,7 +448,8 @@ pair. It reuses the radiance descriptor and creates no water GPU resource, so
 the static upload, four geometry buffers, and ten persistent descriptors stay
 unchanged. The active diagnostics contract is `15/5/5/6/34`, five texture
 bindings, and 12 timestamps per submitted frame. Rain remains deferred and
-the approved San Andreas-class ceiling is unchanged. PHY-003 preserves this
-accounting while four CPU simulation snapshots rebind the already validated
-three-constant sphere transform. See [ENGINE_PLAN.md](ENGINE_PLAN.md) for the active
+the approved San Andreas-class ceiling is unchanged. PHY-004 preserves this
+accounting while four CPU simulation snapshots rebind seven root constants for
+normalized orientation and position. It adds no PIX event, timestamp, resource,
+descriptor, pass, or draw. See [ENGINE_PLAN.md](ENGINE_PLAN.md) for the active
 increment queue.

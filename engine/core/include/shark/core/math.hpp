@@ -30,6 +30,20 @@ struct Float4 final {
         const Float4&) = default;
 };
 
+struct Quaternion final {
+    float x{};
+    float y{};
+    float z{};
+    float w{1.0F};
+
+    [[nodiscard]] friend bool operator==(
+        const Quaternion&,
+        const Quaternion&) = default;
+};
+
+static_assert(std::is_standard_layout_v<Quaternion>);
+static_assert(std::is_trivially_copyable_v<Quaternion>);
+
 struct alignas(16) Matrix4x4 final {
     float elements[4][4]{};
 };
@@ -51,6 +65,13 @@ static_assert(std::is_trivially_copyable_v<Matrix4x4>);
 
 [[nodiscard]] bool is_finite(Float3 value) noexcept;
 [[nodiscard]] bool is_finite(Float4 value) noexcept;
+[[nodiscard]] bool is_finite(Quaternion value) noexcept;
+[[nodiscard]] bool is_normalized(
+    Quaternion value,
+    float tolerance = 0.00001F) noexcept;
+[[nodiscard]] bool is_unit(
+    Quaternion value,
+    float tolerance = 0.00001F) noexcept;
 [[nodiscard]] bool is_finite(const Matrix4x4& value) noexcept;
 
 } // namespace shark::math

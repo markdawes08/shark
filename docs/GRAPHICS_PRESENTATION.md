@@ -1,7 +1,7 @@
 # Renderer and Direct3D 12 Presentation/Frame-Resource Contract
 
-- **Completed through:** `PHY-003`
-- **Last verified:** July 19, 2026
+- **Completed through:** `PHY-004`
+- **Last verified:** July 21, 2026
 
 `shark::renderer::Renderer` owns Shark's focused D3D12 scene/presentation
 backend. W-001 preserves the triple-buffered fence-gated HDR lifecycle,
@@ -27,8 +27,9 @@ synchronously and retains no caller CPU pointer.
   GGX-prefiltered specular, and split-sum BRDF LUT.
 
 `RenderFrameData` carries finite scene/sky matrices, daylight settings, camera
-position, a fixed four-entry material-sphere position array with active count,
-terrain fill/material views, and the environment mode. `F3` selects
+position, fixed four-entry material-sphere position/orientation arrays with
+active count, terrain fill/material views, and the environment mode. Active
+orientations must be finite unit quaternions. `F3` selects
 image-based lighting or the retained
 procedural-daylight fallback.
 Each `TerrainChunkUploadView` carries contiguous LOD0/coarse ranges, exact
@@ -365,9 +366,8 @@ or static upload. The frame now has 15 imports, five passes, five dependencies,
 six transitions, 34 elisions, and five texture bindings. Sky renders before
 premultiplied transparent water; canonical-terrain depth testing determines the
 visible shoreline. Terrain remains unchanged and no fluid simulation is
-claimed. PHY-003 feeds four interpolated simulation positions through the
-existing three sphere-translation root constants. It records four draws per
-submitted frame without changing frame-resource, descriptor, or upload
-budgets. Rain remains
+claimed. PHY-004 feeds four interpolated simulation transforms through seven
+sphere root constants per draw. It records the same four draws without
+changing frame-resource, descriptor, geometry, pass, or upload budgets. Rain remains
 deferred under the San Andreas-class ceiling. See
 [ENGINE_PLAN.md](ENGINE_PLAN.md) for the active increment queue.

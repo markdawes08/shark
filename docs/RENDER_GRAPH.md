@@ -1,8 +1,8 @@
 # Minimal Render-Graph Contract
 
 - **Completed through:** `W-001`
-- **Renderer integration verified through:** `PHY-003`
-- **Last updated:** July 19, 2026
+- **Renderer integration verified through:** `PHY-004`
+- **Last updated:** July 21, 2026
 
 Shark's render graph is a small platform-independent planner with a Direct3D
 12 legacy-barrier executor. W-001 keeps the frame-local, whole-resource HDR
@@ -248,7 +248,7 @@ The procedural `SV_VertexID` quad therefore adds no import or GPU resource.
 Color and depth hazards produce five dependencies, while the six physical
 transitions stay unchanged and three additional accesses elide, yielding the
 exact active `15/5/5/6/34` contract. Rain remains deferred under the San
-Andreas-class ceiling. PHY-003 supplies four interpolated sphere positions
+Andreas-class ceiling. PHY-004 supplies four interpolated sphere transforms
 inside the existing `Terrain` callback and preserves this graph exactly.
 This component page no longer
 duplicates the active queue; [ENGINE_PLAN.md](ENGINE_PLAN.md) is authoritative.

@@ -1,8 +1,8 @@
 # Camera, Reversed-Z Depth, Cube, and Skybox Contract
 
 - **Camera/cube capability completed through:** `G-005`
-- **Renderer integration verified through:** `PHY-003`
-- **Last verified:** July 19, 2026
+- **Renderer integration verified through:** `PHY-004`
+- **Last verified:** July 21, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
 engine-owned free-fly camera drives a resource-bound cube pipeline, a finite
@@ -32,6 +32,8 @@ material sphere from an interpolated fixed-step body position. PHY-002 leaves
 those conventions unchanged while stopping that sphere on canonical terrain.
 PHY-003 retains them while publishing four interpolated positions and
 rebinding the existing translation constants for four sphere draws.
+PHY-004 adds shortest-path interpolated orientations and rotates those same
+four sphere draws without changing camera, view-projection, or depth state.
 
 This remains a deliberately narrow proof. It establishes conventions and
 lifetime rules that later sky, terrain, rain, and water passes can reuse; it is
@@ -196,13 +198,12 @@ procedural fallback. Cube, sky, terrain, and sphere write linear color to the
 ACES-fitted curve and explicit linear-to-sRGB transfer to the UNORM back
 buffer.
 
-PHY-001 adds three 32-bit material-sphere translation constants at `b2` to the
-terrain/sphere root signature. The sandbox interpolates immutable
-previous/current body snapshots, passes the resulting world position through
-`RenderFrameData`, and the renderer converts it to a translation from the
-sphere's authored center. The material-sphere vertex shader applies that
-translation before the existing `view_projection`; normals, lighting, geometry
-buffers, descriptors, and draw count remain unchanged.
+PHY-004's current material-sphere `b2` contract contains seven 32-bit values:
+a unit quaternion followed by world position. The sandbox interpolates
+immutable previous/current rigid snapshots and passes each transform through
+`RenderFrameData`. The material-sphere vertex shader rotates authored-center-
+relative positions and normals before the existing `view_projection`; camera
+matrices, geometry buffers, descriptors, and draw count remain unchanged.
 
 The focused cube and sky root signatures plus immutable cube/skybox PSOs are
 created synchronously from pinned build-time DXIL. They survive swap-chain
@@ -339,7 +340,7 @@ atmospheric scattering, cloud, automatic exposure, time of day, terrain
 streaming, additional LOD levels, or content database.
 
 The support-sample marker, CPU chunk culling, stateless LOD choice, F4
-diagnostic gate, and PHY-001 through PHY-003 sphere translation add no camera matrix,
+diagnostic gate, and PHY-001 through PHY-004 sphere transforms add no camera matrix,
 GPU resource, PSO, graph pass, dependency, barrier, PIX event, or timestamp.
 W-001 retains 15 imports, five passes, five dependencies, six barriers, 34
 elisions, four geometry buffers, and 12 timestamps as the current exact
@@ -348,7 +349,7 @@ contract.
 It also adds no general mesh/resource/descriptor manager, typed GPU handles,
 placed-resource pool, copy queue, deferred uploader, shader reflection, runtime
 shader compilation, hot reload, PSO cache, scene graph, ECS,
-multiple cameras, controllable entity, general scene entities, angular
+multiple cameras, controllable entity, general scene entities, angular contact
 dynamics, animation, shadows, MSAA,
 additional terrain LOD levels, LOD hysteresis/morphing, instancing, raw mouse
 input, cursor lock, configurable action map, gamepad support, pixel readback,
@@ -374,8 +375,8 @@ evidence remains historical.
 `T-008` publishes the interactive spawn and basin metadata without changing
 cube geometry, sky motion, depth, input, or the deterministic smoke schedule.
 `W-001` adds only presentation-time water input and preserves those camera and
-cube contracts. `PHY-003` retains independently interpolated sphere
-translations, canonical terrain support, and a CPU-only four-sphere pair pass;
+cube contracts. `PHY-004` retains canonical terrain support and the CPU-only
+four-sphere pair pass while adding independently interpolated orientations;
 see
 [the simulation contract](SIMULATION.md). This component page
 no longer duplicates the rolling project

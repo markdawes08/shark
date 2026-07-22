@@ -1,6 +1,6 @@
 # Canonical Terrain-Tile Contract
 
-- **Completed through:** `PHY-005`
+- **Completed through:** `PHY-006`
 - **Last verified:** July 22, 2026
 
 T-008 composes the untouched T-007 rolling-height oracle with a bounded
@@ -438,7 +438,29 @@ This query reads `HeightTileSurface`'s canonical samples directly. It does not
 read smooth render normals, chunk bounds, culling state, coarse ranges, a render
 mesh, GPU buffers, or camera-selected LOD, and it adds no renderer or D3D12
 state. Its focused Debug and Release suite passes `442` assertions across seven
-cases; both complete unit presets pass `202/202`.
+cases; at PHY-005 completion both complete unit presets passed `202/202`.
+
+## Bounded canonical-triangle candidates
+
+PHY-006 adds
+`lod0_triangles_overlapping_bounds(const Bounds3&)` as the narrow terrain
+candidate boundary needed by oriented boxes. Its finite ordered world AABB is
+inclusive on all three axes. A disjoint valid box succeeds with an empty
+vector; malformed, reversed, or nonfinite bounds return `invalid_argument`.
+
+The query conservatively maps the clipped X/Z range to nearby cells, then
+filters each exact triangle by its own 3D AABB. Results retain the canonical
+order: cells are row-major in `+Z`, then `+X`, with `v00_v01_v11` before
+`v00_v11_v10`. Each record contains the three exact world positions, geometric
+normal, cell coordinates, and fixed split. Shared edges and the maximum tile
+boundary are inclusive, so touching candidates are not lost.
+
+This is deliberately candidate generation, not collision response or a public
+spatial acceleration structure. Box contact performs the complete SAT test and
+selects a manifold; Terrain does not know about boxes, rigid bodies, impulses,
+render chunks, or visual LOD. The focused Debug and Release suite passes `351`
+assertions across seven cases, including exact repeated results without tile
+mutation.
 
 ## Render mesh versus query data
 
@@ -901,6 +923,7 @@ Focused CPU and contract coverage:
 
 ```powershell
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][query]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][triangle-bounds]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][height-tile][capacity]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][height-tile][chunks]"
@@ -924,7 +947,10 @@ internal edges, outside/nonfinite samples, normalized metric slab intervals,
 vertical and oblique hits, nearest-hit selection, maximum-distance limits,
 origin-on-surface hits, valid misses, invalid rays, large-origin
 float-rounding parity with LOD0 vertices, and scale-relative ray hits on very
-small valid cells.
+small valid cells. The triangle-bounds suite additionally locks exact positions
+and normals, row-major/fixed-split order, inclusive interior/shared/maximum
+edges, multi-cell filtering, horizontal and vertical misses, invalid input,
+and exact repeatability without mutation.
 
 Chunk-layout coverage retains the compact oracle's exact `4x4` partition,
 row-major ordering, contiguous ranges, unchanged global vertex references,
@@ -1073,3 +1099,9 @@ the six possible sphere pairs in lexicographic order. Pair response remains
 CPU-only and does not read or mutate terrain, its visual LODs, or GPU
 resources. PHY-004 then advances orientation independently; terrain contact
 still affects only linear velocity and never reads angular state.
+
+PHY-005 adds the bounded finite-segment closest-feature query for pure capsule
+contacts. PHY-006 adds only the bounded exact-triangle candidate query used by
+pure oriented-box SAT; it does not add a physics acceleration structure or
+mutate canonical terrain. The active queue is `PHY-007` contact constraint
+solving and remains centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).

@@ -1,6 +1,6 @@
 # Building Shark
 
-- **Completed through:** `PHY-005`
+- **Completed through:** `PHY-006`
 - **Last verified:** July 22, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
@@ -556,7 +556,7 @@ See [the fixed-step simulation contract](SIMULATION.md) for the 60 Hz clock,
 pause/single-step controls, semi-implicit linear/angular state, normalized
 orientation interpolation, canonical one-sample sphere support, and the fixed
 four-body deterministic collision pass, plus PHY-005's pure capsule
-closest-feature contacts.
+closest-feature contacts and PHY-006's pure oriented-box SAT manifolds.
 
 W-001 consumes that scenario-owned waterline in a dedicated transparent pass
 after `Skybox`. The vertex shader expands a six-vertex quad from `SV_VertexID`
@@ -594,6 +594,24 @@ cases and the terrain segment suite passes `442` assertions across seven cases
 in both Debug and Release. Both full unit presets pass `202/202`. The unchanged
 Debug hardware presentation smoke passes 1,000 frames with zero D3D12
 corruption/errors or live child objects.
+
+PHY-006 is also CPU-only. It adds checked oriented-box world geometry,
+deterministic box/box and box/canonical-terrain SAT, fixed-capacity contact
+manifolds with at most four points, and Terrain's inclusive bounded candidate
+query for exact triangles. It does not change the sandbox body count, renderer
+inputs, shaders, root signature, draws, resources, descriptors, passes,
+uploads, or smoke accounting.
+Iterate with the `[physics][box]` and `[terrain][triangle-bounds]` filters before
+the full unit presets; one Debug hardware presentation smoke remains the
+proportionate graphics regression gate.
+
+At PHY-006 completion, the box suite passes `4,282` assertions across 15 cases
+and the terrain triangle-bounds suite passes `351` assertions across seven cases
+in both Debug and Release. Both complete suites pass `393,840` assertions
+across `224/224` cases. The unchanged Debug hardware presentation smoke passes
+1,000 frames, records 4,000 existing sphere draws, and reports zero D3D12
+corruption/errors or live child objects. The next increment is `PHY-007`, the
+shared contact constraint solver.
 
 ## Visual Studio
 

@@ -109,6 +109,18 @@ struct HeightTileSegmentClosestPoint final {
         const HeightTileSegmentClosestPoint&) = default;
 };
 
+struct HeightTileTriangleGeometry final {
+    std::array<math::Float3, 3> positions;
+    math::Float3 normal;
+    std::uint32_t cell_x{};
+    std::uint32_t cell_z{};
+    HeightTileTriangle triangle{};
+
+    [[nodiscard]] friend bool operator==(
+        const HeightTileTriangleGeometry&,
+        const HeightTileTriangleGeometry&) = default;
+};
+
 // Owns one validated canonical tile and its cached world-space bounds. Query
 // normals are exact geometric LOD0 triangle normals, not smooth render normals.
 class HeightTileSurface final {
@@ -151,6 +163,14 @@ public:
         closest_lod0_point_to_segment(
             const Segment3& segment,
             float maximum_distance) const;
+
+    // Returns exact canonical triangles whose inclusive 3D bounds overlap
+    // the finite ordered query bounds. Results retain stable row-major cell
+    // and fixed-triangle order; render chunks and visual LOD never participate.
+    [[nodiscard]] core::Result<
+        std::vector<HeightTileTriangleGeometry>>
+        lod0_triangles_overlapping_bounds(
+            const Bounds3& query_bounds) const;
 
 private:
     HeightTileSurface(HeightTile tile, Bounds3 bounds);

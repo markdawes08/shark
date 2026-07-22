@@ -219,6 +219,40 @@ void require_invalid_segment(
         shark::core::ErrorCode::invalid_argument);
 }
 
+void require_triangle_geometry(
+    const shark::terrain::HeightTileTriangleGeometry& actual,
+    const std::uint32_t expected_cell_x,
+    const std::uint32_t expected_cell_z,
+    const shark::terrain::HeightTileTriangle expected_triangle,
+    const std::array<shark::math::Float3, 3>& expected_positions,
+    const shark::math::Float3 expected_normal)
+{
+    REQUIRE(actual.cell_x == expected_cell_x);
+    REQUIRE(actual.cell_z == expected_cell_z);
+    REQUIRE(actual.triangle == expected_triangle);
+    for (std::size_t vertex = 0U;
+         vertex < expected_positions.size();
+         ++vertex) {
+        CAPTURE(vertex);
+        require_float3(
+            actual.positions[vertex],
+            expected_positions[vertex]);
+    }
+    require_float3(actual.normal, expected_normal);
+}
+
+void require_invalid_triangle_bounds(
+    const shark::terrain::HeightTileSurface& surface,
+    const shark::terrain::Bounds3 query_bounds)
+{
+    const auto result =
+        surface.lod0_triangles_overlapping_bounds(query_bounds);
+    REQUIRE_FALSE(result);
+    REQUIRE(
+        result.error().code() ==
+        shark::core::ErrorCode::invalid_argument);
+}
+
 } // namespace
 
 TEST_CASE(
@@ -1367,6 +1401,341 @@ TEST_CASE(
             surface.closest_lod0_point_to_segment(
                 diagonal,
                 0.25F);
+        REQUIRE(repeated);
+        REQUIRE(repeated.value() == baseline.value());
+    }
+    REQUIRE(surface.tile() == tile_before);
+    REQUIRE(surface.bounds() == bounds_before);
+}
+
+TEST_CASE(
+    "terrain triangle bounds queries return canonical triangle geometry",
+    "[terrain][height-tile][query][triangle-bounds]")
+{
+    using namespace shark;
+
+    auto surface_result =
+        terrain::HeightTileSurface::create(make_twisted_tile());
+    REQUIRE(surface_result);
+    const auto surface = std::move(surface_result).value();
+
+    const auto result =
+        surface.lod0_triangles_overlapping_bounds(
+            terrain::Bounds3{
+                .minimum = {0.0F, 0.0F, 0.0F},
+                .maximum = {1.0F, 1.0F, 1.0F},
+            });
+    REQUIRE(result);
+    REQUIRE(result.value().size() == 2U);
+
+    const auto inverse_sqrt_two = 1.0F / std::sqrt(2.0F);
+    require_triangle_geometry(
+        result.value()[0],
+        0U,
+        0U,
+        terrain::HeightTileTriangle::v00_v01_v11,
+        std::array<math::Float3, 3>{
+            math::Float3{0.0F, 0.0F, 0.0F},
+            math::Float3{0.0F, 0.0F, 1.0F},
+            math::Float3{1.0F, 1.0F, 1.0F},
+        },
+        {-inverse_sqrt_two, inverse_sqrt_two, 0.0F});
+    require_triangle_geometry(
+        result.value()[1],
+        0U,
+        0U,
+        terrain::HeightTileTriangle::v00_v11_v10,
+        std::array<math::Float3, 3>{
+            math::Float3{0.0F, 0.0F, 0.0F},
+            math::Float3{1.0F, 1.0F, 1.0F},
+            math::Float3{1.0F, 0.0F, 0.0F},
+        },
+        {0.0F, inverse_sqrt_two, -inverse_sqrt_two});
+}
+
+TEST_CASE(
+    "terrain triangle bounds queries use stable row-major cell order",
+    "[terrain][height-tile][query][triangle-bounds]")
+{
+    using namespace shark;
+
+    auto surface_result =
+        terrain::HeightTileSurface::create(make_ramp_tile());
+    REQUIRE(surface_result);
+    const auto surface = std::move(surface_result).value();
+    const auto result =
+        surface.lod0_triangles_overlapping_bounds(surface.bounds());
+    REQUIRE(result);
+    REQUIRE(result.value().size() == 8U);
+
+    constexpr std::array expected_cells{
+        std::pair{0U, 0U},
+        std::pair{1U, 0U},
+        std::pair{0U, 1U},
+        std::pair{1U, 1U},
+    };
+    const auto expected_height = [](const float x, const float z) {
+        return 5.0F + 2.0F * x + 3.0F * z;
+    };
+    const auto inverse_normal_length = 1.0F / std::sqrt(14.0F);
+    const math::Float3 expected_normal{
+        -2.0F * inverse_normal_length,
+        inverse_normal_length,
+        -3.0F * inverse_normal_length,
+    };
+    for (std::size_t cell_index = 0U;
+         cell_index < expected_cells.size();
+         ++cell_index) {
+        CAPTURE(cell_index);
+        const auto [cell_x, cell_z] = expected_cells[cell_index];
+        const auto x = static_cast<float>(cell_x);
+        const auto z = static_cast<float>(cell_z);
+        const math::Float3 v00{x, expected_height(x, z), z};
+        const math::Float3 v01{
+            x,
+            expected_height(x, z + 1.0F),
+            z + 1.0F,
+        };
+        const math::Float3 v10{
+            x + 1.0F,
+            expected_height(x + 1.0F, z),
+            z,
+        };
+        const math::Float3 v11{
+            x + 1.0F,
+            expected_height(x + 1.0F, z + 1.0F),
+            z + 1.0F,
+        };
+
+        require_triangle_geometry(
+            result.value()[cell_index * 2U],
+            cell_x,
+            cell_z,
+            terrain::HeightTileTriangle::v00_v01_v11,
+            std::array<math::Float3, 3>{v00, v01, v11},
+            expected_normal);
+        require_triangle_geometry(
+            result.value()[cell_index * 2U + 1U],
+            cell_x,
+            cell_z,
+            terrain::HeightTileTriangle::v00_v11_v10,
+            std::array<math::Float3, 3>{v00, v11, v10},
+            expected_normal);
+    }
+}
+
+TEST_CASE(
+    "terrain triangle bounds queries include touching boundaries",
+    "[terrain][height-tile][query][triangle-bounds]")
+{
+    using namespace shark;
+
+    auto surface_result =
+        terrain::HeightTileSurface::create(make_flat_tile());
+    REQUIRE(surface_result);
+    const auto surface = std::move(surface_result).value();
+
+    SECTION("interior point")
+    {
+        const auto result =
+            surface.lod0_triangles_overlapping_bounds(
+                terrain::Bounds3{
+                    .minimum = {0.25F, 0.0F, 0.50F},
+                    .maximum = {0.25F, 0.0F, 0.50F},
+                });
+        REQUIRE(result);
+        REQUIRE(result.value().size() == 2U);
+        REQUIRE(result.value()[0].cell_x == 0U);
+        REQUIRE(result.value()[1].cell_x == 0U);
+    }
+
+    SECTION("shared cell edge")
+    {
+        const auto result =
+            surface.lod0_triangles_overlapping_bounds(
+                terrain::Bounds3{
+                    .minimum = {1.0F, 0.0F, 0.50F},
+                    .maximum = {1.0F, 0.0F, 0.50F},
+                });
+        REQUIRE(result);
+        REQUIRE(result.value().size() == 4U);
+        REQUIRE(result.value()[0].cell_x == 0U);
+        REQUIRE(result.value()[1].cell_x == 0U);
+        REQUIRE(result.value()[2].cell_x == 1U);
+        REQUIRE(result.value()[3].cell_x == 1U);
+    }
+
+    SECTION("maximum tile edge")
+    {
+        const auto result =
+            surface.lod0_triangles_overlapping_bounds(
+                terrain::Bounds3{
+                    .minimum = {2.0F, 0.0F, 0.50F},
+                    .maximum = {2.0F, 0.0F, 0.50F},
+                });
+        REQUIRE(result);
+        REQUIRE(result.value().size() == 2U);
+        REQUIRE(result.value()[0].cell_x == 1U);
+        REQUIRE(result.value()[1].cell_x == 1U);
+    }
+}
+
+TEST_CASE(
+    "terrain triangle bounds queries filter a multi-cell tile",
+    "[terrain][height-tile][query][triangle-bounds]")
+{
+    using namespace shark;
+
+    auto surface_result = terrain::HeightTileSurface::create(
+        make_tile(
+            4U,
+            4U,
+            1.0F,
+            {},
+            std::vector<float>(16U, 0.0F)));
+    REQUIRE(surface_result);
+    const auto surface = std::move(surface_result).value();
+    const auto result =
+        surface.lod0_triangles_overlapping_bounds(
+            terrain::Bounds3{
+                .minimum = {0.25F, 0.0F, 1.25F},
+                .maximum = {1.75F, 0.0F, 1.75F},
+            });
+    REQUIRE(result);
+    REQUIRE(result.value().size() == 4U);
+
+    constexpr std::array expected_cells{
+        std::pair{0U, 1U},
+        std::pair{0U, 1U},
+        std::pair{1U, 1U},
+        std::pair{1U, 1U},
+    };
+    constexpr std::array expected_triangles{
+        terrain::HeightTileTriangle::v00_v01_v11,
+        terrain::HeightTileTriangle::v00_v11_v10,
+        terrain::HeightTileTriangle::v00_v01_v11,
+        terrain::HeightTileTriangle::v00_v11_v10,
+    };
+    for (std::size_t triangle = 0U;
+         triangle < result.value().size();
+         ++triangle) {
+        CAPTURE(triangle);
+        REQUIRE(
+            result.value()[triangle].cell_x ==
+            expected_cells[triangle].first);
+        REQUIRE(
+            result.value()[triangle].cell_z ==
+            expected_cells[triangle].second);
+        REQUIRE(
+            result.value()[triangle].triangle ==
+            expected_triangles[triangle]);
+    }
+}
+
+TEST_CASE(
+    "terrain triangle bounds queries return empty for valid misses",
+    "[terrain][height-tile][query][triangle-bounds]")
+{
+    using namespace shark;
+
+    auto surface_result =
+        terrain::HeightTileSurface::create(make_flat_tile());
+    REQUIRE(surface_result);
+    const auto surface = std::move(surface_result).value();
+    constexpr std::array misses{
+        terrain::Bounds3{
+            .minimum = {-2.0F, -1.0F, 0.25F},
+            .maximum = {-1.0F, 1.0F, 0.75F},
+        },
+        terrain::Bounds3{
+            .minimum = {3.0F, -1.0F, 0.25F},
+            .maximum = {4.0F, 1.0F, 0.75F},
+        },
+        terrain::Bounds3{
+            .minimum = {0.25F, -1.0F, 2.0F},
+            .maximum = {0.75F, 1.0F, 3.0F},
+        },
+        terrain::Bounds3{
+            .minimum = {0.25F, 0.01F, 0.25F},
+            .maximum = {0.75F, 1.0F, 0.75F},
+        },
+        terrain::Bounds3{
+            .minimum = {0.25F, -1.0F, 0.25F},
+            .maximum = {0.75F, -0.01F, 0.75F},
+        },
+    };
+    for (std::size_t miss = 0U; miss < misses.size(); ++miss) {
+        CAPTURE(miss);
+        const auto result =
+            surface.lod0_triangles_overlapping_bounds(misses[miss]);
+        REQUIRE(result);
+        REQUIRE(result.value().empty());
+    }
+}
+
+TEST_CASE(
+    "terrain triangle bounds queries reject malformed bounds",
+    "[terrain][height-tile][query][triangle-bounds][validation]")
+{
+    using namespace shark;
+
+    auto surface_result =
+        terrain::HeightTileSurface::create(make_flat_tile());
+    REQUIRE(surface_result);
+    const auto surface = std::move(surface_result).value();
+    constexpr auto nan =
+        std::numeric_limits<float>::quiet_NaN();
+    constexpr auto infinity =
+        std::numeric_limits<float>::infinity();
+    constexpr std::array invalid_bounds{
+        terrain::Bounds3{{1.0F, 0.0F, 0.0F}, {0.0F, 0.0F, 0.0F}},
+        terrain::Bounds3{{0.0F, 1.0F, 0.0F}, {0.0F, 0.0F, 0.0F}},
+        terrain::Bounds3{{0.0F, 0.0F, 1.0F}, {0.0F, 0.0F, 0.0F}},
+        terrain::Bounds3{{nan, 0.0F, 0.0F}, {1.0F, 1.0F, 1.0F}},
+        terrain::Bounds3{{0.0F, nan, 0.0F}, {1.0F, 1.0F, 1.0F}},
+        terrain::Bounds3{{0.0F, 0.0F, nan}, {1.0F, 1.0F, 1.0F}},
+        terrain::Bounds3{{0.0F, 0.0F, 0.0F}, {infinity, 1.0F, 1.0F}},
+        terrain::Bounds3{{0.0F, 0.0F, 0.0F}, {1.0F, infinity, 1.0F}},
+        terrain::Bounds3{{0.0F, 0.0F, 0.0F}, {1.0F, 1.0F, infinity}},
+    };
+    for (std::size_t invalid = 0U;
+         invalid < invalid_bounds.size();
+         ++invalid) {
+        CAPTURE(invalid);
+        require_invalid_triangle_bounds(
+            surface,
+            invalid_bounds[invalid]);
+    }
+}
+
+TEST_CASE(
+    "terrain triangle bounds query results are exactly repeatable",
+    "[terrain][height-tile][query][triangle-bounds][determinism]")
+{
+    using namespace shark;
+
+    auto surface_result =
+        terrain::HeightTileSurface::create(make_ramp_tile());
+    REQUIRE(surface_result);
+    const auto surface = std::move(surface_result).value();
+    const auto tile_before = surface.tile();
+    const auto bounds_before = surface.bounds();
+    const terrain::Bounds3 query_bounds{
+        .minimum = {0.25F, 5.0F, 0.25F},
+        .maximum = {1.75F, 15.0F, 1.75F},
+    };
+    const auto baseline =
+        surface.lod0_triangles_overlapping_bounds(query_bounds);
+    REQUIRE(baseline);
+    REQUIRE_FALSE(baseline.value().empty());
+
+    constexpr std::size_t repeat_count = 64U;
+    for (std::size_t repeat = 0U;
+         repeat < repeat_count;
+         ++repeat) {
+        CAPTURE(repeat);
+        const auto repeated =
+            surface.lod0_triangles_overlapping_bounds(query_bounds);
         REQUIRE(repeated);
         REQUIRE(repeated.value() == baseline.value());
     }

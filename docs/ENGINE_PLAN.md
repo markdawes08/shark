@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 22, 2026
-- **Latest completed:** `PHY-005` - capsule collision
-- **Next increment:** `PHY-006` - oriented-box contact manifolds
+- **Latest completed:** `PHY-006` - oriented-box contact manifolds
+- **Next increment:** `PHY-007` - contact constraint solver
 
 ## 1. Project direction
 
@@ -800,7 +800,7 @@ M5.
 | `PHY-003` | S | Complete: publish exactly four scenario spheres in stable previous/current arrays; test six pairs in lexicographic brute-force order; split overlap between equal unit masses; apply approaching-only normal impulses with explicit `0.75` Environment Lab restitution; retain the isolated canonical-terrain proof; collide the first pair while airborne; and render four existing-mesh draws by rebinding `b2` without another resource, descriptor, or pass | `feat(physics): add sphere body collisions` |
 | `PHY-004` | S | Complete: extend the fixed snapshots with unit quaternions and world-space angular velocity; publish explicit equal solid-sphere mass/inertia; integrate torque semi-implicitly through normalized axis-angle increments; shortest-path interpolate render orientation; drive an inspectable local material marker through seven `b2` constants; and preserve all linear terrain/pair behavior without angular contact impulses | `feat(physics): add angular rigid-body state` |
 | `PHY-005` | S | Complete: add a finite local-half-segment capsule collider; derive world endpoints from normalized rigid orientation; add a bounded canonical LOD0 segment/triangle closest-feature query; generate pure capsule/terrain, capsule/sphere, and capsule/capsule contacts with signed separation, penetration depth, stable witnesses, one-sided terrain normals, and deterministic degenerate-feature fallbacks; and prove the analytic contracts without adding a solver or render proxy | `feat(physics): add capsule collision` |
-| `PHY-006` | S | Add oriented-box SAT contacts and multi-point manifold generation with visual/contact tests | `feat(physics): add box contact manifolds` |
+| `PHY-006` | S | Complete: add finite positive-half-extent oriented boxes; derive checked world axes, sign-bit vertices, and bounds from normalized rigid orientation; test all 15 box/box and 13 box/canonical-triangle SAT axes in stable order; generate deterministic face-clipped or edge-pair witnesses in fixed-capacity manifolds of at most four points; retain exact terrain ownership through a bounded row-major triangle query; and prove the CPU geometry without adding response or a misleading render proxy | `feat(physics): add box contact manifolds` |
 | `PHY-007` | S | Add iterative normal/friction impulses and validate restitution, sliding friction, and slope-rest behavior | `feat(physics): add contact constraint solver` |
 | `PHY-008` | S | Add manifold persistence and warm starting; a small crate stack remains stable within tolerance | `feat(physics): stabilize persistent contacts` |
 | `PHY-009` | S | Replace brute-force pairs with a verified dynamic AABB tree or sweep-and-prune and expose pair/timing counts | `perf(physics): add collision broad phase` |
@@ -846,7 +846,7 @@ physical source term.
 | Sky/assets | Cubemap orientation, translation invariance, sRGB/linear correctness, missing-asset error |
 | Terrain | Flat/ramp samples, ray and finite-segment closest-feature hits, normals, cell/chunk boundary equality, LOD seam captures, resident-region index/memory budgets, deterministic natural-height metrics, and closed-basin/spawn assertions |
 | Rain | Seed repeatability, capacity bounds, emission statistics, impact height, GPU timing |
-| Physics | Gravity trajectory, resting contact, analytic sphere/capsule closest features, slope friction, restitution, stack stability, and NaN scan |
+| Physics | Gravity trajectory, resting contact, analytic sphere/capsule closest features, full oriented-box SAT/manifold geometry, slope friction, restitution, stack stability, and NaN scan |
 | Fluids | Lake at rest, dam break, walls, wet/dry front, non-negative depth, mass accounting, CPU/GPU tolerance |
 | Coupling | Sealed-bowl rainfall volume, cross-tile runoff, floating block, displacement conservation |
 
@@ -862,7 +862,7 @@ this section competes with the coupled-environment critical path through M7.
 ### Deferred visual-weather track
 
 The owner deferred these effects on July 19, 2026. They remain approved but
-have no position on the active `PHY-006 -> PHY-007`
+have no position on the active `PHY-007 -> PHY-008`
 path. Resuming one requires a small plan update; skipping them does not remove
 the numerical precipitation rate used by later hydrology.
 
@@ -965,21 +965,21 @@ online architecture is not implied.
 
 ## 14. Immediate next increment
 
-After PHY-005 is reviewed and committed by the owner, implement only `PHY-006`:
+After PHY-006 is reviewed and committed by the owner, implement only `PHY-007`:
 
-- add a finite oriented-box collider with positive local half-extents and world
-  axes derived from the existing normalized rigid orientation;
-- generate bounded box/box and box/canonical-terrain SAT contacts, including
-  stable face clipping for a small multi-point manifold and deterministic
-  near-parallel-axis handling;
-- add a bounded contact visualization and focused separated, touching,
-  penetrating, face, edge, corner, rotated, near-parallel, invalid, and
-  repeated-order tests;
-- retain all sphere and capsule contact contracts plus the existing
-  Environment Lab smoke accounting; and
-- stop before general convex collision, GJK/EPA, angular contact impulses,
-  friction, persistent manifolds, broad phase, sleeping, buoyancy, or water
-  coupling.
+- define a bounded, deterministic contact-constraint input shared by dynamic
+  rigid bodies and static canonical terrain, with explicit inverse mass,
+  inertia, restitution, friction, contact points, and iteration count;
+- add sequential normal impulses and Coulomb friction at contact witnesses,
+  including angular response and a bounded penetration-stabilization policy;
+- route the existing Environment Lab sphere/terrain and sphere/sphere response
+  through that shared path while retaining fixed-step and smoke accounting;
+- prove restitution, sliding friction, slope rest, momentum behavior,
+  transactionality, finite-state rejection, and 30/60/120/144 Hz invariance;
+  and
+- stop before manifold persistence or warm starting (`PHY-008`), broad phase,
+  sleeping, continuous collision, arbitrary convex collision, runtime capsule
+  or box entities, buoyancy, or water coupling.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -1075,8 +1075,26 @@ smoke passes 1,000 frames with 4,000 existing sphere draws, zero D3D12
 corruption/errors, and zero live child objects. PHY-005 adds no runtime body,
 shader, resource, descriptor, pass, draw, or upload.
 
-The active queue is `PHY-006` oriented-box manifolds, then `PHY-007` contact
-constraint solving. `R-001` through `R-004` remain deferred.
+PHY-006 adds finite positive-half-extent oriented boxes, checked world axes,
+sign-bit vertices and inclusive bounds, deterministic full SAT against boxes
+and exact canonical terrain triangles, stable feature metadata, and bounded
+face-clipped or edge-pair manifolds with at most four ordered witnesses.
+Terrain owns the inclusive 3D-bounds candidate query and preserves row-major
+cell/fixed-triangle order; the selected contact retains exact cell, split,
+normal, and barycentrics. The focused box suite passes `4,282` assertions
+across 15 cases and the terrain triangle-bounds suite passes `351` assertions
+across seven cases in both Debug and Release. Both complete unit suites pass
+`393,840` assertions across `224/224` cases. The unchanged Debug hardware
+presentation smoke passes 1,000 frames with 4,000 existing sphere draws, zero
+D3D12 corruption/errors, and zero live child objects. PHY-006 adds no runtime
+box, response, shader, resource, descriptor, pass, draw, or upload. Its exact
+triangle collision is a one-sided discrete heightfield query: an object that
+has already tunneled fully below the surface is a miss, and continuous
+collision remains deferred.
+
+The active queue is `PHY-007` contact constraint solving, then `PHY-008`
+manifold persistence and warm starting. `R-001` through `R-004` remain
+deferred.
 
 ## 15. Primary technical references
 

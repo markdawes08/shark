@@ -1,6 +1,6 @@
 # Fixed-Step Rigid-Body and Contact Contract
 
-- **Completed through:** `PHY-005`
+- **Completed through:** `PHY-006`
 - **Last verified:** July 22, 2026
 
 PHY-001 established Shark's fixed-clock ballistic path. PHY-002 gives that one
@@ -13,7 +13,9 @@ interpolation without yet coupling angular motion to contacts. It remains a
 focused rigid-body foundation rather than a general solver. PHY-005 adds a
 finite capsule shape and pure analytic contacts against canonical terrain,
 spheres, and other capsules. It deliberately generates contact data without
-yet changing velocities or positions.
+yet changing velocities or positions. PHY-006 adds checked oriented boxes and
+fixed-capacity contact manifolds against boxes and exact canonical terrain,
+also as pure CPU queries without response.
 
 ## Ownership and data flow
 
@@ -22,8 +24,8 @@ The boundaries are intentionally narrow:
 - `Simulation` owns fixed-step time accounting, pause state, and step requests;
 - `Physics` owns the fixed four-body capacity, rigid state, solid-sphere mass
   properties, linear/angular integration, colliders, canonical-terrain
-  response, sphere-pair response, capsule closest-feature contacts, contact
-  records, and interpolation;
+  response, sphere-pair response, capsule closest-feature contacts,
+  oriented-box SAT/manifold queries, contact records, and interpolation;
 - `World` publishes four deterministic scenario-owned body spawns, initial
   linear/angular states, equal mass, and external torques beside the lake;
 - the sandbox composition root sequences input, fixed ticks, immutable
@@ -250,9 +252,56 @@ hemisphere; exact coincidence uses the selected face normal.
 
 These functions generate no positional correction, impulse, torque, friction,
 or manifold. They do not mutate either body or terrain and are not called by
-the current four-sphere Environment Lab. That separation lets PHY-006 build
-manifolds and PHY-007 introduce one shared response path instead of adding a
-second temporary solver.
+the current four-sphere Environment Lab. That separation allowed PHY-006 to
+build manifolds and lets PHY-007 introduce one shared response path instead of
+adding a second temporary solver.
+
+## Oriented-box contact manifolds
+
+`BoxCollider` owns finite strictly positive local half-extents. The checked
+world-geometry query normalizes the existing rigid orientation in double
+precision, derives its three orthogonal axes, emits all eight corners in XYZ
+sign-bit order, and computes an inclusive world AABB. Invalid input returns
+`invalid_argument`; nonrepresentable axes, vertices, bounds, or extents that
+collapse when stored as floats return `unavailable`.
+
+Box/box contact tests the complete 15-axis separating-axis set in fixed order:
+the first box's three face axes, the second box's three face axes, then nine
+axis-pair cross products. Box/terrain tests each exact candidate triangle's
+face normal, the box's three face axes, and nine normalized box-axis/triangle-
+edge cross products. Near-parallel axes are skipped with a relative threshold,
+and axes tied within `0.00001` meter retain the earlier feature. Clean
+separation succeeds with an empty optional; touching within that same tolerance
+produces a contact.
+
+A box/box normal points from the first box toward the second. Face winners clip
+the incident face against the reference face; edge winners use the closest
+finite edge pair. The resulting fixed-capacity manifold keeps at most four
+ordered contacts, each with two witnesses, their midpoint, signed separation,
+and nonnegative penetration depth. Stable feature and axis indices make the
+chosen SAT feature directly testable. Swapping the two boxes reverses normals
+and witness ownership for noncoincident pairs while retaining the same
+geometric result; ambiguous coincident pairs retain their canonical tied-axis
+fallback.
+
+Box/terrain first requests only canonical triangles whose inclusive 3D bounds
+overlap the box AABB expanded by contact tolerance. It tests candidates in
+Terrain's stable row-major/fixed-split order and selects the deepest manifold;
+tied candidates retain the earlier owner. Each terrain witness records the
+exact cell, fixed triangle, normal, barycentrics, and point. Normals are kept in
+the selected face's upward hemisphere when not tangent. Near-tangent axes are
+first projected into the face plane, then use directional interval gaps and a
+stable center/canonical tie-break to point from terrain toward the box; their
+stored-float face-normal dot may differ from zero only by representation
+tolerance. The query remains a one-sided discrete heightfield contact. A box
+that has already tunneled completely below the thin surface is a miss;
+continuous collision remains deferred.
+
+These queries do not apply impulses or modify state, and no box is added to the
+Environment Lab. Their fixed-capacity records of at most four points are the
+honest inspection surface for PHY-006; a frozen render fixture would not
+visualize real contacts. PHY-007 will consume contact witnesses through one
+shared response path.
 
 ## Rendering boundary
 
@@ -320,6 +369,15 @@ Permanent CPU coverage checks:
 - canonical terrain face, edge, vertex, diagonal, maximum-edge, coplanar, and
   zero-length segment ownership with stable repeated results; and
 - identical capsule query results after fixed ticks reached through
+  30/60/120/144 Hz render partitions;
+- identity, rotated, sign-equivalent, invalid, overflowing, and float-collapsed
+  box world geometry;
+- separated, tolerance-touching, penetrating, four-point face, edge, corner,
+  rotated, cross-axis-only, coincident, near-parallel, tied-axis, and swapped
+  box/box cases with exact repeated ordering;
+- flat, sloped, tilted, maximum-boundary, outside, vertically separated, and
+  invalid box/terrain queries with canonical witnesses; and
+- identical box contact results after fixed ticks reached through
   30/60/120/144 Hz render partitions.
 
 After defining `$cmake` and `$ctest` with the discovery block in
@@ -341,9 +399,9 @@ continues after terrain support because contact friction is deferred. `F4`
 still previews only body 0's fixed
 canonical support normal and is intentionally available before and after
 contact. Camera motion and presentation-only water remain independent. PHY-005
-adds no visible capsule to this manual scene; its acceptance result is the
-tested CPU contact capability rather than a misleading stretched-sphere render
-proxy.
+adds no visible capsule and PHY-006 adds no visible box to this manual scene;
+their acceptance result is tested CPU contact capability rather than a
+misleading static render proxy.
 
 PHY-004's focused rigid-body suite passes `1,540` assertions across nine cases
 in both Debug and Release; both full unit suites pass `182/182`. Presentation
@@ -361,16 +419,23 @@ Both full unit presets pass `202/202`. The unchanged Debug hardware
 presentation smoke passes 1,000 frames, records the expected 4,000 existing
 sphere draws, and reports zero D3D12 corruption/errors or live child objects.
 
+PHY-006's focused box suite passes `4,282` assertions across 15 cases in both
+Debug and Release. Terrain's triangle-bounds candidate suite passes `351`
+assertions across seven cases in both configurations. Both complete suites
+pass `393,840` assertions across `224/224` cases. The unchanged Debug hardware
+presentation smoke passes 1,000 frames, records the expected 4,000 existing
+sphere draws, and reports zero D3D12 corruption/errors or live child objects.
+
 ## Explicit non-goals
 
-PHY-005 adds no capsule simulation entity, capsule mass/inertia, positional or
-velocity response, unequal per-body mass, angular contact impulse, rolling or
-sliding friction, persistent manifold, iterative constraint solve, continuous
-collision detection, broad
-phase, sleeping, arbitrary closest-feature sphere/triangle collision,
+PHY-006 adds no capsule or box simulation entity, capsule/box mass or inertia,
+positional or velocity response, unequal per-body mass, angular contact
+impulse, rolling or sliding friction, persistent manifold, iterative constraint
+solve, continuous collision detection, broad phase, sleeping, arbitrary
+closest-feature sphere/triangle collision,
 buoyancy, water displacement, reset control, entity system, or general
 debug-draw service. Its one-sample face support remains intended for the
 current one-meter-radius, four-meter-cell, slope-bounded Environment Lab
 heightfield proof. The lake remains W-001 presentation-only water, and `R-001`
-through `R-004` remain deferred. The active queue is `PHY-006` oriented-box
-contact manifolds and is centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).
+through `R-004` remain deferred. The active queue is `PHY-007` contact
+constraint solving and is centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).

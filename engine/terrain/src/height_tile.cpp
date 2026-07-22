@@ -2010,6 +2010,167 @@ HeightTileSurface::closest_lod0_point_to_segment(
             });
 }
 
+core::Result<std::vector<HeightTileTriangleGeometry>>
+HeightTileSurface::lod0_triangles_overlapping_bounds(
+    const Bounds3& query_bounds) const
+{
+    if (!math::is_finite(query_bounds.minimum) ||
+        !math::is_finite(query_bounds.maximum) ||
+        query_bounds.minimum.x > query_bounds.maximum.x ||
+        query_bounds.minimum.y > query_bounds.maximum.y ||
+        query_bounds.minimum.z > query_bounds.maximum.z) {
+        return core::Result<
+            std::vector<HeightTileTriangleGeometry>>::failure(
+                terrain_error(
+                    core::ErrorCode::invalid_argument,
+                    "Terrain triangle bounds queries require finite "
+                    "ordered bounds"));
+    }
+
+    std::vector<HeightTileTriangleGeometry> result;
+    if (query_bounds.maximum.x < bounds_.minimum.x ||
+        query_bounds.minimum.x > bounds_.maximum.x ||
+        query_bounds.maximum.y < bounds_.minimum.y ||
+        query_bounds.minimum.y > bounds_.maximum.y ||
+        query_bounds.maximum.z < bounds_.minimum.z ||
+        query_bounds.minimum.z > bounds_.maximum.z) {
+        return core::Result<
+            std::vector<HeightTileTriangleGeometry>>::success(
+                std::move(result));
+    }
+
+    const auto clipped_minimum_x = std::clamp(
+        query_bounds.minimum.x,
+        bounds_.minimum.x,
+        bounds_.maximum.x);
+    const auto clipped_maximum_x = std::clamp(
+        query_bounds.maximum.x,
+        bounds_.minimum.x,
+        bounds_.maximum.x);
+    const auto clipped_minimum_z = std::clamp(
+        query_bounds.minimum.z,
+        bounds_.minimum.z,
+        bounds_.maximum.z);
+    const auto clipped_maximum_z = std::clamp(
+        query_bounds.maximum.z,
+        bounds_.minimum.z,
+        bounds_.maximum.z);
+    auto first_cell_x = locate_cell_coordinate(
+        tile_,
+        clipped_minimum_x,
+        tile_.sample_columns,
+        HorizontalAxis::x).cell;
+    auto last_cell_x = locate_cell_coordinate(
+        tile_,
+        clipped_maximum_x,
+        tile_.sample_columns,
+        HorizontalAxis::x).cell;
+    auto first_cell_z = locate_cell_coordinate(
+        tile_,
+        clipped_minimum_z,
+        tile_.sample_rows,
+        HorizontalAxis::z).cell;
+    auto last_cell_z = locate_cell_coordinate(
+        tile_,
+        clipped_maximum_z,
+        tile_.sample_rows,
+        HorizontalAxis::z).cell;
+    first_cell_x = first_cell_x > 0U
+        ? first_cell_x - 1U
+        : 0U;
+    first_cell_z = first_cell_z > 0U
+        ? first_cell_z - 1U
+        : 0U;
+    last_cell_x = std::min(
+        last_cell_x + 1U,
+        tile_.sample_columns - 2U);
+    last_cell_z = std::min(
+        last_cell_z + 1U,
+        tile_.sample_rows - 2U);
+
+    const auto cell_columns =
+        static_cast<std::size_t>(last_cell_x - first_cell_x) + 1U;
+    const auto cell_rows =
+        static_cast<std::size_t>(last_cell_z - first_cell_z) + 1U;
+    if (cell_columns >
+            std::numeric_limits<std::size_t>::max() / cell_rows ||
+        cell_columns * cell_rows >
+            std::numeric_limits<std::size_t>::max() / 2U) {
+        return core::Result<
+            std::vector<HeightTileTriangleGeometry>>::failure(
+                terrain_error(
+                    core::ErrorCode::unavailable,
+                    "Terrain triangle candidate count exceeded "
+                    "addressable storage"));
+    }
+    result.reserve(cell_columns * cell_rows * 2U);
+    constexpr std::array triangles{
+        HeightTileTriangle::v00_v01_v11,
+        HeightTileTriangle::v00_v11_v10,
+    };
+    for (std::uint32_t cell_z = first_cell_z;
+         cell_z <= last_cell_z;
+         ++cell_z) {
+        for (std::uint32_t cell_x = first_cell_x;
+             cell_x <= last_cell_x;
+             ++cell_x) {
+            for (const auto triangle : triangles) {
+                const auto positions = fixed_triangle_positions(
+                    tile_,
+                    cell_x,
+                    cell_z,
+                    triangle);
+                auto triangle_minimum = positions[0];
+                auto triangle_maximum = positions[0];
+                for (std::size_t vertex = 1U;
+                     vertex < positions.size();
+                     ++vertex) {
+                    triangle_minimum.x = std::min(
+                        triangle_minimum.x,
+                        positions[vertex].x);
+                    triangle_minimum.y = std::min(
+                        triangle_minimum.y,
+                        positions[vertex].y);
+                    triangle_minimum.z = std::min(
+                        triangle_minimum.z,
+                        positions[vertex].z);
+                    triangle_maximum.x = std::max(
+                        triangle_maximum.x,
+                        positions[vertex].x);
+                    triangle_maximum.y = std::max(
+                        triangle_maximum.y,
+                        positions[vertex].y);
+                    triangle_maximum.z = std::max(
+                        triangle_maximum.z,
+                        positions[vertex].z);
+                }
+                if (triangle_maximum.x < query_bounds.minimum.x ||
+                    triangle_minimum.x > query_bounds.maximum.x ||
+                    triangle_maximum.y < query_bounds.minimum.y ||
+                    triangle_minimum.y > query_bounds.maximum.y ||
+                    triangle_maximum.z < query_bounds.minimum.z ||
+                    triangle_minimum.z > query_bounds.maximum.z) {
+                    continue;
+                }
+                result.push_back(HeightTileTriangleGeometry{
+                    .positions = positions,
+                    .normal = triangle_normal(
+                        tile_,
+                        cell_x,
+                        cell_z,
+                        triangle),
+                    .cell_x = cell_x,
+                    .cell_z = cell_z,
+                    .triangle = triangle,
+                });
+            }
+        }
+    }
+    return core::Result<
+        std::vector<HeightTileTriangleGeometry>>::success(
+            std::move(result));
+}
+
 core::Result<HeightTileMesh> build_lod0_mesh(
     const HeightTile& tile)
 {

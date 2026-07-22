@@ -648,6 +648,454 @@ struct TriangleRayHit final {
     return TriangleRayHit{std::max(0.0, distance)};
 }
 
+using PrecisePoint = std::array<double, 3>;
+
+[[nodiscard]] PrecisePoint precise_point(
+    const math::Float3 value) noexcept
+{
+    return {{
+        static_cast<double>(value.x),
+        static_cast<double>(value.y),
+        static_cast<double>(value.z),
+    }};
+}
+
+[[nodiscard]] PrecisePoint subtract(
+    const PrecisePoint& left,
+    const PrecisePoint& right) noexcept
+{
+    return {{
+        left[0] - right[0],
+        left[1] - right[1],
+        left[2] - right[2],
+    }};
+}
+
+[[nodiscard]] PrecisePoint add_scaled(
+    const PrecisePoint& origin,
+    const PrecisePoint& direction,
+    const double parameter) noexcept
+{
+    return {{
+        origin[0] + direction[0] * parameter,
+        origin[1] + direction[1] * parameter,
+        origin[2] + direction[2] * parameter,
+    }};
+}
+
+[[nodiscard]] double dot(
+    const PrecisePoint& left,
+    const PrecisePoint& right) noexcept
+{
+    return left[0] * right[0] +
+        left[1] * right[1] +
+        left[2] * right[2];
+}
+
+[[nodiscard]] PrecisePoint cross(
+    const PrecisePoint& left,
+    const PrecisePoint& right) noexcept
+{
+    return {{
+        left[1] * right[2] - left[2] * right[1],
+        left[2] * right[0] - left[0] * right[2],
+        left[0] * right[1] - left[1] * right[0],
+    }};
+}
+
+struct PreciseTrianglePoint final {
+    PrecisePoint position;
+    PrecisePoint barycentrics;
+};
+
+[[nodiscard]] PreciseTrianglePoint closest_point_on_triangle(
+    const PrecisePoint& point,
+    const std::array<PrecisePoint, 3>& triangle) noexcept
+{
+    const auto edge_ab = subtract(triangle[1], triangle[0]);
+    const auto edge_ac = subtract(triangle[2], triangle[0]);
+    const auto from_a = subtract(point, triangle[0]);
+    const auto d1 = dot(edge_ab, from_a);
+    const auto d2 = dot(edge_ac, from_a);
+    if (d1 <= 0.0 && d2 <= 0.0) {
+        return {triangle[0], {{1.0, 0.0, 0.0}}};
+    }
+
+    const auto from_b = subtract(point, triangle[1]);
+    const auto d3 = dot(edge_ab, from_b);
+    const auto d4 = dot(edge_ac, from_b);
+    if (d3 >= 0.0 && d4 <= d3) {
+        return {triangle[1], {{0.0, 1.0, 0.0}}};
+    }
+
+    const auto vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0) {
+        const auto denominator = d1 - d3;
+        const auto v = d1 / denominator;
+        return {
+            add_scaled(triangle[0], edge_ab, v),
+            {{1.0 - v, v, 0.0}},
+        };
+    }
+
+    const auto from_c = subtract(point, triangle[2]);
+    const auto d5 = dot(edge_ab, from_c);
+    const auto d6 = dot(edge_ac, from_c);
+    if (d6 >= 0.0 && d5 <= d6) {
+        return {triangle[2], {{0.0, 0.0, 1.0}}};
+    }
+
+    const auto vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0) {
+        const auto denominator = d2 - d6;
+        const auto w = d2 / denominator;
+        return {
+            add_scaled(triangle[0], edge_ac, w),
+            {{1.0 - w, 0.0, w}},
+        };
+    }
+
+    const auto va = d3 * d6 - d5 * d4;
+    if (va <= 0.0 && d4 - d3 >= 0.0 && d5 - d6 >= 0.0) {
+        const auto first = d4 - d3;
+        const auto second = d5 - d6;
+        const auto w = first / (first + second);
+        const auto edge_bc = subtract(triangle[2], triangle[1]);
+        return {
+            add_scaled(triangle[1], edge_bc, w),
+            {{0.0, 1.0 - w, w}},
+        };
+    }
+
+    const auto denominator = 1.0 / (va + vb + vc);
+    const auto v = vb * denominator;
+    const auto w = vc * denominator;
+    return {
+        add_scaled(
+            add_scaled(triangle[0], edge_ab, v),
+            edge_ac,
+            w),
+        {{1.0 - v - w, v, w}},
+    };
+}
+
+struct SegmentPairClosestPoint final {
+    double first_parameter{};
+    double second_parameter{};
+    PrecisePoint first_position;
+    PrecisePoint second_position;
+};
+
+[[nodiscard]] SegmentPairClosestPoint closest_segment_pair(
+    const PrecisePoint& first_start,
+    const PrecisePoint& first_end,
+    const PrecisePoint& second_start,
+    const PrecisePoint& second_end) noexcept
+{
+    const auto first_direction = subtract(first_end, first_start);
+    const auto second_direction = subtract(second_end, second_start);
+    const auto start_offset = subtract(first_start, second_start);
+    const auto first_length_squared =
+        dot(first_direction, first_direction);
+    const auto second_length_squared =
+        dot(second_direction, second_direction);
+    const auto second_projection =
+        dot(second_direction, start_offset);
+
+    double first_parameter = 0.0;
+    double second_parameter = 0.0;
+    if (first_length_squared == 0.0 &&
+        second_length_squared == 0.0) {
+        return {
+            0.0,
+            0.0,
+            first_start,
+            second_start,
+        };
+    }
+    if (first_length_squared == 0.0) {
+        second_parameter = std::clamp(
+            second_projection / second_length_squared,
+            0.0,
+            1.0);
+    }
+    else {
+        const auto first_projection =
+            dot(first_direction, start_offset);
+        if (second_length_squared == 0.0) {
+            first_parameter = std::clamp(
+                -first_projection / first_length_squared,
+                0.0,
+                1.0);
+        }
+        else {
+            const auto shared_projection =
+                dot(first_direction, second_direction);
+            const auto denominator =
+                first_length_squared * second_length_squared -
+                shared_projection * shared_projection;
+            constexpr double relative_parallel_epsilon =
+                std::numeric_limits<double>::epsilon() * 64.0;
+            if (denominator >
+                first_length_squared * second_length_squared *
+                    relative_parallel_epsilon) {
+                first_parameter = std::clamp(
+                    (shared_projection * second_projection -
+                     first_projection * second_length_squared) /
+                        denominator,
+                    0.0,
+                    1.0);
+            }
+            second_parameter =
+                (shared_projection * first_parameter +
+                 second_projection) /
+                second_length_squared;
+            if (second_parameter < 0.0) {
+                second_parameter = 0.0;
+                first_parameter = std::clamp(
+                    -first_projection / first_length_squared,
+                    0.0,
+                    1.0);
+            }
+            else if (second_parameter > 1.0) {
+                second_parameter = 1.0;
+                first_parameter = std::clamp(
+                    (shared_projection - first_projection) /
+                        first_length_squared,
+                    0.0,
+                    1.0);
+            }
+        }
+    }
+
+    return {
+        first_parameter,
+        second_parameter,
+        add_scaled(
+            first_start,
+            first_direction,
+            first_parameter),
+        add_scaled(
+            second_start,
+            second_direction,
+            second_parameter),
+    };
+}
+
+struct SegmentTriangleClosestPoint final {
+    double distance_squared{
+        std::numeric_limits<double>::infinity()};
+    double segment_parameter{};
+    PrecisePoint segment_position;
+    PrecisePoint triangle_position;
+    PrecisePoint triangle_barycentrics;
+};
+
+void consider_closest_point(
+    SegmentTriangleClosestPoint& closest,
+    const double segment_parameter,
+    const PrecisePoint& segment_position,
+    const PrecisePoint& triangle_position,
+    const PrecisePoint& triangle_barycentrics) noexcept
+{
+    const auto offset = subtract(
+        triangle_position,
+        segment_position);
+    const auto distance_squared = dot(offset, offset);
+    if (distance_squared < closest.distance_squared) {
+        closest = {
+            distance_squared,
+            segment_parameter,
+            segment_position,
+            triangle_position,
+            triangle_barycentrics,
+        };
+    }
+}
+
+[[nodiscard]] std::optional<PrecisePoint>
+segment_triangle_intersection_barycentrics(
+    const PrecisePoint& segment_start,
+    const PrecisePoint& segment_direction,
+    const std::array<PrecisePoint, 3>& triangle,
+    double& segment_parameter) noexcept
+{
+    const auto edge_ab = subtract(triangle[1], triangle[0]);
+    const auto edge_ac = subtract(triangle[2], triangle[0]);
+    const auto normal = cross(edge_ab, edge_ac);
+    const auto denominator = dot(normal, segment_direction);
+    const auto denominator_scale = std::sqrt(
+        dot(normal, normal) *
+        dot(segment_direction, segment_direction));
+    constexpr double relative_parallel_epsilon =
+        std::numeric_limits<double>::epsilon() * 64.0;
+    if (denominator_scale == 0.0 ||
+        std::abs(denominator) <=
+            denominator_scale * relative_parallel_epsilon) {
+        return std::nullopt;
+    }
+
+    segment_parameter =
+        dot(normal, subtract(triangle[0], segment_start)) /
+        denominator;
+    constexpr double edge_epsilon = 1.0e-12;
+    if (segment_parameter < -edge_epsilon ||
+        segment_parameter > 1.0 + edge_epsilon) {
+        return std::nullopt;
+    }
+    segment_parameter = std::clamp(
+        segment_parameter,
+        0.0,
+        1.0);
+    const auto intersection = add_scaled(
+        segment_start,
+        segment_direction,
+        segment_parameter);
+
+    const auto from_a = subtract(intersection, triangle[0]);
+    const auto ab_ab = dot(edge_ab, edge_ab);
+    const auto ab_ac = dot(edge_ab, edge_ac);
+    const auto ac_ac = dot(edge_ac, edge_ac);
+    const auto point_ab = dot(from_a, edge_ab);
+    const auto point_ac = dot(from_a, edge_ac);
+    const auto barycentric_denominator =
+        ab_ab * ac_ac - ab_ac * ab_ac;
+    if (barycentric_denominator == 0.0) {
+        return std::nullopt;
+    }
+    const auto second =
+        (ac_ac * point_ab - ab_ac * point_ac) /
+        barycentric_denominator;
+    const auto third =
+        (ab_ab * point_ac - ab_ac * point_ab) /
+        barycentric_denominator;
+    const auto first = 1.0 - second - third;
+    if (first < -edge_epsilon ||
+        second < -edge_epsilon ||
+        third < -edge_epsilon) {
+        return std::nullopt;
+    }
+    PrecisePoint barycentrics{{
+        std::clamp(first, 0.0, 1.0),
+        std::clamp(second, 0.0, 1.0),
+        std::clamp(third, 0.0, 1.0),
+    }};
+    const auto sum =
+        barycentrics[0] +
+        barycentrics[1] +
+        barycentrics[2];
+    for (auto& component : barycentrics) {
+        component /= sum;
+    }
+    return barycentrics;
+}
+
+[[nodiscard]] SegmentTriangleClosestPoint
+closest_segment_triangle_points(
+    const PrecisePoint& segment_start,
+    const PrecisePoint& segment_end,
+    const std::array<PrecisePoint, 3>& triangle) noexcept
+{
+    SegmentTriangleClosestPoint closest;
+    const auto segment_direction = subtract(
+        segment_end,
+        segment_start);
+    double intersection_parameter = 0.0;
+    const auto intersection_barycentrics =
+        segment_triangle_intersection_barycentrics(
+            segment_start,
+            segment_direction,
+            triangle,
+            intersection_parameter);
+    if (intersection_barycentrics.has_value()) {
+        const auto intersection = add_scaled(
+            segment_start,
+            segment_direction,
+            intersection_parameter);
+        consider_closest_point(
+            closest,
+            intersection_parameter,
+            intersection,
+            intersection,
+            *intersection_barycentrics);
+    }
+
+    const auto first_triangle_point = closest_point_on_triangle(
+        segment_start,
+        triangle);
+    consider_closest_point(
+        closest,
+        0.0,
+        segment_start,
+        first_triangle_point.position,
+        first_triangle_point.barycentrics);
+    const auto second_triangle_point = closest_point_on_triangle(
+        segment_end,
+        triangle);
+    consider_closest_point(
+        closest,
+        1.0,
+        segment_end,
+        second_triangle_point.position,
+        second_triangle_point.barycentrics);
+
+    constexpr std::array<std::array<std::size_t, 2>, 3> edges{{
+        {{0U, 1U}},
+        {{1U, 2U}},
+        {{2U, 0U}},
+    }};
+    for (std::size_t edge_index = 0;
+         edge_index < edges.size();
+         ++edge_index) {
+        const auto first_vertex = edges[edge_index][0];
+        const auto second_vertex = edges[edge_index][1];
+        const auto edge_closest = closest_segment_pair(
+            segment_start,
+            segment_end,
+            triangle[first_vertex],
+            triangle[second_vertex]);
+        PrecisePoint barycentrics{};
+        barycentrics[first_vertex] =
+            1.0 - edge_closest.second_parameter;
+        barycentrics[second_vertex] =
+            edge_closest.second_parameter;
+        consider_closest_point(
+            closest,
+            edge_closest.first_parameter,
+            edge_closest.first_position,
+            edge_closest.second_position,
+            barycentrics);
+    }
+    return closest;
+}
+
+[[nodiscard]] bool representable_float(
+    const double value) noexcept
+{
+    return std::isfinite(value) &&
+        std::abs(value) <=
+            static_cast<double>(
+                std::numeric_limits<float>::max());
+}
+
+[[nodiscard]] bool representable_point(
+    const PrecisePoint& point) noexcept
+{
+    return representable_float(point[0]) &&
+        representable_float(point[1]) &&
+        representable_float(point[2]);
+}
+
+[[nodiscard]] math::Float3 float3(
+    const PrecisePoint& point) noexcept
+{
+    return {
+        static_cast<float>(point[0]),
+        static_cast<float>(point[1]),
+        static_cast<float>(point[2]),
+    };
+}
+
 [[nodiscard]] BoundsLineGeometry make_bounds_lines(
     const Bounds3 bounds) noexcept
 {
@@ -1357,6 +1805,209 @@ HeightTileSurface::raycast_lod0(
             .triangle = sample->triangle,
             .barycentrics = sample->barycentrics,
         });
+}
+
+core::Result<std::optional<HeightTileSegmentClosestPoint>>
+HeightTileSurface::closest_lod0_point_to_segment(
+    const Segment3& segment,
+    const float maximum_distance) const
+{
+    if (!math::is_finite(segment.first_endpoint) ||
+        !math::is_finite(segment.second_endpoint) ||
+        !std::isfinite(maximum_distance) ||
+        maximum_distance <= 0.0F) {
+        return core::Result<
+            std::optional<HeightTileSegmentClosestPoint>>::failure(
+                terrain_error(
+                    core::ErrorCode::invalid_argument,
+                    "Terrain segment queries require finite endpoints "
+                    "and a finite positive maximum distance"));
+    }
+
+    const auto first = precise_point(segment.first_endpoint);
+    const auto second = precise_point(segment.second_endpoint);
+    const auto expansion = static_cast<double>(maximum_distance);
+    const std::array<double, 3> query_minimum{{
+        std::min(first[0], second[0]) - expansion,
+        std::min(first[1], second[1]) - expansion,
+        std::min(first[2], second[2]) - expansion,
+    }};
+    const std::array<double, 3> query_maximum{{
+        std::max(first[0], second[0]) + expansion,
+        std::max(first[1], second[1]) + expansion,
+        std::max(first[2], second[2]) + expansion,
+    }};
+    if (query_maximum[0] <
+            static_cast<double>(bounds_.minimum.x) ||
+        query_minimum[0] >
+            static_cast<double>(bounds_.maximum.x) ||
+        query_maximum[1] <
+            static_cast<double>(bounds_.minimum.y) ||
+        query_minimum[1] >
+            static_cast<double>(bounds_.maximum.y) ||
+        query_maximum[2] <
+            static_cast<double>(bounds_.minimum.z) ||
+        query_minimum[2] >
+            static_cast<double>(bounds_.maximum.z)) {
+        return core::Result<
+            std::optional<HeightTileSegmentClosestPoint>>::success(
+                std::nullopt);
+    }
+
+    const auto clipped_minimum_x = static_cast<float>(std::clamp(
+        query_minimum[0],
+        static_cast<double>(bounds_.minimum.x),
+        static_cast<double>(bounds_.maximum.x)));
+    const auto clipped_maximum_x = static_cast<float>(std::clamp(
+        query_maximum[0],
+        static_cast<double>(bounds_.minimum.x),
+        static_cast<double>(bounds_.maximum.x)));
+    const auto clipped_minimum_z = static_cast<float>(std::clamp(
+        query_minimum[2],
+        static_cast<double>(bounds_.minimum.z),
+        static_cast<double>(bounds_.maximum.z)));
+    const auto clipped_maximum_z = static_cast<float>(std::clamp(
+        query_maximum[2],
+        static_cast<double>(bounds_.minimum.z),
+        static_cast<double>(bounds_.maximum.z)));
+    auto first_cell_x = locate_cell_coordinate(
+        tile_,
+        clipped_minimum_x,
+        tile_.sample_columns,
+        HorizontalAxis::x).cell;
+    auto last_cell_x = locate_cell_coordinate(
+        tile_,
+        clipped_maximum_x,
+        tile_.sample_columns,
+        HorizontalAxis::x).cell;
+    auto first_cell_z = locate_cell_coordinate(
+        tile_,
+        clipped_minimum_z,
+        tile_.sample_rows,
+        HorizontalAxis::z).cell;
+    auto last_cell_z = locate_cell_coordinate(
+        tile_,
+        clipped_maximum_z,
+        tile_.sample_rows,
+        HorizontalAxis::z).cell;
+
+    // Include one conservative neighboring cell on every available side.
+    // Exact grid-line features are shared, and stable row-major traversal
+    // decides equal-distance ownership.
+    first_cell_x = first_cell_x > 0U
+        ? first_cell_x - 1U
+        : 0U;
+    first_cell_z = first_cell_z > 0U
+        ? first_cell_z - 1U
+        : 0U;
+    last_cell_x = std::min(
+        last_cell_x + 1U,
+        tile_.sample_columns - 2U);
+    last_cell_z = std::min(
+        last_cell_z + 1U,
+        tile_.sample_rows - 2U);
+
+    SegmentTriangleClosestPoint closest;
+    std::uint32_t closest_cell_x{};
+    std::uint32_t closest_cell_z{};
+    HeightTileTriangle closest_triangle{
+        HeightTileTriangle::v00_v01_v11};
+    bool found_candidate = false;
+    constexpr std::array triangles{
+        HeightTileTriangle::v00_v01_v11,
+        HeightTileTriangle::v00_v11_v10,
+    };
+    for (std::uint32_t cell_z = first_cell_z;
+         cell_z <= last_cell_z;
+         ++cell_z) {
+        for (std::uint32_t cell_x = first_cell_x;
+             cell_x <= last_cell_x;
+             ++cell_x) {
+            for (const auto triangle : triangles) {
+                const auto positions = fixed_triangle_positions(
+                    tile_,
+                    cell_x,
+                    cell_z,
+                    triangle);
+                const std::array<PrecisePoint, 3>
+                    precise_positions{{
+                        precise_point(positions[0]),
+                        precise_point(positions[1]),
+                        precise_point(positions[2]),
+                    }};
+                const auto candidate =
+                    closest_segment_triangle_points(
+                        first,
+                        second,
+                        precise_positions);
+                if (!std::isfinite(candidate.distance_squared)) {
+                    return core::Result<std::optional<
+                        HeightTileSegmentClosestPoint>>::failure(
+                            terrain_error(
+                                core::ErrorCode::unavailable,
+                                "Terrain segment closest-feature math "
+                                "exceeded finite range"));
+                }
+                if (found_candidate &&
+                    candidate.distance_squared >=
+                        closest.distance_squared) {
+                    continue;
+                }
+                closest = candidate;
+                closest_cell_x = cell_x;
+                closest_cell_z = cell_z;
+                closest_triangle = triangle;
+                found_candidate = true;
+            }
+        }
+    }
+
+    const auto maximum_distance_squared =
+        expansion * expansion;
+    if (!found_candidate ||
+        closest.distance_squared > maximum_distance_squared) {
+        return core::Result<
+            std::optional<HeightTileSegmentClosestPoint>>::success(
+                std::nullopt);
+    }
+
+    const auto distance = std::sqrt(closest.distance_squared);
+    if (!representable_float(distance) ||
+        !representable_float(closest.segment_parameter) ||
+        !representable_point(closest.segment_position) ||
+        !representable_point(closest.triangle_position) ||
+        !representable_point(closest.triangle_barycentrics)) {
+        return core::Result<
+            std::optional<HeightTileSegmentClosestPoint>>::failure(
+                terrain_error(
+                    core::ErrorCode::unavailable,
+                    "Terrain segment closest feature exceeded finite "
+                    "float range"));
+    }
+
+    return core::Result<
+        std::optional<HeightTileSegmentClosestPoint>>::success(
+            HeightTileSegmentClosestPoint{
+                .segment_position =
+                    float3(closest.segment_position),
+                .segment_parameter = static_cast<float>(
+                    closest.segment_parameter),
+                .surface = HeightTileSurfaceSample{
+                    .position =
+                        float3(closest.triangle_position),
+                    .normal = triangle_normal(
+                        tile_,
+                        closest_cell_x,
+                        closest_cell_z,
+                        closest_triangle),
+                    .cell_x = closest_cell_x,
+                    .cell_z = closest_cell_z,
+                    .triangle = closest_triangle,
+                    .barycentrics =
+                        float3(closest.triangle_barycentrics),
+                },
+                .distance = static_cast<float>(distance),
+            });
 }
 
 core::Result<HeightTileMesh> build_lod0_mesh(

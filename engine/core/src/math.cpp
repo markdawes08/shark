@@ -3,6 +3,7 @@
 #include <DirectXMath.h>
 
 #include <cmath>
+#include <limits>
 
 namespace shark::math {
 namespace {
@@ -74,6 +75,55 @@ Float4 transform(
     DirectX::XMFLOAT4 stored{};
     DirectX::XMStoreFloat4(&stored, transformed);
     return Float4{stored.x, stored.y, stored.z, stored.w};
+}
+
+Float3 rotate(
+    const Quaternion orientation,
+    const Float3 vector) noexcept
+{
+    const auto quaternion_x = static_cast<double>(orientation.x);
+    const auto quaternion_y = static_cast<double>(orientation.y);
+    const auto quaternion_z = static_cast<double>(orientation.z);
+    const auto quaternion_w = static_cast<double>(orientation.w);
+    const auto vector_x = static_cast<double>(vector.x);
+    const auto vector_y = static_cast<double>(vector.y);
+    const auto vector_z = static_cast<double>(vector.z);
+
+    const auto twice_cross_x = 2.0 *
+        (quaternion_y * vector_z - quaternion_z * vector_y);
+    const auto twice_cross_y = 2.0 *
+        (quaternion_z * vector_x - quaternion_x * vector_z);
+    const auto twice_cross_z = 2.0 *
+        (quaternion_x * vector_y - quaternion_y * vector_x);
+    const auto rotated_x =
+        vector_x + quaternion_w * twice_cross_x +
+        quaternion_y * twice_cross_z -
+        quaternion_z * twice_cross_y;
+    const auto rotated_y =
+        vector_y + quaternion_w * twice_cross_y +
+        quaternion_z * twice_cross_x -
+        quaternion_x * twice_cross_z;
+    const auto rotated_z =
+        vector_z + quaternion_w * twice_cross_z +
+        quaternion_x * twice_cross_y -
+        quaternion_y * twice_cross_x;
+    const auto maximum = static_cast<double>(
+        std::numeric_limits<float>::max());
+    if (!std::isfinite(rotated_x) ||
+        !std::isfinite(rotated_y) ||
+        !std::isfinite(rotated_z) ||
+        std::abs(rotated_x) > maximum ||
+        std::abs(rotated_y) > maximum ||
+        std::abs(rotated_z) > maximum) {
+        const auto infinity =
+            std::numeric_limits<float>::infinity();
+        return {infinity, infinity, infinity};
+    }
+    return {
+        static_cast<float>(rotated_x),
+        static_cast<float>(rotated_y),
+        static_cast<float>(rotated_z),
+    };
 }
 
 bool is_finite(const Float3 value) noexcept

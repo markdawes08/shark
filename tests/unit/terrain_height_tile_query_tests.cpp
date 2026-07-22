@@ -137,6 +137,88 @@ void require_invalid_ray(
         shark::core::ErrorCode::invalid_argument);
 }
 
+void require_segment_hit_consistent(
+    const shark::terrain::HeightTileSegmentClosestPoint& hit,
+    const shark::terrain::Segment3 segment,
+    const float margin = comparison_margin)
+{
+    REQUIRE(hit.segment_parameter >= 0.0F);
+    REQUIRE(hit.segment_parameter <= 1.0F);
+    const shark::math::Float3 expected_segment_position{
+        segment.first_endpoint.x +
+            (segment.second_endpoint.x -
+             segment.first_endpoint.x) *
+                hit.segment_parameter,
+        segment.first_endpoint.y +
+            (segment.second_endpoint.y -
+             segment.first_endpoint.y) *
+                hit.segment_parameter,
+        segment.first_endpoint.z +
+            (segment.second_endpoint.z -
+             segment.first_endpoint.z) *
+                hit.segment_parameter,
+    };
+    require_float3(
+        hit.segment_position,
+        expected_segment_position,
+        margin);
+
+    const auto offset_x =
+        hit.segment_position.x - hit.surface.position.x;
+    const auto offset_y =
+        hit.segment_position.y - hit.surface.position.y;
+    const auto offset_z =
+        hit.segment_position.z - hit.surface.position.z;
+    const auto expected_distance = std::sqrt(
+        offset_x * offset_x +
+        offset_y * offset_y +
+        offset_z * offset_z);
+    REQUIRE(
+        hit.distance ==
+        Catch::Approx(expected_distance).margin(margin));
+    REQUIRE(hit.distance >= 0.0F);
+
+    const auto barycentric_sum =
+        hit.surface.barycentrics.x +
+        hit.surface.barycentrics.y +
+        hit.surface.barycentrics.z;
+    REQUIRE(
+        barycentric_sum ==
+        Catch::Approx(1.0F).margin(margin));
+    REQUIRE(hit.surface.barycentrics.x >= 0.0F);
+    REQUIRE(hit.surface.barycentrics.y >= 0.0F);
+    REQUIRE(hit.surface.barycentrics.z >= 0.0F);
+}
+
+void require_segment_hit_matches_sample(
+    const shark::terrain::HeightTileSegmentClosestPoint& hit,
+    const shark::terrain::HeightTileSurfaceSample& sample)
+{
+    require_float3(hit.surface.position, sample.position);
+    require_float3(hit.surface.normal, sample.normal);
+    REQUIRE(hit.surface.cell_x == sample.cell_x);
+    REQUIRE(hit.surface.cell_z == sample.cell_z);
+    REQUIRE(hit.surface.triangle == sample.triangle);
+    require_float3(
+        hit.surface.barycentrics,
+        sample.barycentrics);
+}
+
+void require_invalid_segment(
+    const shark::terrain::HeightTileSurface& surface,
+    const shark::terrain::Segment3 segment,
+    const float maximum_distance)
+{
+    const auto result =
+        surface.closest_lod0_point_to_segment(
+            segment,
+            maximum_distance);
+    REQUIRE_FALSE(result);
+    REQUIRE(
+        result.error().code() ==
+        shark::core::ErrorCode::invalid_argument);
+}
+
 } // namespace
 
 TEST_CASE(
@@ -853,4 +935,441 @@ TEST_CASE(
         surface,
         valid_ray,
         std::numeric_limits<float>::quiet_NaN());
+}
+
+TEST_CASE(
+    "LOD0 segment queries find face interiors and crossings",
+    "[terrain][height-tile][query][segment][face]")
+{
+    using namespace shark;
+
+    auto surface_result =
+        terrain::HeightTileSurface::create(make_flat_tile());
+    REQUIRE(surface_result);
+    const auto surface = std::move(surface_result).value();
+
+    const terrain::Segment3 crossing{
+        {0.25F, 1.0F, 0.75F},
+        {0.25F, -1.0F, 0.75F},
+    };
+    const auto crossing_result =
+        surface.closest_lod0_point_to_segment(
+            crossing,
+            0.25F);
+    REQUIRE(crossing_result);
+    REQUIRE(crossing_result.value());
+    const auto& crossing_hit = *crossing_result.value();
+    REQUIRE(
+        crossing_hit.segment_parameter ==
+        Catch::Approx(0.5F).margin(0.000001F));
+    REQUIRE(
+        crossing_hit.distance ==
+        Catch::Approx(0.0F).margin(0.000001F));
+    require_float3(
+        crossing_hit.segment_position,
+        {0.25F, 0.0F, 0.75F});
+    require_float3(
+        crossing_hit.surface.position,
+        {0.25F, 0.0F, 0.75F});
+    require_float3(
+        crossing_hit.surface.normal,
+        {0.0F, 1.0F, 0.0F});
+    REQUIRE(crossing_hit.surface.cell_x == 0);
+    REQUIRE(crossing_hit.surface.cell_z == 0);
+    REQUIRE(
+        crossing_hit.surface.triangle ==
+        terrain::HeightTileTriangle::v00_v01_v11);
+    require_float3(
+        crossing_hit.surface.barycentrics,
+        {0.25F, 0.50F, 0.25F});
+    require_segment_hit_consistent(crossing_hit, crossing);
+
+    const terrain::Segment3 endpoint_above_face{
+        {0.25F, 2.0F, 0.75F},
+        {0.25F, 1.0F, 0.75F},
+    };
+    const auto endpoint_result =
+        surface.closest_lod0_point_to_segment(
+            endpoint_above_face,
+            1.0F);
+    REQUIRE(endpoint_result);
+    REQUIRE(endpoint_result.value());
+    const auto& endpoint_hit = *endpoint_result.value();
+    REQUIRE(endpoint_hit.segment_parameter == 1.0F);
+    REQUIRE(endpoint_hit.distance == 1.0F);
+    require_float3(
+        endpoint_hit.segment_position,
+        endpoint_above_face.second_endpoint);
+    require_float3(
+        endpoint_hit.surface.position,
+        {0.25F, 0.0F, 0.75F});
+    require_segment_hit_consistent(
+        endpoint_hit,
+        endpoint_above_face);
+}
+
+TEST_CASE(
+    "LOD0 segment queries retain deterministic parallel and coplanar ties",
+    "[terrain][height-tile][query][segment][parallel][coplanar]")
+{
+    using namespace shark;
+
+    auto surface_result =
+        terrain::HeightTileSurface::create(make_flat_tile());
+    REQUIRE(surface_result);
+    const auto surface = std::move(surface_result).value();
+
+    const terrain::Segment3 parallel{
+        {0.20F, 2.0F, 0.80F},
+        {0.80F, 2.0F, 0.80F},
+    };
+    const auto parallel_result =
+        surface.closest_lod0_point_to_segment(parallel, 2.0F);
+    REQUIRE(parallel_result);
+    REQUIRE(parallel_result.value());
+    const auto& parallel_hit = *parallel_result.value();
+    REQUIRE(parallel_hit.segment_parameter == 0.0F);
+    REQUIRE(parallel_hit.distance == 2.0F);
+    require_float3(
+        parallel_hit.segment_position,
+        parallel.first_endpoint);
+    require_float3(
+        parallel_hit.surface.position,
+        {0.20F, 0.0F, 0.80F});
+    REQUIRE(
+        parallel_hit.surface.triangle ==
+        terrain::HeightTileTriangle::v00_v01_v11);
+    require_float3(
+        parallel_hit.surface.barycentrics,
+        {0.20F, 0.60F, 0.20F});
+    require_segment_hit_consistent(parallel_hit, parallel);
+
+    const terrain::Segment3 coplanar{
+        {0.20F, 0.0F, 0.80F},
+        {0.80F, 0.0F, 0.80F},
+    };
+    const auto coplanar_result =
+        surface.closest_lod0_point_to_segment(coplanar, 0.10F);
+    REQUIRE(coplanar_result);
+    REQUIRE(coplanar_result.value());
+    const auto& coplanar_hit = *coplanar_result.value();
+    REQUIRE(coplanar_hit.segment_parameter == 0.0F);
+    REQUIRE(coplanar_hit.distance == 0.0F);
+    require_float3(
+        coplanar_hit.segment_position,
+        coplanar.first_endpoint);
+    require_float3(
+        coplanar_hit.surface.position,
+        coplanar.first_endpoint);
+    REQUIRE(
+        coplanar_hit.surface.triangle ==
+        terrain::HeightTileTriangle::v00_v01_v11);
+    require_segment_hit_consistent(coplanar_hit, coplanar);
+}
+
+TEST_CASE(
+    "LOD0 segment queries select exact edge vertex and endpoint features",
+    "[terrain][height-tile][query][segment][edge][vertex][endpoint]")
+{
+    using namespace shark;
+
+    auto surface_result =
+        terrain::HeightTileSurface::create(make_flat_tile());
+    REQUIRE(surface_result);
+    const auto surface = std::move(surface_result).value();
+
+    const terrain::Segment3 beside_edge{
+        {-1.0F, -1.0F, 0.50F},
+        {-1.0F, 1.0F, 0.50F},
+    };
+    const auto edge_result =
+        surface.closest_lod0_point_to_segment(
+            beside_edge,
+            1.0F);
+    REQUIRE(edge_result);
+    REQUIRE(edge_result.value());
+    const auto& edge_hit = *edge_result.value();
+    REQUIRE(
+        edge_hit.segment_parameter ==
+        Catch::Approx(0.5F).margin(0.000001F));
+    REQUIRE(edge_hit.distance == 1.0F);
+    require_float3(
+        edge_hit.segment_position,
+        {-1.0F, 0.0F, 0.50F});
+    require_float3(
+        edge_hit.surface.position,
+        {0.0F, 0.0F, 0.50F});
+    REQUIRE(
+        edge_hit.surface.triangle ==
+        terrain::HeightTileTriangle::v00_v01_v11);
+    require_float3(
+        edge_hit.surface.barycentrics,
+        {0.50F, 0.50F, 0.0F});
+    require_segment_hit_consistent(edge_hit, beside_edge);
+
+    const terrain::Segment3 beyond_vertex{
+        {-1.0F, 0.0F, -1.0F},
+        {-2.0F, 0.0F, -1.0F},
+    };
+    const auto vertex_result =
+        surface.closest_lod0_point_to_segment(
+            beyond_vertex,
+            2.0F);
+    REQUIRE(vertex_result);
+    REQUIRE(vertex_result.value());
+    const auto& vertex_hit = *vertex_result.value();
+    REQUIRE(vertex_hit.segment_parameter == 0.0F);
+    REQUIRE(
+        vertex_hit.distance ==
+        Catch::Approx(std::sqrt(2.0F))
+            .margin(0.000001F));
+    require_float3(
+        vertex_hit.segment_position,
+        beyond_vertex.first_endpoint);
+    require_float3(vertex_hit.surface.position, {});
+    REQUIRE(
+        vertex_hit.surface.triangle ==
+        terrain::HeightTileTriangle::v00_v01_v11);
+    require_float3(
+        vertex_hit.surface.barycentrics,
+        {1.0F, 0.0F, 0.0F});
+    require_segment_hit_consistent(vertex_hit, beyond_vertex);
+}
+
+TEST_CASE(
+    "LOD0 segment queries accept zero-length segments",
+    "[terrain][height-tile][query][segment][zero]")
+{
+    using namespace shark;
+
+    auto surface_result =
+        terrain::HeightTileSurface::create(make_flat_tile());
+    REQUIRE(surface_result);
+    const auto surface = std::move(surface_result).value();
+    const terrain::Segment3 point_segment{
+        {0.25F, 1.0F, 0.75F},
+        {0.25F, 1.0F, 0.75F},
+    };
+
+    const auto result =
+        surface.closest_lod0_point_to_segment(
+            point_segment,
+            1.0F);
+    REQUIRE(result);
+    REQUIRE(result.value());
+    const auto& hit = *result.value();
+    REQUIRE(hit.segment_parameter == 0.0F);
+    REQUIRE(hit.distance == 1.0F);
+    require_float3(hit.segment_position, point_segment.first_endpoint);
+    const auto expected_sample =
+        surface.sample_lod0_surface(0.25F, 0.75F);
+    REQUIRE(expected_sample);
+    require_segment_hit_matches_sample(hit, *expected_sample);
+    require_segment_hit_consistent(hit, point_segment);
+}
+
+TEST_CASE(
+    "LOD0 segment ownership is stable across cells diagonals and maximum edges",
+    "[terrain][height-tile][query][segment][ownership]")
+{
+    using namespace shark;
+
+    auto flat_result =
+        terrain::HeightTileSurface::create(make_flat_tile());
+    REQUIRE(flat_result);
+    const auto flat = std::move(flat_result).value();
+    constexpr std::array<math::Float3, 2> flat_points{{
+        {1.50F, 0.0F, 0.25F},
+        {2.00F, 0.0F, 1.00F},
+    }};
+    for (const auto point : flat_points) {
+        const auto expected_sample =
+            flat.sample_lod0_surface(point.x, point.z);
+        REQUIRE(expected_sample);
+        const terrain::Segment3 segment{
+            {
+                point.x,
+                expected_sample->position.y + 1.0F,
+                point.z,
+            },
+            {
+                point.x,
+                expected_sample->position.y - 1.0F,
+                point.z,
+            },
+        };
+        const auto result =
+            flat.closest_lod0_point_to_segment(segment, 0.25F);
+        REQUIRE(result);
+        REQUIRE(result.value());
+        const auto& hit = *result.value();
+        REQUIRE(
+            hit.segment_parameter ==
+            Catch::Approx(0.5F).margin(0.000001F));
+        REQUIRE(
+            hit.distance ==
+            Catch::Approx(0.0F).margin(0.000001F));
+        require_segment_hit_matches_sample(hit, *expected_sample);
+        require_segment_hit_consistent(hit, segment);
+    }
+
+    // The internal X=1 grid line belongs to both adjacent cells. The segment
+    // query's documented row-major tie keeps cell 0, whereas point sampling
+    // independently selects cell 1 from its positive-side coordinate.
+    const terrain::Segment3 shared_cell_edge{
+        {1.00F, 1.0F, 0.25F},
+        {1.00F, -1.0F, 0.25F},
+    };
+    const auto shared_result =
+        flat.closest_lod0_point_to_segment(
+            shared_cell_edge,
+            0.25F);
+    REQUIRE(shared_result);
+    REQUIRE(shared_result.value());
+    const auto& shared_hit = *shared_result.value();
+    REQUIRE(shared_hit.surface.cell_x == 0);
+    REQUIRE(shared_hit.surface.cell_z == 0);
+    REQUIRE(
+        shared_hit.surface.triangle ==
+        terrain::HeightTileTriangle::v00_v11_v10);
+    require_float3(
+        shared_hit.surface.position,
+        {1.00F, 0.0F, 0.25F});
+    require_float3(
+        shared_hit.surface.barycentrics,
+        {0.0F, 0.25F, 0.75F});
+    require_segment_hit_consistent(
+        shared_hit,
+        shared_cell_edge);
+
+    auto twisted_result =
+        terrain::HeightTileSurface::create(make_twisted_tile());
+    REQUIRE(twisted_result);
+    const auto twisted = std::move(twisted_result).value();
+    const auto diagonal_sample =
+        twisted.sample_lod0_surface(0.50F, 0.50F);
+    REQUIRE(diagonal_sample);
+    REQUIRE(
+        diagonal_sample->triangle ==
+        terrain::HeightTileTriangle::v00_v01_v11);
+    const terrain::Segment3 diagonal{
+        {0.50F, diagonal_sample->position.y + 1.0F, 0.50F},
+        {0.50F, diagonal_sample->position.y - 1.0F, 0.50F},
+    };
+    const auto diagonal_result =
+        twisted.closest_lod0_point_to_segment(
+            diagonal,
+            0.25F);
+    REQUIRE(diagonal_result);
+    REQUIRE(diagonal_result.value());
+    require_segment_hit_matches_sample(
+        *diagonal_result.value(),
+        *diagonal_sample);
+    require_segment_hit_consistent(
+        *diagonal_result.value(),
+        diagonal);
+}
+
+TEST_CASE(
+    "terrain segment queries distinguish misses from invalid input",
+    "[terrain][height-tile][query][segment][validation]")
+{
+    using namespace shark;
+
+    auto surface_result =
+        terrain::HeightTileSurface::create(make_flat_tile());
+    REQUIRE(surface_result);
+    const auto surface = std::move(surface_result).value();
+
+    const std::array valid_misses{
+        std::pair{
+            terrain::Segment3{
+                {10.0F, 0.0F, 0.50F},
+                {11.0F, 0.0F, 0.50F},
+            },
+            1.0F,
+        },
+        std::pair{
+            terrain::Segment3{
+                {0.20F, 2.0F, 0.80F},
+                {0.80F, 2.0F, 0.80F},
+            },
+            std::nextafter(2.0F, 0.0F),
+        },
+        std::pair{
+            terrain::Segment3{
+                {0.50F, -2.0F, 0.50F},
+                {1.50F, -2.0F, 0.50F},
+            },
+            1.0F,
+        },
+    };
+    for (const auto& [segment, maximum_distance] : valid_misses) {
+        const auto result =
+            surface.closest_lod0_point_to_segment(
+                segment,
+                maximum_distance);
+        REQUIRE(result);
+        REQUIRE_FALSE(result.value());
+    }
+
+    const terrain::Segment3 valid_segment{
+        {0.25F, 1.0F, 0.75F},
+        {0.25F, -1.0F, 0.75F},
+    };
+    constexpr auto nan =
+        std::numeric_limits<float>::quiet_NaN();
+    constexpr auto infinity =
+        std::numeric_limits<float>::infinity();
+    require_invalid_segment(
+        surface,
+        terrain::Segment3{{nan, 0.0F, 0.0F}, {}},
+        1.0F);
+    require_invalid_segment(
+        surface,
+        terrain::Segment3{{}, {0.0F, infinity, 0.0F}},
+        1.0F);
+    require_invalid_segment(surface, valid_segment, 0.0F);
+    require_invalid_segment(surface, valid_segment, -1.0F);
+    require_invalid_segment(surface, valid_segment, infinity);
+    require_invalid_segment(surface, valid_segment, nan);
+}
+
+TEST_CASE(
+    "terrain segment closest results are exactly repeatable",
+    "[terrain][height-tile][query][segment][determinism]")
+{
+    using namespace shark;
+
+    auto surface_result =
+        terrain::HeightTileSurface::create(make_twisted_tile());
+    REQUIRE(surface_result);
+    const auto surface = std::move(surface_result).value();
+    const auto tile_before = surface.tile();
+    const auto bounds_before = surface.bounds();
+    const terrain::Segment3 diagonal{
+        {0.50F, 1.50F, 0.50F},
+        {0.50F, -0.50F, 0.50F},
+    };
+    const auto baseline =
+        surface.closest_lod0_point_to_segment(
+            diagonal,
+            0.25F);
+    REQUIRE(baseline);
+    REQUIRE(baseline.value());
+
+    constexpr std::size_t repeat_count = 64;
+    for (std::size_t repeat = 0;
+         repeat < repeat_count;
+         ++repeat) {
+        CAPTURE(repeat);
+        const auto repeated =
+            surface.closest_lod0_point_to_segment(
+                diagonal,
+                0.25F);
+        REQUIRE(repeated);
+        REQUIRE(repeated.value() == baseline.value());
+    }
+    REQUIRE(surface.tile() == tile_before);
+    REQUIRE(surface.bounds() == bounds_before);
 }

@@ -25,11 +25,14 @@ add_library(SharkEngine STATIC
     core/src/logging.cpp
     core/src/math.cpp
     physics/include/shark/physics/ballistic_body.hpp
+    physics/include/shark/physics/capsule_collider.hpp
+    physics/include/shark/physics/capsule_contact.hpp
     physics/include/shark/physics/rigid_body.hpp
     physics/include/shark/physics/sphere_body_collision.hpp
     physics/include/shark/physics/sphere_collider.hpp
     physics/include/shark/physics/sphere_terrain_contact.hpp
     physics/src/ballistic_body.cpp
+    physics/src/capsule_contact.cpp
     physics/src/rigid_body.cpp
     physics/src/sphere_body_collision.cpp
     physics/src/sphere_terrain_contact.cpp

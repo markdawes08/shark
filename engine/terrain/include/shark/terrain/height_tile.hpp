@@ -64,6 +64,15 @@ struct Ray3 final {
         const Ray3&) = default;
 };
 
+struct Segment3 final {
+    math::Float3 first_endpoint;
+    math::Float3 second_endpoint;
+
+    [[nodiscard]] friend bool operator==(
+        const Segment3&,
+        const Segment3&) = default;
+};
+
 struct BoundsInterval final {
     float entry_distance{};
     float exit_distance{};
@@ -87,6 +96,17 @@ struct HeightTileRayHit final {
     [[nodiscard]] friend bool operator==(
         const HeightTileRayHit&,
         const HeightTileRayHit&) = default;
+};
+
+struct HeightTileSegmentClosestPoint final {
+    math::Float3 segment_position;
+    float segment_parameter{};
+    HeightTileSurfaceSample surface;
+    float distance{};
+
+    [[nodiscard]] friend bool operator==(
+        const HeightTileSegmentClosestPoint&,
+        const HeightTileSegmentClosestPoint&) = default;
 };
 
 // Owns one validated canonical tile and its cached world-space bounds. Query
@@ -120,6 +140,16 @@ public:
     [[nodiscard]] core::Result<std::optional<HeightTileRayHit>>
         raycast_lod0(
             const Ray3& ray,
+            float maximum_distance) const;
+
+    // Finds the exact closest pair between a finite segment and canonical
+    // LOD0 triangles no farther apart than maximum_distance. The search is
+    // bounded to the segment's expanded X/Z cell range. Equal-distance ties
+    // retain stable row-major cell and fixed-triangle order.
+    [[nodiscard]] core::Result<
+        std::optional<HeightTileSegmentClosestPoint>>
+        closest_lod0_point_to_segment(
+            const Segment3& segment,
             float maximum_distance) const;
 
 private:

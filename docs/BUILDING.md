@@ -1,7 +1,7 @@
 # Building Shark
 
-- **Completed through:** `PHY-004`
-- **Last verified:** July 21, 2026
+- **Completed through:** `PHY-005`
+- **Last verified:** July 22, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
 14.50 LTS toolset, CMake 4.2 or newer, and Windows SDK 10.0.26100 exactly.
@@ -555,7 +555,8 @@ evidence are recorded above.
 See [the fixed-step simulation contract](SIMULATION.md) for the 60 Hz clock,
 pause/single-step controls, semi-implicit linear/angular state, normalized
 orientation interpolation, canonical one-sample sphere support, and the fixed
-four-body deterministic collision pass.
+four-body deterministic collision pass, plus PHY-005's pure capsule
+closest-feature contacts.
 
 W-001 consumes that scenario-owned waterline in a dedicated transparent pass
 after `Skybox`. The vertex shader expands a six-vertex quad from `SV_VertexID`
@@ -578,6 +579,21 @@ PSO, and `b2` binding; only the bounded root constants and sphere vertex shader
 interpretation change. Render-pass, descriptor, geometry-buffer, and per-frame
 upload budgets remain fixed. Rain remains deferred; the active increment queue
 is maintained in [ENGINE_PLAN.md](ENGINE_PLAN.md).
+
+PHY-005 is CPU-only. It adds a shared quaternion-vector rotation, finite
+capsule collider, bounded canonical terrain segment query, and pure contact
+generation against terrain, spheres, and capsules. It does not change the
+sandbox executable's body count, renderer inputs, shaders, root signature,
+draws, resources, descriptors, passes, uploads, or smoke accounting. Iterate
+with the `[terrain][segment]` and `[physics][capsule]` test tags before the full
+unit presets; one Debug hardware presentation smoke is the proportionate
+graphics regression gate for this non-rendering increment.
+
+At PHY-005 completion, the capsule suite passes `3,242` assertions across 11
+cases and the terrain segment suite passes `442` assertions across seven cases
+in both Debug and Release. Both full unit presets pass `202/202`. The unchanged
+Debug hardware presentation smoke passes 1,000 frames with zero D3D12
+corruption/errors or live child objects.
 
 ## Visual Studio
 

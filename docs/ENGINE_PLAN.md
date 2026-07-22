@@ -2,9 +2,9 @@
 
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
-- **Last updated:** July 21, 2026
-- **Latest completed:** `PHY-004` - angular rigid-body state
-- **Next increment:** `PHY-005` - capsule collision
+- **Last updated:** July 22, 2026
+- **Latest completed:** `PHY-005` - capsule collision
+- **Next increment:** `PHY-006` - oriented-box contact manifolds
 
 ## 1. Project direction
 
@@ -799,7 +799,7 @@ M5.
 | `PHY-002` | S | Complete: give the scenario-owned one-meter sphere a transactional one-sample face-plane response against `HeightTileSurface`; correct vertically without changing canonical X/Z ownership, settle through an explicit temporary infinite-friction endpoint projection, retain exact triangle metadata, retarget the bounded `F4` cyan pin to its fixed support sample, and prove real-scenario support, flat rest, slope clearance/normal, tolerance, diagonal/edge ownership, invalid input, and 30/60/120/144 Hz invariance | `feat(physics): add sphere terrain contact` |
 | `PHY-003` | S | Complete: publish exactly four scenario spheres in stable previous/current arrays; test six pairs in lexicographic brute-force order; split overlap between equal unit masses; apply approaching-only normal impulses with explicit `0.75` Environment Lab restitution; retain the isolated canonical-terrain proof; collide the first pair while airborne; and render four existing-mesh draws by rebinding `b2` without another resource, descriptor, or pass | `feat(physics): add sphere body collisions` |
 | `PHY-004` | S | Complete: extend the fixed snapshots with unit quaternions and world-space angular velocity; publish explicit equal solid-sphere mass/inertia; integrate torque semi-implicitly through normalized axis-angle increments; shortest-path interpolate render orientation; drive an inspectable local material marker through seven `b2` constants; and preserve all linear terrain/pair behavior without angular contact impulses | `feat(physics): add angular rigid-body state` |
-| `PHY-005` | S | Add capsule contacts against terrain, spheres, and capsules with focused closest-feature tests | `feat(physics): add capsule collision` |
+| `PHY-005` | S | Complete: add a finite local-half-segment capsule collider; derive world endpoints from normalized rigid orientation; add a bounded canonical LOD0 segment/triangle closest-feature query; generate pure capsule/terrain, capsule/sphere, and capsule/capsule contacts with signed separation, penetration depth, stable witnesses, one-sided terrain normals, and deterministic degenerate-feature fallbacks; and prove the analytic contracts without adding a solver or render proxy | `feat(physics): add capsule collision` |
 | `PHY-006` | S | Add oriented-box SAT contacts and multi-point manifold generation with visual/contact tests | `feat(physics): add box contact manifolds` |
 | `PHY-007` | S | Add iterative normal/friction impulses and validate restitution, sliding friction, and slope-rest behavior | `feat(physics): add contact constraint solver` |
 | `PHY-008` | S | Add manifold persistence and warm starting; a small crate stack remains stable within tolerance | `feat(physics): stabilize persistent contacts` |
@@ -844,9 +844,9 @@ physical source term.
 | D3D12 | Debug layer clean, focused GPU validation, DRED path, WARP smoke, named PIX passes |
 | Camera/cube | Basis and near/far math, elapsed-time input, aspect-changing resize, 24/36 geometry bounds, one static upload, one indexed draw/camera upload/depth clear per submission |
 | Sky/assets | Cubemap orientation, translation invariance, sRGB/linear correctness, missing-asset error |
-| Terrain | Flat/ramp samples, ray hits, normals, cell/chunk boundary equality, LOD seam captures, resident-region index/memory budgets, deterministic natural-height metrics, and closed-basin/spawn assertions |
+| Terrain | Flat/ramp samples, ray and finite-segment closest-feature hits, normals, cell/chunk boundary equality, LOD seam captures, resident-region index/memory budgets, deterministic natural-height metrics, and closed-basin/spawn assertions |
 | Rain | Seed repeatability, capacity bounds, emission statistics, impact height, GPU timing |
-| Physics | Gravity trajectory, resting contact, slope friction, restitution, stack stability, NaN scan |
+| Physics | Gravity trajectory, resting contact, analytic sphere/capsule closest features, slope friction, restitution, stack stability, and NaN scan |
 | Fluids | Lake at rest, dam break, walls, wet/dry front, non-negative depth, mass accounting, CPU/GPU tolerance |
 | Coupling | Sealed-bowl rainfall volume, cross-tile runoff, floating block, displacement conservation |
 
@@ -862,7 +862,7 @@ this section competes with the coupled-environment critical path through M7.
 ### Deferred visual-weather track
 
 The owner deferred these effects on July 19, 2026. They remain approved but
-have no position on the active `PHY-005 -> PHY-006`
+have no position on the active `PHY-006 -> PHY-007`
 path. Resuming one requires a small plan update; skipping them does not remove
 the numerical precipitation rate used by later hydrology.
 
@@ -965,18 +965,19 @@ online architecture is not implied.
 
 ## 14. Immediate next increment
 
-After PHY-004 is reviewed and committed by the owner, implement only `PHY-005`:
+After PHY-005 is reviewed and committed by the owner, implement only `PHY-006`:
 
-- add a finite capsule collider defined by radius and local half-segment, with
-  world endpoints derived from the existing normalized body orientation;
-- implement focused closest-point contacts for capsule/terrain,
-  capsule/sphere, and capsule/capsule pairs with stable coincident-feature
-  fallbacks and transactional validation;
-- prove separated, touching, penetrating, endpoint, parallel, crossed,
-  degenerate, invalid, and 30/60/120/144 Hz partition cases;
-- retain PHY-004 orientation/inertia/torque behavior and the existing sphere
-  terrain/pair smoke gates; and
-- stop before box SAT, general convex collision, angular contact impulses,
+- add a finite oriented-box collider with positive local half-extents and world
+  axes derived from the existing normalized rigid orientation;
+- generate bounded box/box and box/canonical-terrain SAT contacts, including
+  stable face clipping for a small multi-point manifold and deterministic
+  near-parallel-axis handling;
+- add a bounded contact visualization and focused separated, touching,
+  penetrating, face, edge, corner, rotated, near-parallel, invalid, and
+  repeated-order tests;
+- retain all sphere and capsule contact contracts plus the existing
+  Environment Lab smoke accounting; and
+- stop before general convex collision, GJK/EPA, angular contact impulses,
   friction, persistent manifolds, broad phase, sleeping, buoyancy, or water
   coupling.
 
@@ -1063,8 +1064,19 @@ corruption/errors or live child objects. Seven root constants replace the
 three-value sphere translation without adding a resource, descriptor, pass,
 draw, or per-frame upload allocation.
 
-The active queue is `PHY-005` capsule collision, then `PHY-006` oriented-box
-manifolds. `R-001` through `R-004` remain deferred.
+PHY-005 adds a finite radius/local-half-segment capsule, checked world-endpoint
+construction, and pure analytic contacts against canonical terrain, spheres,
+and other capsules. Terrain owns the bounded exact segment/LOD0-triangle query;
+render meshes and visual LOD never participate. Focused Debug and Release
+capsule suites pass `3,242` assertions across 11 cases, and the terrain segment
+suite passes `442` assertions across seven cases in both configurations. Both
+full unit presets pass `202/202`. The unchanged Debug hardware presentation
+smoke passes 1,000 frames with 4,000 existing sphere draws, zero D3D12
+corruption/errors, and zero live child objects. PHY-005 adds no runtime body,
+shader, resource, descriptor, pass, draw, or upload.
+
+The active queue is `PHY-006` oriented-box manifolds, then `PHY-007` contact
+constraint solving. `R-001` through `R-004` remain deferred.
 
 ## 15. Primary technical references
 

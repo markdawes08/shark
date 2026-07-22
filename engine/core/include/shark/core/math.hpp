@@ -63,6 +63,13 @@ static_assert(std::is_trivially_copyable_v<Matrix4x4>);
     Float4 vector,
     const Matrix4x4& matrix) noexcept;
 
+// Applies a unit-quaternion rotation without a DirectXMath dependency at the
+// call site. Validation remains the caller's responsibility. A result outside
+// finite float range is returned as a nonfinite sentinel for checked callers.
+[[nodiscard]] Float3 rotate(
+    Quaternion orientation,
+    Float3 vector) noexcept;
+
 [[nodiscard]] bool is_finite(Float3 value) noexcept;
 [[nodiscard]] bool is_finite(Float4 value) noexcept;
 [[nodiscard]] bool is_finite(Quaternion value) noexcept;

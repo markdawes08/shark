@@ -1,7 +1,7 @@
 # Canonical Terrain-Tile Contract
 
-- **Completed through:** `PHY-004`
-- **Last verified:** July 21, 2026
+- **Completed through:** `PHY-005`
+- **Last verified:** July 22, 2026
 
 T-008 composes the untouched T-007 rolling-height oracle with a bounded
 deterministic Q8 lake-basin post-process. The active composite checksum is
@@ -398,6 +398,47 @@ Canonical ray queries still check the LOD0 triangles directly. T-004 render
 chunks are presentation data and are not a query or physics acceleration
 structure. T-005's coarse ranges likewise remain derived presentation data;
 such acceleration requires a separate future increment.
+
+## Bounded segment closest-feature query
+
+The PHY-005 terrain boundary adds the CPU-only `Segment3` input and
+`closest_lod0_point_to_segment(segment, maximum_distance)` query. Both segment
+endpoints are world-space positions. The query finds the closest witness pair
+between that finite segment and the exact canonical LOD0 triangles, provided
+their Euclidean separation is within the inclusive maximum distance. Its
+candidate search is bounded to the segment's expanded world-space bounds and
+the corresponding conservative X/Z cell range; a valid query with no candidate
+inside the limit succeeds with an empty optional.
+
+Both endpoints and the maximum distance must be finite, and the maximum
+distance must be positive. Invalid input returns `invalid_argument` without
+mutating the owned tile or any caller state. Coincident endpoints are valid: a
+zero-length segment deterministically reduces to a point-versus-triangle
+closest-feature query rather than being rejected as a directionless ray.
+
+Shared edges, vertices, coplanar features, and other equal-distance candidates
+retain the first candidate in this stable ownership order:
+
+1. cells in row-major order, with `+Z` as the outer traversal and `+X` as the
+   inner traversal;
+2. `v00_v01_v11` before `v00_v11_v10` within each cell; and
+3. within one triangle, an intersection before the first endpoint, second
+   endpoint, and directed edges `AB`, `BC`, then `CA`.
+
+`HeightTileSegmentClosestPoint` returns both witnesses. `segment_position` is
+the point on the finite segment and `segment_parameter` is its clamped
+parameter in `[0, 1]`, where zero names the first endpoint and one names the
+second. `surface.position` is the canonical terrain witness;
+`surface.normal`, cell coordinates, fixed triangle, and barycentrics retain
+that triangle's exact ownership. The barycentric components use the named
+triangle-vertex order, matching direct surface samples and ray hits. `distance`
+is the metric separation in meters.
+
+This query reads `HeightTileSurface`'s canonical samples directly. It does not
+read smooth render normals, chunk bounds, culling state, coarse ranges, a render
+mesh, GPU buffers, or camera-selected LOD, and it adds no renderer or D3D12
+state. Its focused Debug and Release suite passes `442` assertions across seven
+cases; both complete unit presets pass `202/202`.
 
 ## Render mesh versus query data
 

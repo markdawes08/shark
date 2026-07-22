@@ -1,7 +1,7 @@
-# Fixed-Step Sphere Simulation Contract
+# Fixed-Step Rigid-Body and Contact Contract
 
-- **Completed through:** `PHY-004`
-- **Last verified:** July 21, 2026
+- **Completed through:** `PHY-005`
+- **Last verified:** July 22, 2026
 
 PHY-001 established Shark's fixed-clock ballistic path. PHY-002 gives that one
 sphere a one-meter collider and deterministic canonical-terrain support.
@@ -10,7 +10,10 @@ mass spheres and resolves their overlaps with restitution impulses. This is a
 bounded discrete collision proof. PHY-004 adds normalized orientation, angular
 velocity, explicit solid-sphere inertia, torque integration, and render
 interpolation without yet coupling angular motion to contacts. It remains a
-focused rigid-body foundation rather than a general solver.
+focused rigid-body foundation rather than a general solver. PHY-005 adds a
+finite capsule shape and pure analytic contacts against canonical terrain,
+spheres, and other capsules. It deliberately generates contact data without
+yet changing velocities or positions.
 
 ## Ownership and data flow
 
@@ -19,7 +22,8 @@ The boundaries are intentionally narrow:
 - `Simulation` owns fixed-step time accounting, pause state, and step requests;
 - `Physics` owns the fixed four-body capacity, rigid state, solid-sphere mass
   properties, linear/angular integration, colliders, canonical-terrain
-  response, sphere-pair response, contact records, and interpolation;
+  response, sphere-pair response, capsule closest-feature contacts, contact
+  records, and interpolation;
 - `World` publishes four deterministic scenario-owned body spawns, initial
   linear/angular states, equal mass, and external torques beside the lake;
 - the sandbox composition root sequences input, fixed ticks, immutable
@@ -204,6 +208,52 @@ that tick, while isolated body 0 continues to prove canonical support. Pair
 projection is a single discrete pass; it does not iterate a stack to
 convergence and it cannot prevent fast bodies from tunneling.
 
+## Capsule closest-feature contacts
+
+`CapsuleCollider` contains a finite positive radius and a finite local
+half-segment. Its centerline endpoints are the rigid-body position plus and
+minus that vector after unit-quaternion rotation. A zero half-segment is valid
+and intentionally reduces the capsule to a sphere. Endpoint construction and
+all contact calculations use checked finite intermediates; invalid state,
+orientation, radius, or local coordinates return `invalid_argument`, while a
+nonrepresentable result returns `unavailable`.
+
+The three PHY-005 entry points are read-only queries:
+
+- capsule/terrain returns the exact canonical terrain sample and the closest
+  capsule-axis point;
+- capsule/sphere returns the closest capsule-axis point and sphere center; and
+- capsule/capsule returns the closest points on both finite axes.
+
+Each successful contact records a unit normal, signed separation, and
+penetration depth:
+
+```text
+separation       = featureDistance - combinedRadius
+penetrationDepth = max(0, -separation)
+```
+
+Exact touching and separations no greater than `0.00001` meter produce a
+contact; a cleanly separated pair succeeds with an empty optional. Primitive
+pair normals point from the first shape toward the second. Coincident
+primitive features use a deterministic axis-derived perpendicular, an axis
+cross product for crossed capsules, or `+X` only when both axes degenerate.
+
+Capsule/terrain does not approximate the centerline with endpoint height
+samples. Terrain owns a bounded exact segment-versus-LOD0-triangle query that
+checks intersection, endpoint/face, and segment/edge candidates over the
+expanded X/Z cell range. It returns both witnesses, the segment parameter, and
+the selected triangle's exact cell, fixed split, normal, and barycentrics.
+Equal-distance candidates retain row-major cell order and fixed triangle
+order. Terrain contact normals stay in the canonical upward face-normal
+hemisphere; exact coincidence uses the selected face normal.
+
+These functions generate no positional correction, impulse, torque, friction,
+or manifold. They do not mutate either body or terrain and are not called by
+the current four-sphere Environment Lab. That separation lets PHY-006 build
+manifolds and PHY-007 introduce one shared response path instead of adding a
+second temporary solver.
+
 ## Rendering boundary
 
 The existing material-sphere mesh remains packed in the terrain geometry
@@ -262,7 +312,15 @@ Permanent CPU coverage checks:
 - bit-identical sphere-collision results across 30/60/120/144 Hz render
   partitions; and
 - the real Environment Lab pair impulse occurring before either pair body
-  touches terrain while body 0 reaches canonical support.
+  touches terrain while body 0 reaches canonical support;
+- identity, rotated, sign-equivalent, degenerate, invalid, and overflowing
+  capsule endpoint construction;
+- separated, tolerance-touching, penetrating, endpoint, parallel, crossed,
+  coincident, and degenerate capsule closest-feature cases;
+- canonical terrain face, edge, vertex, diagonal, maximum-edge, coplanar, and
+  zero-length segment ownership with stable repeated results; and
+- identical capsule query results after fixed ticks reached through
+  30/60/120/144 Hz render partitions.
 
 After defining `$cmake` and `$ctest` with the discovery block in
 [Building Shark](BUILDING.md#fresh-command-line-build), build and run all
@@ -282,7 +340,10 @@ under its constant torque while the sphere remains isolated; its angular motion
 continues after terrain support because contact friction is deferred. `F4`
 still previews only body 0's fixed
 canonical support normal and is intentionally available before and after
-contact. Camera motion and presentation-only water remain independent.
+contact. Camera motion and presentation-only water remain independent. PHY-005
+adds no visible capsule to this manual scene; its acceptance result is the
+tested CPU contact capability rather than a misleading stretched-sphere render
+proxy.
 
 PHY-004's focused rigid-body suite passes `1,540` assertions across nine cases
 in both Debug and Release; both full unit suites pass `182/182`. Presentation
@@ -293,9 +354,17 @@ finite normalized torque-driven body-3 rotation. They record exactly 4,000,
 2,400, 4,000, and 480 sphere draws respectively, with zero D3D12 corruption,
 errors, or live child objects.
 
+PHY-005's focused capsule suite passes `3,242` assertions across 11 cases in
+both Debug and Release. The Terrain-owned segment query passes `442` assertions
+across seven cases in both configurations, including exact repeated ownership.
+Both full unit presets pass `202/202`. The unchanged Debug hardware
+presentation smoke passes 1,000 frames, records the expected 4,000 existing
+sphere draws, and reports zero D3D12 corruption/errors or live child objects.
+
 ## Explicit non-goals
 
-PHY-004 adds no unequal per-body mass, angular contact impulse, rolling or
+PHY-005 adds no capsule simulation entity, capsule mass/inertia, positional or
+velocity response, unequal per-body mass, angular contact impulse, rolling or
 sliding friction, persistent manifold, iterative constraint solve, continuous
 collision detection, broad
 phase, sleeping, arbitrary closest-feature sphere/triangle collision,
@@ -303,5 +372,5 @@ buoyancy, water displacement, reset control, entity system, or general
 debug-draw service. Its one-sample face support remains intended for the
 current one-meter-radius, four-meter-cell, slope-bounded Environment Lab
 heightfield proof. The lake remains W-001 presentation-only water, and `R-001`
-through `R-004` remain deferred. The active queue is `PHY-005` capsule
-collision and is centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).
+through `R-004` remain deferred. The active queue is `PHY-006` oriented-box
+contact manifolds and is centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).

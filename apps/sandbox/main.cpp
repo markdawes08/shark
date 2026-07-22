@@ -1635,6 +1635,8 @@ void log_platform_event(const shark::platform::Event& event)
     }
     const auto sphere_mass_properties =
         std::move(sphere_mass_properties_result).value();
+    physics::SphereBodyMassProperties sphere_body_mass_properties{};
+    sphere_body_mass_properties.fill(sphere_mass_properties);
     auto previous_sphere_bodies = initial_sphere_bodies;
     auto current_sphere_bodies = initial_sphere_bodies;
     std::array<
@@ -2100,6 +2102,7 @@ void log_platform_event(const shark::platform::Event& event)
                     physics::advance_sphere_against_terrain(
                         current_sphere_bodies[body_index],
                         sphere_colliders[body_index],
+                        sphere_body_mass_properties[body_index],
                         terrain_surface,
                         physics::standard_gravity,
                         simulation_clock.fixed_delta_seconds());
@@ -2114,6 +2117,7 @@ void log_platform_event(const shark::platform::Event& event)
                 physics::resolve_sphere_body_collisions(
                     current_sphere_bodies,
                     sphere_colliders,
+                    sphere_body_mass_properties,
                     world::environment_lab_sphere_body_count,
                     sphere_collision_settings);
             if (!collision_result) {
@@ -2264,18 +2268,17 @@ void log_platform_event(const shark::platform::Event& event)
 
     if (smoke_mode) {
         const auto& stats = renderer_instance.stats();
-        const auto expected_torque_body_angular_velocity_z =
-            static_cast<double>(
-                environment_scenario.sphere_body_torques[3].z) *
-            static_cast<double>(
-                sphere_mass_properties.inverse_moment_of_inertia) *
-            static_cast<double>(
-                simulation_clock.fixed_delta_seconds()) *
-            static_cast<double>(
-                simulation_clock.total_step_count());
+        const auto primary_terrain_normal_velocity =
+            current_terrain_contacts[0].has_value()
+            ? current_sphere_bodies[0].linear_velocity.x *
+                    current_terrain_contacts[0]->surface.normal.x +
+                current_sphere_bodies[0].linear_velocity.y *
+                    current_terrain_contacts[0]->surface.normal.y +
+                current_sphere_bodies[0].linear_velocity.z *
+                    current_terrain_contacts[0]->surface.normal.z
+            : 0.0F;
         if (!current_terrain_contacts[0].has_value() ||
-            current_sphere_bodies[0].linear_velocity !=
-                math::Float3{} ||
+            !physics::is_valid(current_sphere_bodies[0]) ||
             current_sphere_bodies[0].position.x !=
                 current_terrain_contacts[0]->surface.position.x ||
             current_sphere_bodies[0].position.z !=
@@ -2285,7 +2288,8 @@ void log_platform_event(const shark::platform::Event& event)
                  current_terrain_contacts[0]->surface.position.y) *
                     current_terrain_contacts[0]->surface.normal.y -
                 sphere_colliders[0].radius) >
-                0.00001F) {
+                0.00001F ||
+            primary_terrain_normal_velocity < -0.0001F) {
             return core::Result<void>::failure(
                 renderer_smoke_error(
                     "The presentation smoke did not finish with the "
@@ -2299,29 +2303,43 @@ void log_platform_event(const shark::platform::Event& event)
                     "airborne sphere-pair impulse"));
         }
         if (!observed_torque_driven_rotation ||
-            current_sphere_bodies[3].angular_velocity.z <= 0.0F ||
-            !math::is_unit(current_sphere_bodies[3].orientation) ||
-            std::abs(
-                static_cast<double>(
-                    current_sphere_bodies[3].angular_velocity.z) -
-                expected_torque_body_angular_velocity_z) >
-                0.001) {
+            !physics::is_valid(current_sphere_bodies[3]) ||
+            current_sphere_bodies[3].orientation ==
+                initial_sphere_bodies[3].orientation) {
             return core::Result<void>::failure(
                 renderer_smoke_error(
                     "The presentation smoke did not observe finite "
                     "normalized torque-driven sphere rotation"));
         }
         for (std::size_t body_index = 0;
-             body_index < 3;
+             body_index < world::environment_lab_sphere_body_count;
              ++body_index) {
-            if (current_sphere_bodies[body_index].angular_velocity !=
-                    initial_sphere_bodies[body_index].angular_velocity ||
-                current_sphere_bodies[body_index].orientation !=
-                    initial_sphere_bodies[body_index].orientation) {
+            if (!physics::is_valid(
+                    current_sphere_bodies[body_index])) {
                 return core::Result<void>::failure(
                     renderer_smoke_error(
-                        "Linear terrain/pair response changed an "
-                        "uncoupled angular state"));
+                        "Contact solving produced an invalid sphere "
+                        "state"));
+            }
+            if (current_terrain_contacts[body_index].has_value()) {
+                const auto& contact =
+                    *current_terrain_contacts[body_index];
+                const auto& velocity =
+                    current_sphere_bodies[body_index]
+                        .linear_velocity;
+                const auto normal_velocity =
+                    velocity.x * contact.surface.normal.x +
+                    velocity.y * contact.surface.normal.y +
+                    velocity.z * contact.surface.normal.z;
+                if (!std::isfinite(normal_velocity) ||
+                    normal_velocity < -0.0001F) {
+                    return core::Result<void>::failure(
+                        renderer_smoke_error(
+                            "Terrain-supported sphere " +
+                            std::to_string(body_index) +
+                            " retained inward normal velocity " +
+                            std::to_string(normal_velocity)));
+                }
             }
         }
         if (stats.presented_frames != required_smoke_frames ||

@@ -20,6 +20,14 @@
 namespace {
 
 constexpr float comparison_margin = 0.00001F;
+constexpr shark::physics::SolidSphereMassProperties
+    unit_sphere_mass_properties{
+        .mass = 1.0F,
+        .inverse_mass = 1.0F,
+        .radius = 1.0F,
+        .moment_of_inertia = 0.4F,
+        .inverse_moment_of_inertia = 2.5F,
+    };
 
 [[nodiscard]] shark::terrain::HeightTile make_tile(
     const std::uint32_t columns,
@@ -91,6 +99,56 @@ void require_float3(
     REQUIRE(actual.z == Catch::Approx(expected.z).margin(margin));
 }
 
+[[nodiscard]] shark::core::Result<shark::physics::SphereTerrainStep>
+advance_unit_sphere_against_terrain(
+    shark::physics::BallisticBodyState& state,
+    const shark::physics::SphereCollider& collider,
+    const shark::terrain::HeightTileSurface& surface,
+    const shark::math::Float3 acceleration,
+    const float fixed_delta_seconds,
+    const shark::physics::SphereTerrainContactSettings settings = {})
+{
+    return shark::physics::advance_sphere_against_terrain(
+        state,
+        collider,
+        unit_sphere_mass_properties,
+        surface,
+        acceleration,
+        fixed_delta_seconds,
+        settings);
+}
+
+[[nodiscard]] constexpr shark::math::Float3 cross(
+    const shark::math::Float3 left,
+    const shark::math::Float3 right) noexcept
+{
+    return {
+        left.y * right.z - left.z * right.y,
+        left.z * right.x - left.x * right.z,
+        left.x * right.y - left.y * right.x,
+    };
+}
+
+[[nodiscard]] shark::math::Float3 sphere_contact_point_velocity(
+    const shark::physics::BallisticBodyState& state,
+    const shark::terrain::HeightTileSurfaceSample& surface,
+    const float radius) noexcept
+{
+    const shark::math::Float3 lever_arm{
+        -surface.normal.x * radius,
+        -surface.normal.y * radius,
+        -surface.normal.z * radius,
+    };
+    const auto angular_velocity = cross(
+        state.angular_velocity,
+        lever_arm);
+    return {
+        state.linear_velocity.x + angular_velocity.x,
+        state.linear_velocity.y + angular_velocity.y,
+        state.linear_velocity.z + angular_velocity.z,
+    };
+}
+
 [[nodiscard]] double center_plane_distance(
     const shark::physics::BallisticBodyState& state,
     const shark::terrain::HeightTileSurfaceSample& surface)
@@ -150,7 +208,7 @@ struct ContactRun final {
              step < frame_result.value().step_count;
              ++step) {
             const auto result =
-                physics::advance_sphere_against_terrain(
+                advance_unit_sphere_against_terrain(
                     state,
                     collider,
                     surface,
@@ -189,7 +247,7 @@ TEST_CASE(
          tick <= total_ticks;
          ++tick) {
         const auto result =
-            physics::advance_sphere_against_terrain(
+            advance_unit_sphere_against_terrain(
                 state,
                 collider,
                 surface,
@@ -272,7 +330,7 @@ TEST_CASE(
         .linear_velocity = {0.0F, -1.0F, 2.0F},
     };
     const auto result =
-        physics::advance_sphere_against_terrain(
+        advance_unit_sphere_against_terrain(
             state,
             collider,
             surface,
@@ -298,7 +356,21 @@ TEST_CASE(
             contact.surface.position.y +
             collider.radius / contact.surface.normal.y)
             .margin(0.000001));
-    REQUIRE(state.linear_velocity == math::Float3{});
+    require_float3(
+        state.linear_velocity,
+        {-0.35714287F, -0.35714287F, 1.42857146F},
+        0.00002F);
+    require_float3(
+        state.angular_velocity,
+        {1.01015258F, 1.01015258F, 0.50507629F},
+        0.00002F);
+    require_float3(
+        sphere_contact_point_velocity(
+            state,
+            contact.surface,
+            collider.radius),
+        {},
+        0.00002F);
 }
 
 TEST_CASE(
@@ -318,7 +390,7 @@ TEST_CASE(
         },
     };
     const auto inside_result =
-        physics::advance_sphere_against_terrain(
+        advance_unit_sphere_against_terrain(
             just_inside,
             collider,
             surface,
@@ -346,7 +418,7 @@ TEST_CASE(
     };
     const auto outside_before = just_outside;
     const auto outside_result =
-        physics::advance_sphere_against_terrain(
+        advance_unit_sphere_against_terrain(
             just_outside,
             collider,
             surface,
@@ -371,7 +443,7 @@ TEST_CASE(
         .position = {0.5F, 0.5F, 0.5F},
     };
     const auto diagonal_result =
-        physics::advance_sphere_against_terrain(
+        advance_unit_sphere_against_terrain(
             diagonal,
             collider,
             twisted,
@@ -390,7 +462,7 @@ TEST_CASE(
         .position = {0.5001F, 0.5F, 0.4999F},
     };
     const auto across_result =
-        physics::advance_sphere_against_terrain(
+        advance_unit_sphere_against_terrain(
             across_diagonal,
             collider,
             twisted,
@@ -410,7 +482,7 @@ TEST_CASE(
         .position = {2.0F, 0.0F, 1.0F},
     };
     const auto edge_result =
-        physics::advance_sphere_against_terrain(
+        advance_unit_sphere_against_terrain(
             maximum_edge,
             collider,
             flat,
@@ -438,7 +510,7 @@ TEST_CASE(
         physics::standard_gravity,
         0.1F));
     const auto outside_result =
-        physics::advance_sphere_against_terrain(
+        advance_unit_sphere_against_terrain(
             outside,
             collider,
             flat,
@@ -463,7 +535,7 @@ TEST_CASE(
         .linear_velocity = {0.0F, 1.0F, 0.0F},
     };
     const auto result =
-        physics::advance_sphere_against_terrain(
+        advance_unit_sphere_against_terrain(
             state,
             collider,
             surface,
@@ -500,7 +572,7 @@ TEST_CASE(
         REQUIRE_FALSE(physics::is_valid(collider));
         auto state = baseline;
         const auto result =
-            physics::advance_sphere_against_terrain(
+            advance_unit_sphere_against_terrain(
                 state,
                 collider,
                 surface,
@@ -520,7 +592,7 @@ TEST_CASE(
     invalid_state.position.y = infinity;
     const auto invalid_state_before = invalid_state;
     const auto invalid_state_result =
-        physics::advance_sphere_against_terrain(
+        advance_unit_sphere_against_terrain(
             invalid_state,
             valid_collider,
             surface,
@@ -534,7 +606,7 @@ TEST_CASE(
 
     auto invalid_delta_state = baseline;
     const auto invalid_delta_result =
-        physics::advance_sphere_against_terrain(
+        advance_unit_sphere_against_terrain(
             invalid_delta_state,
             valid_collider,
             surface,
@@ -546,31 +618,48 @@ TEST_CASE(
         core::ErrorCode::invalid_argument);
     REQUIRE(invalid_delta_state == baseline);
 
-    physics::BallisticBodyState overflowing{
+    auto invalid_mass_properties = unit_sphere_mass_properties;
+    invalid_mass_properties.inverse_mass = 0.0F;
+    auto invalid_mass_state = baseline;
+    const auto invalid_mass_result =
+        physics::advance_sphere_against_terrain(
+            invalid_mass_state,
+            valid_collider,
+            invalid_mass_properties,
+            surface,
+            physics::standard_gravity,
+            1.0F / 60.0F);
+    REQUIRE_FALSE(invalid_mass_result);
+    REQUIRE(
+        invalid_mass_result.error().code() ==
+        core::ErrorCode::invalid_argument);
+    REQUIRE(invalid_mass_state == baseline);
+
+    physics::BallisticBodyState mismatched{
         .position = {
             1.0F,
             -std::numeric_limits<float>::max(),
             1.0F,
         },
     };
-    const auto overflowing_before = overflowing;
-    const auto overflow_result =
-        physics::advance_sphere_against_terrain(
-            overflowing,
+    const auto mismatched_before = mismatched;
+    const auto mismatch_result =
+        advance_unit_sphere_against_terrain(
+            mismatched,
             physics::SphereCollider{
                 std::numeric_limits<float>::max()},
             surface,
             {},
             0.1F);
-    REQUIRE_FALSE(overflow_result);
+    REQUIRE_FALSE(mismatch_result);
     REQUIRE(
-        overflow_result.error().code() ==
-        core::ErrorCode::unavailable);
-    REQUIRE(overflowing == overflowing_before);
+        mismatch_result.error().code() ==
+        core::ErrorCode::invalid_argument);
+    REQUIRE(mismatched == mismatched_before);
 }
 
 TEST_CASE(
-    "Environment Lab proof sphere reaches its fixed support sample",
+    "Environment Lab proof sphere remains supported while rolling",
     "[physics][sphere][terrain][environment-lab][integration]")
 {
     using namespace shark;
@@ -584,11 +673,6 @@ TEST_CASE(
             std::move(scenario.terrain));
     REQUIRE(surface_result);
     const auto surface = std::move(surface_result).value();
-    const auto support_sample =
-        surface.sample_lod0_surface(
-            scenario.sphere_body_spawn_positions[0].x,
-            scenario.sphere_body_spawn_positions[0].z);
-    REQUIRE(support_sample);
 
     physics::BallisticBodyState state{
         .position =
@@ -603,7 +687,7 @@ TEST_CASE(
          tick < maximum_ticks;
          ++tick) {
         const auto result =
-            physics::advance_sphere_against_terrain(
+            advance_unit_sphere_against_terrain(
                 state,
                 collider,
                 surface,
@@ -614,13 +698,22 @@ TEST_CASE(
     }
 
     REQUIRE(contact);
-    REQUIRE(contact->surface == *support_sample);
-    REQUIRE(state.position.x ==
-        scenario.sphere_body_spawn_positions[0].x);
-    REQUIRE(state.position.z ==
-        scenario.sphere_body_spawn_positions[0].z);
-    REQUIRE(state.linear_velocity == math::Float3{});
+    const auto final_surface = surface.sample_lod0_surface(
+        state.position.x,
+        state.position.z);
+    REQUIRE(final_surface);
+    REQUIRE(contact->surface == *final_surface);
+    REQUIRE(math::is_finite(state.position));
+    REQUIRE(math::is_finite(state.linear_velocity));
+    REQUIRE(math::is_finite(state.angular_velocity));
     REQUIRE(
         center_plane_distance(state, contact->surface) ==
         Catch::Approx(collider.radius).margin(0.000001));
+    require_float3(
+        sphere_contact_point_velocity(
+            state,
+            contact->surface,
+            collider.radius),
+        {},
+        0.0001F);
 }

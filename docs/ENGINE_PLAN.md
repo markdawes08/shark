@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 22, 2026
-- **Latest completed:** `PHY-006` - oriented-box contact manifolds
-- **Next increment:** `PHY-007` - contact constraint solver
+- **Latest completed:** `PHY-007` - contact constraint solver
+- **Next increment:** `PHY-008` - persistent manifolds and warm starting
 
 ## 1. Project direction
 
@@ -610,12 +610,14 @@ body advances under gravity with semi-implicit Euler, and rendering consumes an
 immutable interpolation of previous/current snapshots through the existing
 material sphere's `b2` translation.
 
-PHY-002 completes the first contact proof: that sphere now consumes the exact
-canonical LOD0 face below its center, corrects plane penetration without
-changing X/Z ownership, and settles through a deliberately limited sticking
-response independent of render-rate partitioning. That response is explicitly
-the temporary infinite-friction endpoint projection documented for PHY-002,
-not the later contact solver. The visual lake remains presentation-only.
+PHY-002 established the first contact proof: the sphere consumed the exact
+canonical LOD0 face below its center and corrected plane penetration without
+changing X/Z ownership. At that increment's completion it settled through a
+deliberately temporary infinite-friction endpoint projection independent of
+render-rate partitioning. PHY-007 has since replaced that velocity response
+with the shared friction/contact solver while retaining PHY-002's canonical
+query and vertical-ownership contract. The visual lake remains
+presentation-only.
 
 ### Water and fluids
 
@@ -801,7 +803,7 @@ M5.
 | `PHY-004` | S | Complete: extend the fixed snapshots with unit quaternions and world-space angular velocity; publish explicit equal solid-sphere mass/inertia; integrate torque semi-implicitly through normalized axis-angle increments; shortest-path interpolate render orientation; drive an inspectable local material marker through seven `b2` constants; and preserve all linear terrain/pair behavior without angular contact impulses | `feat(physics): add angular rigid-body state` |
 | `PHY-005` | S | Complete: add a finite local-half-segment capsule collider; derive world endpoints from normalized rigid orientation; add a bounded canonical LOD0 segment/triangle closest-feature query; generate pure capsule/terrain, capsule/sphere, and capsule/capsule contacts with signed separation, penetration depth, stable witnesses, one-sided terrain normals, and deterministic degenerate-feature fallbacks; and prove the analytic contracts without adding a solver or render proxy | `feat(physics): add capsule collision` |
 | `PHY-006` | S | Complete: add finite positive-half-extent oriented boxes; derive checked world axes, sign-bit vertices, and bounds from normalized rigid orientation; test all 15 box/box and 13 box/canonical-triangle SAT axes in stable order; generate deterministic face-clipped or edge-pair witnesses in fixed-capacity manifolds of at most four points; retain exact terrain ownership through a bounded row-major triangle query; and prove the CPU geometry without adding response or a misleading render proxy | `feat(physics): add box contact manifolds` |
-| `PHY-007` | S | Add iterative normal/friction impulses and validate restitution, sliding friction, and slope-rest behavior | `feat(physics): add contact constraint solver` |
+| `PHY-007` | S | Complete: add a fixed-capacity four-body/ten-constraint/four-point solver with explicit inverse mass, local inverse inertia, static endpoints, material restitution/friction, and one-to-32 stable iterations; accumulate normal and world-tangent impulses with one captured restitution target and a Coulomb static/dynamic cone; apply off-center angular response plus deepest-point, slop-aware, inverse-mass-weighted bounded translation; commit only after double-precision scratch state and reports fit finite floats; route canonical-terrain and lexicographic sphere-pair response through the shared path while retaining the four-sphere render and smoke budgets; and prove analytic momentum, restitution, friction, slope, angular, correction, order, rollback, and fixed-step behavior without persisting impulses between calls | `feat(physics): add contact constraint solver` |
 | `PHY-008` | S | Add manifold persistence and warm starting; a small crate stack remains stable within tolerance | `feat(physics): stabilize persistent contacts` |
 | `PHY-009` | S | Replace brute-force pairs with a verified dynamic AABB tree or sweep-and-prune and expose pair/timing counts | `perf(physics): add collision broad phase` |
 | `PHY-010` | S | Add islands and sleeping without changing awake-body results; wake/sleep transitions are test-covered | `perf(physics): add body islands and sleeping` |
@@ -862,7 +864,7 @@ this section competes with the coupled-environment critical path through M7.
 ### Deferred visual-weather track
 
 The owner deferred these effects on July 19, 2026. They remain approved but
-have no position on the active `PHY-007 -> PHY-008`
+have no position on the active `PHY-008 -> PHY-009`
 path. Resuming one requires a small plan update; skipping them does not remove
 the numerical precipitation rate used by later hydrology.
 
@@ -965,21 +967,19 @@ online architecture is not implied.
 
 ## 14. Immediate next increment
 
-After PHY-006 is reviewed and committed by the owner, implement only `PHY-007`:
+After PHY-007 is reviewed and committed by the owner, implement only `PHY-008`:
 
-- define a bounded, deterministic contact-constraint input shared by dynamic
-  rigid bodies and static canonical terrain, with explicit inverse mass,
-  inertia, restitution, friction, contact points, and iteration count;
-- add sequential normal impulses and Coulomb friction at contact witnesses,
-  including angular response and a bounded penetration-stabilization policy;
-- route the existing Environment Lab sphere/terrain and sphere/sphere response
-  through that shared path while retaining fixed-step and smoke accounting;
-- prove restitution, sliding friction, slope rest, momentum behavior,
-  transactionality, finite-state rejection, and 30/60/120/144 Hz invariance;
-  and
-- stop before manifold persistence or warm starting (`PHY-008`), broad phase,
-  sleeping, continuous collision, arbitrary convex collision, runtime capsule
-  or box entities, buoyancy, or water coupling.
+- define bounded, stable contact identities and a deterministic manifold cache
+  owned by Physics rather than by shape queries or the renderer;
+- match current contacts to prior contacts, expire stale entries, and retain
+  normal plus world-tangent impulse accumulators without dynamic allocation;
+- warm-start the existing sequential solver, reproject cached tangent impulses
+  into the current contact plane, and clamp them to the current friction cone;
+- prove that cold-start and warm-start single-contact results agree, that cache
+  ordering and expiry are repeatable, and that a small crate stack remains
+  stable across 30/60/120/144 Hz render partitions; and
+- stop before broad phase (`PHY-009`), islands/sleeping (`PHY-010`), continuous
+  collision, arbitrary convex collision, buoyancy, or water coupling.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -1042,13 +1042,15 @@ and a 12-query timing layout. The exact graph is `15/5/5/6/34` for
 imports/passes/dependencies/transitions/elisions. It adds no water GPU
 resource, descriptor, geometry buffer, terrain mutation, or simulation state.
 
-PHY-003 keeps a fixed capacity of four one-meter spheres and tests its six
-possible pairs in lexicographic order. Its equal-unit-mass resolver performs
-one transactional discrete overlap/normal-impulse pass with `0.75`
-Environment Lab restitution. The real `(1,2)` pair collides before either body
-touches terrain while isolated body 0 retains PHY-002's canonical support.
-Its focused Debug and Release suites passed `3,662` assertions across 12 cases
-at completion.
+PHY-003 established a fixed capacity of four one-meter spheres and six possible
+pairs tested in lexicographic order. At that increment's completion, its
+temporary equal-unit-mass resolver performed one transactional discrete
+overlap/normal-impulse pass with `0.75` Environment Lab restitution. PHY-007 now
+passes explicit mass/inertia and the same ordered pair contacts through the
+shared iterative solver. The real `(1,2)` pair still collides before either body
+touches terrain while isolated body 0 retains PHY-002's canonical support. The
+original focused Debug and Release suites passed `3,662` assertions across 12
+cases at PHY-003 completion.
 
 PHY-004 adds identity-default unit quaternions, world-space angular velocity,
 canonical one-kilogram/one-meter solid-sphere properties (`I=0.4 kg*m^2`),
@@ -1092,9 +1094,23 @@ triangle collision is a one-sided discrete heightfield query: an object that
 has already tunneled fully below the surface is a miss, and continuous
 collision remains deferred.
 
-The active queue is `PHY-007` contact constraint solving, then `PHY-008`
-manifold persistence and warm starting. `R-001` through `R-004` remain
-deferred.
+PHY-007 adds a fixed-capacity deterministic contact solver with explicit inverse
+mass/local inverse inertia, static endpoints, captured-once restitution,
+accumulated normal and Coulomb tangent impulses, off-center angular response,
+and bounded deepest-point positional correction. The canonical-terrain and
+sphere-pair adapters now share that response path; the four-sphere scene and all
+render/GPU budgets remain unchanged. Focused Debug and Release results pass
+`389` contact-solver assertions across 12 cases, `7,423` sphere/terrain
+assertions across nine cases, and `3,696` sphere-pair assertions across 12
+cases. The complete Physics label passes `21,215` assertions across 71 cases,
+and both complete unit configurations pass `394,277` assertions across
+`236/236` cases. The Debug hardware smoke passes 1,000 frames, records 4,000
+existing sphere draws with unchanged GPU accounting, and reports zero D3D12
+corruption/errors or live child objects. Impulses remain call-local; PHY-008
+owns contact identity, persistence, and warm starting.
+
+The active queue is `PHY-008` manifold persistence and warm starting, then
+`PHY-009` collision broad phase. `R-001` through `R-004` remain deferred.
 
 ## 15. Primary technical references
 

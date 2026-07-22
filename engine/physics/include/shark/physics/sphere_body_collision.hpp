@@ -1,6 +1,7 @@
 #pragma once
 
 #include <shark/physics/ballistic_body.hpp>
+#include <shark/physics/contact_constraint.hpp>
 #include <shark/physics/sphere_collider.hpp>
 
 #include <array>
@@ -16,9 +17,14 @@ using SphereBodyStates =
     std::array<BallisticBodyState, sphere_body_capacity>;
 using SphereColliders =
     std::array<SphereCollider, sphere_body_capacity>;
+using SphereBodyMassProperties =
+    std::array<SolidSphereMassProperties, sphere_body_capacity>;
 
 struct SphereBodyCollisionSettings final {
     float restitution{0.75F};
+    float static_friction{};
+    float dynamic_friction{};
+    ContactSolverSettings solver{};
 
     [[nodiscard]] friend bool operator==(
         const SphereBodyCollisionSettings&,
@@ -48,18 +54,18 @@ struct SphereBodyCollisionStep final {
         const SphereBodyCollisionStep&) noexcept = default;
 };
 
-// Resolves the active prefix in stable lexicographic pair order. Every body
-// has equal unit mass. Overlap is split equally along the first-to-second
-// contact normal, then a restitution impulse is applied only when the pair is
-// approaching. Coincident centers use +X as a deterministic normal.
+// Resolves the active prefix in stable lexicographic pair order using explicit
+// solid-sphere mass properties. Coincident centers use +X as a deterministic
+// normal. Every overlap is gathered before one shared iterative constraint
+// solve; result records retain the same stable pair order.
 //
-// This is one discrete brute-force pass, not continuous collision detection
-// or an iterative constraint solver. Validation and numerical failures leave
-// the input states unchanged.
+// This remains discrete brute force without continuous collision detection.
+// Validation and numerical failures leave the input states unchanged.
 [[nodiscard]] core::Result<SphereBodyCollisionStep>
 resolve_sphere_body_collisions(
     SphereBodyStates& states,
     const SphereColliders& colliders,
+    const SphereBodyMassProperties& mass_properties,
     std::size_t active_body_count,
     SphereBodyCollisionSettings settings = {});
 

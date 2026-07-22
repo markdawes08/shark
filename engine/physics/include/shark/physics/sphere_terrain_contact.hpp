@@ -1,12 +1,24 @@
 #pragma once
 
 #include <shark/physics/ballistic_body.hpp>
+#include <shark/physics/contact_constraint.hpp>
 #include <shark/physics/sphere_collider.hpp>
 #include <shark/terrain/height_tile.hpp>
 
 #include <optional>
 
 namespace shark::physics {
+
+struct SphereTerrainContactSettings final {
+    float restitution{};
+    float static_friction{1.0F};
+    float dynamic_friction{0.8F};
+    ContactSolverSettings solver{};
+
+    [[nodiscard]] friend bool operator==(
+        const SphereTerrainContactSettings&,
+        const SphereTerrainContactSettings&) noexcept = default;
+};
 
 struct SphereTerrainContact final {
     terrain::HeightTileSurfaceSample surface;
@@ -30,18 +42,20 @@ struct SphereTerrainStep final {
 };
 
 // Advances one semi-implicit ballistic tick, then resolves the sphere against
-// the exact canonical LOD0 face beneath its predicted center. The correction
-// is vertical so X/Z query ownership cannot change during resolution. PHY-002
-// uses a temporary infinite-friction endpoint projection for its one resting
-// proof: every velocity component is erased on contact. This is a one-sample
-// heightfield approximation, not closest-feature sphere/triangle collision.
-// Generalized friction, restitution, and contact constraints remain deferred.
+// the exact canonical LOD0 face beneath its predicted center. The positional
+// correction remains vertical so X/Z query ownership cannot change during
+// resolution. Velocity and angular response use the shared contact-constraint
+// solver with canonical terrain as the static first endpoint. This remains a
+// one-sample heightfield approximation, not closest-feature sphere/triangle
+// collision.
 [[nodiscard]] core::Result<SphereTerrainStep>
 advance_sphere_against_terrain(
     BallisticBodyState& state,
     const SphereCollider& collider,
+    const SolidSphereMassProperties& mass_properties,
     const terrain::HeightTileSurface& terrain_surface,
     math::Float3 acceleration,
-    float fixed_delta_seconds);
+    float fixed_delta_seconds,
+    SphereTerrainContactSettings settings = {});
 
 } // namespace shark::physics

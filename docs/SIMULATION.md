@@ -1,6 +1,6 @@
 # Fixed-Step Rigid-Body and Contact Contract
 
-- **Completed through:** `PHY-006`
+- **Completed through:** `PHY-007`
 - **Last verified:** July 22, 2026
 
 PHY-001 established Shark's fixed-clock ballistic path. PHY-002 gives that one
@@ -15,7 +15,11 @@ finite capsule shape and pure analytic contacts against canonical terrain,
 spheres, and other capsules. It deliberately generates contact data without
 yet changing velocities or positions. PHY-006 adds checked oriented boxes and
 fixed-capacity contact manifolds against boxes and exact canonical terrain,
-also as pure CPU queries without response.
+also as pure CPU queries without response. PHY-007 adds one bounded,
+deterministic sequential-impulse solver with normal response, restitution,
+Coulomb friction, angular response, and bounded positional correction. The
+existing sphere/terrain and sphere/sphere adapters now use that shared path;
+capsules and boxes remain query-only until a real runtime body needs them.
 
 ## Ownership and data flow
 
@@ -25,7 +29,8 @@ The boundaries are intentionally narrow:
 - `Physics` owns the fixed four-body capacity, rigid state, solid-sphere mass
   properties, linear/angular integration, colliders, canonical-terrain
   response, sphere-pair response, capsule closest-feature contacts,
-  oriented-box SAT/manifold queries, contact records, and interpolation;
+  oriented-box SAT/manifold queries, bounded contact constraints and response,
+  contact records, and interpolation;
 - `World` publishes four deterministic scenario-owned body spawns, initial
   linear/angular states, equal mass, and external torques beside the lake;
 - the sandbox composition root sequences input, fixed ticks, immutable
@@ -63,7 +68,9 @@ render-frame elapsed time into the simulation.
 ## Sphere body snapshots
 
 The Environment Lab publishes an exact active count of four, all with a
-one-meter radius. Body 0 remains the original zero-velocity terrain-rest proof.
+one-meter radius. Body 0 remains the original zero-initial-velocity canonical
+terrain proof, but it may roll after contact now that friction acts at an
+offset witness.
 Bodies 1 and 2 start at the same airborne Y coordinate, 12 meters apart, with
 X velocities of `+5` and `-3` meters per second. Body 3 is an isolated
 zero-velocity fall driven by a constant world-space torque of
@@ -80,9 +87,10 @@ position = position + velocity * dt
 
 Before each tick, the sandbox copies the entire fixed current-state array to
 the previous-state array. It advances the active current states in stable body
-index order, resolves pairs, advances angular motion, and publishes no partial
-state. Rendering interpolates each previous/current pair using the clock alpha
-and never mutates either authoritative snapshot.
+index order through terrain constraints, resolves all current sphere pairs in
+one stable constraint batch, advances external-torque angular motion, and
+publishes no partial state. Rendering interpolates each previous/current pair
+using the clock alpha and never mutates either authoritative snapshot.
 
 ## Angular rigid-body state
 
@@ -149,15 +157,22 @@ resolution. The corrected state is committed only after every calculation
 succeeds. A center outside the tile continues ballistically with no contact;
 the maximum X/Z edges retain the terrain query's inclusive ownership.
 
-The terrain endpoint still gives each contacting sphere a temporary
-infinite-friction endpoint
-projection: every linear-velocity component becomes zero at contact. That
-deliberately feature-limited rule makes the sphere settle on the Environment
-Lab terrain without bounce, penetration, or drift; its correction/impulse
-magnitude is not a general bounded material law. It is not the later
-restitution/friction/contact-constraint model. Each fixed tick republishes an
-optional contact containing the untouched canonical sample, pre-resolution
-separation, and penetration depth.
+After that ownership-preserving projection, the contact witness is the sphere
+surface point `C - N * r`. Physics submits one constraint with canonical
+terrain as the static first endpoint and the sphere as the dynamic second
+endpoint. The Environment Lab terrain material uses restitution `0`, static
+friction `1.0`, and dynamic friction `0.8`. The shared solver cancels inward
+normal motion, applies Coulomb friction at the offset witness, and therefore
+can exchange linear and angular velocity instead of erasing the entire
+velocity vector. A sphere can roll or slide on a slope; no rolling resistance
+is claimed.
+
+The constraint carries zero penetration after the exact vertical projection,
+so generic positional correction cannot move X/Z or change triangle ownership.
+Each fixed tick still republishes an optional contact containing the untouched
+canonical sample, pre-resolution separation, and penetration depth. State is
+committed only after ballistic integration, terrain projection, constraint
+solving, and finite-float validation all succeed.
 
 ## Sphere-pair collision
 
@@ -169,8 +184,9 @@ support, Physics tests the active pairs exactly once in lexicographic order:
 ```
 
 The fixed capacity is four bodies and six possible pairs. There is no dynamic
-allocation and no broad phase. For centers `A` and `B`, radii `rA` and `rB`,
-and first-to-second normal `N`:
+allocation and no broad phase. Each active body supplies checked solid-sphere
+mass and inertia rather than relying on an implicit unit-mass rule. For centers
+`A` and `B`, radii `rA` and `rB`, and first-to-second normal `N`:
 
 ```text
 offset      = B - A
@@ -180,35 +196,94 @@ N           = normalize(offset)
 
 Pairs with negative overlap are separated. Touching and overlapping pairs
 publish a contact. Coincident centers use `+X` as a deterministic,
-index-ordered fallback normal. Positive overlap is projected equally between
-the equal-unit-mass bodies:
+index-ordered fallback normal. The common contact point is the midpoint of the
+two surface witnesses. Every overlap is gathered before one shared solve, so
+constraint order remains the published lexicographic order rather than being
+changed by an earlier pair's position correction.
 
-```text
-A = A - N * overlap / 2
-B = B + N * overlap / 2
-```
+The Environment Lab pair material uses restitution `0.75` and zero friction.
+The scenario still happens to use equal one-kilogram spheres, but the adapter
+passes each body's explicit inverse mass and isotropic inverse inertia. The
+normal impulse therefore preserves linear momentum and the solver can handle
+unequal mass without a separate response path. Default positional correction
+removes `80%` of penetration beyond a `0.001`-meter slop, is capped at `0.2`
+meter per constraint call, and is divided by inverse mass. It does not perform
+the old unbounded full-overlap split.
 
-With relative velocity `Vrel = Vb - Va`, an impulse is applied only when
-`dot(Vrel, N) < 0`:
-
-```text
-impulse = -(1 + restitution) * dot(Vrel, N) / 2
-Va      = Va - N * impulse
-Vb      = Vb + N * impulse
-```
-
-The Environment Lab restitution is `0.75`. Tangential velocity is untouched,
-and equal-unit-mass linear momentum is preserved. Each contact records stable
-body indices, normal, penetration, incoming relative normal velocity, and
-normal-impulse magnitude. Invalid counts, states, radii, restitution, or
-non-representable results fail transactionally without changing the input
+Each contact records stable body indices, normal, original penetration,
+incoming relative normal velocity at its witness, and accumulated normal
+impulse. Invalid counts, states, collider/mass mismatches, materials, settings,
+or non-representable results fail transactionally without changing the input
 array.
 
-The first Environment Lab pair collision is deliberately airborne. Therefore
-the temporary terrain-sticking response cannot erase its proof impulse during
-that tick, while isolated body 0 continues to prove canonical support. Pair
-projection is a single discrete pass; it does not iterate a stack to
-convergence and it cannot prevent fast bodies from tunneling.
+The first Environment Lab pair collision is deliberately airborne, while body
+0 independently proves canonical terrain support. Pair detection is still one
+discrete brute-force pass and cannot prevent fast bodies from tunneling.
+Velocity constraints iterate, but no impulse survives to the next fixed tick
+yet.
+
+## Contact constraint solver
+
+The platform-independent solver accepts at most four dynamic bodies, ten
+ordered constraints, and four points per constraint. Ten covers the current
+four terrain contacts plus all six sphere pairs without allocation. A special
+sentinel represents a static endpoint on either side; two static endpoints and
+self-constraints are rejected. Dynamic bodies supply positive inverse mass and
+nonnegative local diagonal inverse inertia. Constraint normals are unit length
+and point from the first endpoint toward the second.
+
+For a world contact point `P`, body center `C`, linear velocity `v`, angular
+velocity `w`, and lever arm `r = P - C`, contact velocity is:
+
+```text
+vContact = v + cross(w, r)
+vRelative = vSecondContact - vFirstContact
+```
+
+For an impulse direction `d`, each dynamic endpoint contributes:
+
+```text
+Kendpoint(d) = inverseMass +
+    dot(cross(r, d), worldInverseInertia * cross(r, d))
+```
+
+The world inverse inertia is the local diagonal tensor rotated by the body's
+unit orientation. Static endpoints contribute zero. Normal impulses accumulate
+and clamp to nonnegative values. Restitution uses the untouched incoming normal
+velocity captured before iteration zero; impacts slower than the default
+one-meter-per-second threshold target zero separating speed. Capturing that
+target once prevents restitution from being reapplied on every iteration.
+
+After each normal solve, the solver removes the current normal component from
+relative velocity, solves along the remaining tangent direction, and
+accumulates one world-space tangent impulse vector. A candidate inside
+`staticFriction * normalImpulse` sticks. A candidate outside that cone is
+clamped to `dynamicFriction * normalImpulse`. The vector is reconsidered every
+iteration, including when the normal impulse shrinks, so it cannot remain
+outside the current Coulomb cone.
+
+After the exact configured velocity-iteration count, each manifold uses only
+its deepest point for positional stabilization:
+
+```text
+correction = min(
+    max(deepestPenetration - slop, 0) * correctionFraction,
+    maximumCorrection)
+```
+
+Translation follows the constraint normal and is divided by endpoint inverse
+mass. It changes no orientation and injects no velocity. This deliberately
+bounded, timestep-independent correction keeps penetration cleanup separate
+from restitution energy.
+
+All inputs are validated before solving. Velocities, positions, impulses, and
+rotated-inertia calculations run in double-precision scratch storage. The
+solver commits the body span only after every result and body component is a
+finite representable float, so even a failure discovered in the last body or
+report rolls back the entire batch. Constraints and points always retain caller
+order, velocity iterations are fixed in `[1, 32]`, and there is no early-out.
+Accumulated impulses live for one call only; persistent manifold identity,
+cached impulses, and warm starting belong to PHY-008.
 
 ## Capsule closest-feature contacts
 
@@ -252,9 +327,9 @@ hemisphere; exact coincidence uses the selected face normal.
 
 These functions generate no positional correction, impulse, torque, friction,
 or manifold. They do not mutate either body or terrain and are not called by
-the current four-sphere Environment Lab. That separation allowed PHY-006 to
-build manifolds and lets PHY-007 introduce one shared response path instead of
-adding a second temporary solver.
+the current four-sphere Environment Lab. Their witnesses can be adapted into
+the PHY-007 solver when a real runtime capsule is introduced; the query layer
+itself remains pure and does not own response state.
 
 ## Oriented-box contact manifolds
 
@@ -300,8 +375,8 @@ continuous collision remains deferred.
 These queries do not apply impulses or modify state, and no box is added to the
 Environment Lab. Their fixed-capacity records of at most four points are the
 honest inspection surface for PHY-006; a frozen render fixture would not
-visualize real contacts. PHY-007 will consume contact witnesses through one
-shared response path.
+visualize real contacts. A later runtime-box adapter can submit those witnesses
+to the shared solver without moving SAT or manifold generation into response.
 
 ## Rendering boundary
 
@@ -346,22 +421,33 @@ Permanent CPU coverage checks:
   invalid/overflow transactionality;
 - bit-identical angular state across 30/60/120/144 Hz render partitions;
 - flat-terrain fall, exact long-term support, and zero resting velocity;
-- exact sloped-face plane clearance and geometric normal ownership;
+- exact sloped-face plane clearance, geometric normal ownership, non-inward
+  response, and friction-driven linear/angular exchange;
 - diagonal, maximum-edge, immediately-outside, and separating transitions;
 - transactional rejection of invalid radii, state, deltas, and overflow; and
 - bit-identical resting state/contact count across 30/60/120/144 Hz render
   partitions;
 - fixed four-body/six-pair capacity and lexicographic pair traversal;
-- separated no-op, equal overlap projection, touching, and coincident-center
-  fallback behavior;
-- equal-mass restitution, unequal incoming speeds, tangential preservation,
-  momentum conservation, and separating-overlap behavior;
-- transactional count, restitution, state, collider, and numeric-overflow
-  rejection;
+- separated no-op, bounded slop-aware overlap correction, touching, and
+  coincident-center fallback behavior;
+- explicit sphere mass/inertia, equal-mass restitution, unequal incoming
+  speeds, zero-friction tangent preservation, momentum conservation, and
+  separating-overlap behavior;
+- transactional count, material, solver-setting, state, collider/mass, and
+  numeric-overflow rejection;
 - bit-identical sphere-collision results across 30/60/120/144 Hz render
   partitions; and
 - the real Environment Lab pair impulse occurring before either pair body
-  touches terrain while body 0 reaches canonical support;
+  touches terrain while body 0 reaches current canonical support;
+- analytic unequal-mass restitution and momentum, separating no-pull behavior,
+  and identical one/eight-iteration restitution results;
+- off-center angular effective mass and symmetric two-point manifold response;
+- static sticking, dynamically clamped sliding, high/low-friction slope
+  behavior, and static endpoint use on either side;
+- deepest-point, slop-aware, capped, inverse-mass-weighted positional
+  correction;
+- exact constraint/point/iteration order, empty batches, complete invalid-input
+  rejection, and rollback after late float overflow;
 - identity, rotated, sign-equivalent, degenerate, invalid, and overflowing
   capsule endpoint construction;
 - separated, tolerance-touching, penetrating, endpoint, parallel, crossed,
@@ -392,16 +478,16 @@ discovered unit cases with:
 For manual acceptance, launch `SharkSandbox`. Four spheres must remain still
 at startup. `F6` advances all four by one deterministic tick. After `F5`,
 bodies 1 and 2 collide while airborne and separate, while body 0 falls to the
-visible terrain and remains at rest without hover or penetration. Pause/resume
-must not create a catch-up jump. The local brown `+X` cap on body 3 must rotate
-under its constant torque while the sphere remains isolated; its angular motion
-continues after terrain support because contact friction is deferred. `F4`
-still previews only body 0's fixed
-canonical support normal and is intentionally available before and after
-contact. Camera motion and presentation-only water remain independent. PHY-005
-adds no visible capsule and PHY-006 adds no visible box to this manual scene;
-their acceptance result is tested CPU contact capability rather than a
-misleading static render proxy.
+visible terrain and remains on the exact canonical face without inward normal
+motion. Spheres may now roll or slide because terrain friction acts at the real
+offset witness. Pause/resume must not create a catch-up jump. The local brown
+`+X` cap on body 3 must rotate under its constant torque and any later contact
+response while its state remains finite and unit-oriented. `F4` still previews
+only body 0's original fixed support normal and is intentionally available
+before and after contact; it is not a live rolling-contact marker. Camera motion
+and presentation-only water remain independent. PHY-005 adds no visible capsule,
+PHY-006 adds no visible box, and PHY-007 adds no new entity or render work to
+this manual scene; their additional acceptance evidence is CPU behavior.
 
 PHY-004's focused rigid-body suite passes `1,540` assertions across nine cases
 in both Debug and Release; both full unit suites pass `182/182`. Presentation
@@ -426,16 +512,30 @@ pass `393,840` assertions across `224/224` cases. The unchanged Debug hardware
 presentation smoke passes 1,000 frames, records the expected 4,000 existing
 sphere draws, and reports zero D3D12 corruption/errors or live child objects.
 
+PHY-007's focused contact-constraint suite passes `389` assertions across 12
+cases, the migrated sphere/terrain suite passes `7,423` across nine cases, and
+the migrated sphere-pair suite passes `3,696` across 12 cases in both Debug and
+Release. The complete Physics label passes `21,215` assertions across 71 cases;
+both complete unit configurations pass `394,277` assertions across `236/236`
+cases. Strict Debug and Release sandbox builds pass. The Debug hardware smoke
+passes 1,000 frames with the unchanged four-sphere scene and 4,000 existing
+sphere draws, unchanged GPU accounting, zero D3D12 corruption/errors, and zero
+live child objects.
+
 ## Explicit non-goals
 
-PHY-006 adds no capsule or box simulation entity, capsule/box mass or inertia,
-positional or velocity response, unequal per-body mass, angular contact
-impulse, rolling or sliding friction, persistent manifold, iterative constraint
-solve, continuous collision detection, broad phase, sleeping, arbitrary
-closest-feature sphere/triangle collision,
-buoyancy, water displacement, reset control, entity system, or general
-debug-draw service. Its one-sample face support remains intended for the
+PHY-007 adds no persistent manifold, cross-tick impulse cache, warm starting,
+runtime capsule or box entity, capsule/box mass adapter, continuous collision,
+broad phase, islands, sleeping, arbitrary convex collision, rolling resistance,
+or general debug-draw service. It does not couple contact response to buoyancy,
+water displacement, an entity system, or a reset control. Capsule and box
+generation remain pure queries even though their witnesses can feed the shared
+solver later.
+
+The terrain adapter remains an intentional one-sample face response for the
 current one-meter-radius, four-meter-cell, slope-bounded Environment Lab
-heightfield proof. The lake remains W-001 presentation-only water, and `R-001`
-through `R-004` remain deferred. The active queue is `PHY-007` contact
-constraint solving and is centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).
+heightfield. It is not closest-feature sphere/triangle collision and can still
+tunnel under sufficiently large discrete motion. The lake remains W-001
+presentation-only water, and `R-001` through `R-004` remain deferred. The active
+queue is `PHY-008` manifold persistence and warm starting and is centralized in
+[ENGINE_PLAN.md](ENGINE_PLAN.md).

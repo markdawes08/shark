@@ -32,6 +32,17 @@ constexpr shark::physics::SphereBodyCollisionSettings test_settings{
     return result;
 }
 
+[[nodiscard]] shark::physics::SphereBodyMassProperties
+unit_mass_properties()
+{
+    auto properties_result =
+        shark::physics::make_solid_sphere_mass_properties(1.0F, 1.0F);
+    REQUIRE(properties_result);
+    shark::physics::SphereBodyMassProperties result{};
+    result.fill(properties_result.value());
+    return result;
+}
+
 void require_float3(
     const shark::math::Float3 actual,
     const shark::math::Float3 expected,
@@ -40,6 +51,53 @@ void require_float3(
     REQUIRE(actual.x == Catch::Approx(expected.x).margin(margin));
     REQUIRE(actual.y == Catch::Approx(expected.y).margin(margin));
     REQUIRE(actual.z == Catch::Approx(expected.z).margin(margin));
+}
+
+[[nodiscard]] constexpr shark::math::Float3 cross(
+    const shark::math::Float3 left,
+    const shark::math::Float3 right) noexcept
+{
+    return {
+        left.y * right.z - left.z * right.y,
+        left.z * right.x - left.x * right.z,
+        left.x * right.y - left.y * right.x,
+    };
+}
+
+[[nodiscard]] double center_plane_distance(
+    const shark::physics::BallisticBodyState& state,
+    const shark::terrain::HeightTileSurfaceSample& surface)
+{
+    return
+        (static_cast<double>(state.position.x) -
+         static_cast<double>(surface.position.x)) *
+            static_cast<double>(surface.normal.x) +
+        (static_cast<double>(state.position.y) -
+         static_cast<double>(surface.position.y)) *
+            static_cast<double>(surface.normal.y) +
+        (static_cast<double>(state.position.z) -
+         static_cast<double>(surface.position.z)) *
+            static_cast<double>(surface.normal.z);
+}
+
+[[nodiscard]] shark::math::Float3 sphere_contact_point_velocity(
+    const shark::physics::BallisticBodyState& state,
+    const shark::terrain::HeightTileSurfaceSample& surface,
+    const float radius) noexcept
+{
+    const shark::math::Float3 lever_arm{
+        -surface.normal.x * radius,
+        -surface.normal.y * radius,
+        -surface.normal.z * radius,
+    };
+    const auto angular_velocity = cross(
+        state.angular_velocity,
+        lever_arm);
+    return {
+        state.linear_velocity.x + angular_velocity.x,
+        state.linear_velocity.y + angular_velocity.y,
+        state.linear_velocity.z + angular_velocity.z,
+    };
 }
 
 struct CollisionRun final {
@@ -71,6 +129,7 @@ struct CollisionRun final {
         .linear_velocity = {-2.0F, 0.0F, 0.0F},
     };
     const auto colliders = unit_colliders();
+    const auto mass_properties = unit_mass_properties();
     auto previous_timestamp = std::chrono::nanoseconds{0};
     const auto frame_count =
         static_cast<std::uint64_t>(render_rate_hz) *
@@ -103,6 +162,7 @@ struct CollisionRun final {
                 physics::resolve_sphere_body_collisions(
                     states,
                     colliders,
+                    mass_properties,
                     2,
                     test_settings);
             REQUIRE(collision_result);
@@ -152,6 +212,7 @@ TEST_CASE(
         const auto result = resolve_sphere_body_collisions(
             states,
             colliders,
+            unit_mass_properties(),
             body_count,
             test_settings);
         REQUIRE(result);
@@ -183,6 +244,7 @@ TEST_CASE(
     const auto result = resolve_sphere_body_collisions(
         states,
         unit_colliders(),
+        unit_mass_properties(),
         2,
         test_settings);
 
@@ -193,7 +255,7 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "stationary sphere overlap is split equally",
+    "stationary sphere overlap receives equal bounded correction",
     "[physics][sphere][body-collision][overlap]")
 {
     using namespace shark::physics;
@@ -204,6 +266,7 @@ TEST_CASE(
     const auto result = resolve_sphere_body_collisions(
         states,
         unit_colliders(),
+        unit_mass_properties(),
         2,
         test_settings);
 
@@ -221,13 +284,13 @@ TEST_CASE(
         contact.relative_normal_velocity_before_resolution ==
         0.0F);
     REQUIRE(contact.normal_impulse_magnitude == 0.0F);
-    require_float3(states[0].position, {-0.25F, 0.0F, 0.0F});
-    require_float3(states[1].position, {1.75F, 0.0F, 0.0F});
+    require_float3(states[0].position, {-0.1F, 0.0F, 0.0F});
+    require_float3(states[1].position, {1.6F, 0.0F, 0.0F});
     REQUIRE(states[0].linear_velocity == shark::math::Float3{});
     REQUIRE(states[1].linear_velocity == shark::math::Float3{});
     REQUIRE(
         states[1].position.x - states[0].position.x ==
-        Catch::Approx(2.0F).margin(0.000001F));
+        Catch::Approx(1.7F).margin(0.000001F));
 }
 
 TEST_CASE(
@@ -249,6 +312,7 @@ TEST_CASE(
     const auto result = resolve_sphere_body_collisions(
         states,
         unit_colliders(),
+        unit_mass_properties(),
         2,
         test_settings);
 
@@ -290,6 +354,7 @@ TEST_CASE(
     const auto result = resolve_sphere_body_collisions(
         states,
         unit_colliders(),
+        unit_mass_properties(),
         2,
         test_settings);
 
@@ -335,6 +400,7 @@ TEST_CASE(
     const auto result = resolve_sphere_body_collisions(
         states,
         unit_colliders(),
+        unit_mass_properties(),
         2,
         test_settings);
 
@@ -384,6 +450,7 @@ TEST_CASE(
     const auto result = resolve_sphere_body_collisions(
         states,
         unit_colliders(),
+        unit_mass_properties(),
         2,
         test_settings);
 
@@ -397,8 +464,8 @@ TEST_CASE(
     REQUIRE(
         result.value().contacts[0].normal_impulse_magnitude ==
         0.0F);
-    require_float3(states[0].position, {-0.25F, 0.0F, 0.0F});
-    require_float3(states[1].position, {1.75F, 0.0F, 0.0F});
+    require_float3(states[0].position, {-0.1F, 0.0F, 0.0F});
+    require_float3(states[1].position, {1.6F, 0.0F, 0.0F});
     REQUIRE(states[0].linear_velocity == first_velocity);
     REQUIRE(states[1].linear_velocity == second_velocity);
 }
@@ -415,6 +482,7 @@ TEST_CASE(
     const auto result = resolve_sphere_body_collisions(
         states,
         unit_colliders(),
+        unit_mass_properties(),
         2,
         test_settings);
 
@@ -423,8 +491,8 @@ TEST_CASE(
     require_float3(
         result.value().contacts[0].normal,
         {1.0F, 0.0F, 0.0F});
-    require_float3(states[0].position, {3.0F, 5.0F, 6.0F});
-    require_float3(states[1].position, {5.0F, 5.0F, 6.0F});
+    require_float3(states[0].position, {3.9F, 5.0F, 6.0F});
+    require_float3(states[1].position, {4.1F, 5.0F, 6.0F});
     REQUIRE(shark::math::is_finite(states[0].position));
     REQUIRE(shark::math::is_finite(states[1].position));
 
@@ -434,6 +502,7 @@ TEST_CASE(
     const auto repeated_result = resolve_sphere_body_collisions(
         repeated,
         unit_colliders(),
+        unit_mass_properties(),
         2,
         test_settings);
     REQUIRE(repeated_result);
@@ -455,6 +524,7 @@ TEST_CASE(
     const auto result = resolve_sphere_body_collisions(
         states,
         unit_colliders(),
+        unit_mass_properties(),
         sphere_body_capacity,
         test_settings);
 
@@ -480,6 +550,7 @@ TEST_CASE(
     const auto repeated_result = resolve_sphere_body_collisions(
         repeated_states,
         unit_colliders(),
+        unit_mass_properties(),
         sphere_body_capacity,
         test_settings);
     REQUIRE(repeated_result);
@@ -503,6 +574,7 @@ TEST_CASE(
         .linear_velocity = {-2.0F, 0.0F, 0.0F},
     };
     auto colliders = unit_colliders();
+    auto mass_properties = unit_mass_properties();
 
     SECTION("body count exceeds fixed capacity")
     {
@@ -511,6 +583,7 @@ TEST_CASE(
             physics::resolve_sphere_body_collisions(
                 states,
                 colliders,
+                mass_properties,
                 physics::sphere_body_capacity + 1U,
                 test_settings);
         REQUIRE_FALSE(result);
@@ -534,6 +607,7 @@ TEST_CASE(
                 physics::resolve_sphere_body_collisions(
                     states,
                     colliders,
+                    mass_properties,
                     2,
                     physics::SphereBodyCollisionSettings{
                         .restitution = restitution,
@@ -556,6 +630,7 @@ TEST_CASE(
             physics::resolve_sphere_body_collisions(
                 states,
                 colliders,
+                mass_properties,
                 2,
                 test_settings);
         REQUIRE_FALSE(result);
@@ -579,6 +654,7 @@ TEST_CASE(
                 physics::resolve_sphere_body_collisions(
                     states,
                     colliders,
+                    mass_properties,
                     2,
                     test_settings);
             REQUIRE_FALSE(result);
@@ -589,7 +665,25 @@ TEST_CASE(
         }
     }
 
-    SECTION("position correction exceeds float range")
+    SECTION("active mass properties are invalid")
+    {
+        mass_properties[1].inverse_mass = 0.0F;
+        auto states = baseline;
+        const auto result =
+            physics::resolve_sphere_body_collisions(
+                states,
+                colliders,
+                mass_properties,
+                2,
+                test_settings);
+        REQUIRE_FALSE(result);
+        REQUIRE(
+            result.error().code() ==
+            core::ErrorCode::invalid_argument);
+        REQUIRE(states == baseline);
+    }
+
+    SECTION("collider and mass-property radii must match")
     {
         const auto maximum =
             std::numeric_limits<float>::max();
@@ -603,12 +697,13 @@ TEST_CASE(
             physics::resolve_sphere_body_collisions(
                 states,
                 colliders,
+                mass_properties,
                 2,
                 test_settings);
         REQUIRE_FALSE(result);
         REQUIRE(
             result.error().code() ==
-            core::ErrorCode::unavailable);
+            core::ErrorCode::invalid_argument);
         REQUIRE(states == before);
     }
 }
@@ -643,7 +738,8 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "Environment Lab pair collides airborne while primary sphere rests",
+    "Environment Lab pair collides airborne while primary sphere "
+    "stays supported",
     "[physics][sphere][body-collision][terrain][environment-lab]"
     "[integration]")
 {
@@ -661,6 +757,7 @@ TEST_CASE(
 
     physics::SphereBodyStates states{};
     physics::SphereColliders colliders{};
+    const auto mass_properties = unit_mass_properties();
     for (std::size_t body_index = 0;
          body_index < world::environment_lab_sphere_body_count;
          ++body_index) {
@@ -693,6 +790,7 @@ TEST_CASE(
                 physics::advance_sphere_against_terrain(
                     states[body_index],
                     colliders[body_index],
+                    mass_properties[body_index],
                     surface,
                     physics::standard_gravity,
                     1.0F / 60.0F);
@@ -704,6 +802,7 @@ TEST_CASE(
             physics::resolve_sphere_body_collisions(
                 states,
                 colliders,
+                mass_properties,
                 world::environment_lab_sphere_body_count,
                 physics::SphereBodyCollisionSettings{
                     .restitution =
@@ -746,9 +845,19 @@ TEST_CASE(
     REQUIRE(observed_airborne_pair_impulse);
     REQUIRE(pair_contact_count >= 1);
     REQUIRE(terrain_contacts[0]);
-    REQUIRE(states[0].linear_velocity == math::Float3{});
-    REQUIRE(states[0].position.x ==
-        scenario.sphere_body_spawn_positions[0].x);
-    REQUIRE(states[0].position.z ==
-        scenario.sphere_body_spawn_positions[0].z);
+    REQUIRE(math::is_finite(states[0].position));
+    REQUIRE(math::is_finite(states[0].linear_velocity));
+    REQUIRE(math::is_finite(states[0].angular_velocity));
+    REQUIRE(
+        center_plane_distance(
+            states[0],
+            terrain_contacts[0]->surface) ==
+        Catch::Approx(colliders[0].radius).margin(0.000001));
+    require_float3(
+        sphere_contact_point_velocity(
+            states[0],
+            terrain_contacts[0]->surface,
+            colliders[0].radius),
+        {},
+        0.0001F);
 }

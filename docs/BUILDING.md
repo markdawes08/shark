@@ -1,6 +1,6 @@
 # Building Shark
 
-- **Completed through:** `PHY-006`
+- **Completed through:** `PHY-007`
 - **Last verified:** July 22, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
@@ -610,8 +610,25 @@ and the terrain triangle-bounds suite passes `351` assertions across seven cases
 in both Debug and Release. Both complete suites pass `393,840` assertions
 across `224/224` cases. The unchanged Debug hardware presentation smoke passes
 1,000 frames, records 4,000 existing sphere draws, and reports zero D3D12
-corruption/errors or live child objects. The next increment is `PHY-007`, the
-shared contact constraint solver.
+corruption/errors or live child objects.
+
+PHY-007 adds the bounded shared contact solver and migrates the existing
+sphere/terrain and sphere-pair adapters. It changes CPU simulation response and
+sandbox smoke assertions, but adds no body, shader, root-signature value, draw,
+resource, descriptor, pass, or upload. Iterate with the
+`[physics][contact-constraint]`, `[physics][sphere][terrain]`, and
+`[physics][sphere][body-collision]` filters before running both complete unit
+presets; one Debug hardware presentation smoke remains the proportionate
+graphics regression gate.
+
+At PHY-007 completion, those three focused suites pass `389/12`, `7,423/9`, and
+`3,696/12` assertions/cases respectively in Debug and Release. The complete
+Physics label passes `21,215` assertions across 71 cases, and both complete unit
+configurations pass `394,277` assertions across `236/236` cases. Strict Debug
+and Release sandbox builds pass. The Debug hardware smoke passes 1,000 frames,
+records the unchanged 4,000 existing sphere draws and GPU accounting, and
+reports zero D3D12 corruption/errors or live child objects. The next increment
+is `PHY-008`, persistent manifolds and warm starting.
 
 ## Visual Studio
 

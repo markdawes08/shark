@@ -1,6 +1,6 @@
 # Canonical Terrain-Tile Contract
 
-- **Completed through:** `PHY-006`
+- **Completed through:** `PHY-007`
 - **Last verified:** July 22, 2026
 
 T-008 composes the untouched T-007 rolling-height oracle with a bounded
@@ -1091,17 +1091,23 @@ one-sample face-plane correction without mutating terrain, and never reads the
 coarse visual LOD or a D3D12 resource. A center on the maximum tile edge is
 supported; a center immediately outside has no contact even when its radius
 overlaps the edge. Closest-feature edge collision, continuous collision, and
-general friction/restitution remain outside this proof. The active queue
-remains centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).
+two-sided terrain collision remain outside this proof. PHY-007 now submits the
+post-projection sphere witness and exact face normal to the shared contact
+solver, so material friction can exchange linear and angular velocity while
+the zero-penetration constraint preserves the same X/Z query ownership. The
+active queue remains centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).
 
 PHY-003 repeats that terrain step for four fixed-index bodies before testing
 the six possible sphere pairs in lexicographic order. Pair response remains
 CPU-only and does not read or mutate terrain, its visual LODs, or GPU
-resources. PHY-004 then advances orientation independently; terrain contact
-still affects only linear velocity and never reads angular state.
+resources. PHY-004 supplies orientation and angular velocity; PHY-007 uses both
+for contact-point velocity and world inverse inertia before the existing
+external-torque update.
 
 PHY-005 adds the bounded finite-segment closest-feature query for pure capsule
 contacts. PHY-006 adds only the bounded exact-triangle candidate query used by
 pure oriented-box SAT; it does not add a physics acceleration structure or
-mutate canonical terrain. The active queue is `PHY-007` contact constraint
-solving and remains centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).
+mutate canonical terrain. Those capsule and box queries remain response-free
+until a runtime body adapter needs them. The active queue is `PHY-008` manifold
+persistence and warm starting and remains centralized in
+[ENGINE_PLAN.md](ENGINE_PLAN.md).

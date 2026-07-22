@@ -32,11 +32,31 @@ namespace {
 }
 
 [[nodiscard]] bool valid_settings(
-    const SphereBodyCollisionSettings settings) noexcept
+    const SphereBodyCollisionSettings& settings) noexcept
 {
     return std::isfinite(settings.restitution) &&
         settings.restitution >= 0.0F &&
-        settings.restitution <= 1.0F;
+        settings.restitution <= 1.0F &&
+        std::isfinite(settings.static_friction) &&
+        settings.static_friction >= 0.0F &&
+        std::isfinite(settings.dynamic_friction) &&
+        settings.dynamic_friction >= 0.0F &&
+        settings.dynamic_friction <= settings.static_friction &&
+        settings.solver.velocity_iterations > 0U &&
+        settings.solver.velocity_iterations <=
+            max_contact_solver_velocity_iterations &&
+        std::isfinite(
+            settings.solver.restitution_velocity_threshold) &&
+        settings.solver.restitution_velocity_threshold >= 0.0F &&
+        std::isfinite(settings.solver.penetration_slop) &&
+        settings.solver.penetration_slop >= 0.0F &&
+        std::isfinite(
+            settings.solver.penetration_correction_fraction) &&
+        settings.solver.penetration_correction_fraction >= 0.0F &&
+        settings.solver.penetration_correction_fraction <= 1.0F &&
+        std::isfinite(
+            settings.solver.maximum_position_correction) &&
+        settings.solver.maximum_position_correction >= 0.0F;
 }
 
 [[nodiscard]] bool representable_components(
@@ -60,12 +80,27 @@ namespace {
     };
 }
 
+[[nodiscard]] ContactBodyMassProperties
+contact_mass_properties(
+    const SolidSphereMassProperties& properties) noexcept
+{
+    return {
+        .inverse_mass = properties.inverse_mass,
+        .local_inverse_inertia = {
+            properties.inverse_moment_of_inertia,
+            properties.inverse_moment_of_inertia,
+            properties.inverse_moment_of_inertia,
+        },
+    };
+}
+
 } // namespace
 
 core::Result<SphereBodyCollisionStep>
 resolve_sphere_body_collisions(
     SphereBodyStates& states,
     const SphereColliders& colliders,
+    const SphereBodyMassProperties& mass_properties,
     const std::size_t active_body_count,
     const SphereBodyCollisionSettings settings)
 {
@@ -75,22 +110,34 @@ resolve_sphere_body_collisions(
             collision_error(
                 core::ErrorCode::invalid_argument,
                 "Sphere body collision requires at most four bodies "
-                "and finite restitution in [0, 1]"));
+                "and valid material/solver settings"));
     }
     for (std::size_t index = 0;
          index < active_body_count;
          ++index) {
         if (!is_valid(states[index]) ||
-            !is_valid(colliders[index])) {
+            !is_valid(colliders[index]) ||
+            !is_valid(mass_properties[index]) ||
+            mass_properties[index].radius !=
+                colliders[index].radius) {
             return core::Result<SphereBodyCollisionStep>::failure(
                 collision_error(
                     core::ErrorCode::invalid_argument,
                     "Sphere body collision requires finite active "
-                    "states and finite positive radii"));
+                    "states and matching finite collider/mass pairs"));
         }
     }
 
     auto candidate = states;
+    std::array<ContactBodyMassProperties, sphere_body_capacity>
+        solver_masses{};
+    for (std::size_t index = 0;
+         index < active_body_count;
+         ++index) {
+        solver_masses[index] =
+            contact_mass_properties(mass_properties[index]);
+    }
+    std::array<ContactConstraint, sphere_pair_capacity> constraints{};
     SphereBodyCollisionStep step;
     for (std::size_t first_index = 0;
          first_index < active_body_count;
@@ -99,8 +146,8 @@ resolve_sphere_body_collisions(
              second_index < active_body_count;
              ++second_index) {
             ++step.tested_pair_count;
-            auto& first = candidate[first_index];
-            auto& second = candidate[second_index];
+            const auto& first = candidate[first_index];
+            const auto& second = candidate[second_index];
 
             const std::array<double, 3> offset{
                 static_cast<double>(second.position.x) -
@@ -141,66 +188,46 @@ resolve_sphere_body_collisions(
                 }
                 : std::array<double, 3>{1.0, 0.0, 0.0};
             const auto penetration_depth = radius_sum - distance;
-            const auto half_correction = penetration_depth * 0.5;
-            const std::array<double, 3> first_position{
-                static_cast<double>(first.position.x) -
-                    normal[0] * half_correction,
-                static_cast<double>(first.position.y) -
-                    normal[1] * half_correction,
-                static_cast<double>(first.position.z) -
-                    normal[2] * half_correction,
+            const std::array<double, 3> first_surface_point{
+                static_cast<double>(first.position.x) +
+                    normal[0] *
+                        static_cast<double>(
+                            colliders[first_index].radius),
+                static_cast<double>(first.position.y) +
+                    normal[1] *
+                        static_cast<double>(
+                            colliders[first_index].radius),
+                static_cast<double>(first.position.z) +
+                    normal[2] *
+                        static_cast<double>(
+                            colliders[first_index].radius),
             };
-            const std::array<double, 3> second_position{
-                static_cast<double>(second.position.x) +
-                    normal[0] * half_correction,
-                static_cast<double>(second.position.y) +
-                    normal[1] * half_correction,
-                static_cast<double>(second.position.z) +
-                    normal[2] * half_correction,
+            const std::array<double, 3> second_surface_point{
+                static_cast<double>(second.position.x) -
+                    normal[0] *
+                        static_cast<double>(
+                            colliders[second_index].radius),
+                static_cast<double>(second.position.y) -
+                    normal[1] *
+                        static_cast<double>(
+                            colliders[second_index].radius),
+                static_cast<double>(second.position.z) -
+                    normal[2] *
+                        static_cast<double>(
+                            colliders[second_index].radius),
             };
-            const std::array<double, 3> relative_velocity{
-                static_cast<double>(second.linear_velocity.x) -
-                    static_cast<double>(first.linear_velocity.x),
-                static_cast<double>(second.linear_velocity.y) -
-                    static_cast<double>(first.linear_velocity.y),
-                static_cast<double>(second.linear_velocity.z) -
-                    static_cast<double>(first.linear_velocity.z),
-            };
-            const auto relative_normal_velocity =
-                relative_velocity[0] * normal[0] +
-                relative_velocity[1] * normal[1] +
-                relative_velocity[2] * normal[2];
-            const auto normal_impulse =
-                relative_normal_velocity < 0.0
-                ? -(1.0 +
-                    static_cast<double>(settings.restitution)) *
-                    relative_normal_velocity * 0.5
-                : 0.0;
-            const std::array<double, 3> first_velocity{
-                static_cast<double>(first.linear_velocity.x) -
-                    normal[0] * normal_impulse,
-                static_cast<double>(first.linear_velocity.y) -
-                    normal[1] * normal_impulse,
-                static_cast<double>(first.linear_velocity.z) -
-                    normal[2] * normal_impulse,
-            };
-            const std::array<double, 3> second_velocity{
-                static_cast<double>(second.linear_velocity.x) +
-                    normal[0] * normal_impulse,
-                static_cast<double>(second.linear_velocity.y) +
-                    normal[1] * normal_impulse,
-                static_cast<double>(second.linear_velocity.z) +
-                    normal[2] * normal_impulse,
+            const std::array<double, 3> contact_position{
+                (first_surface_point[0] + second_surface_point[0]) *
+                    0.5,
+                (first_surface_point[1] + second_surface_point[1]) *
+                    0.5,
+                (first_surface_point[2] + second_surface_point[2]) *
+                    0.5,
             };
 
             if (!representable_components(normal) ||
                 !representable_float(penetration_depth) ||
-                !representable_float(relative_normal_velocity) ||
-                !representable_float(normal_impulse) ||
-                !representable_components(first_position) ||
-                !representable_components(second_position) ||
-                !representable_components(first_velocity) ||
-                !representable_components(second_velocity) ||
+                !representable_components(contact_position) ||
                 step.contact_count >= sphere_pair_capacity) {
                 return core::Result<
                     SphereBodyCollisionStep>::failure(
@@ -210,10 +237,6 @@ resolve_sphere_body_collisions(
                             "float or contact capacity"));
             }
 
-            first.position = to_float3(first_position);
-            second.position = to_float3(second_position);
-            first.linear_velocity = to_float3(first_velocity);
-            second.linear_velocity = to_float3(second_velocity);
             step.contacts[step.contact_count] =
                 SphereBodyPairContact{
                     .first_body_index = first_index,
@@ -221,13 +244,79 @@ resolve_sphere_body_collisions(
                     .normal = to_float3(normal),
                     .penetration_depth =
                         static_cast<float>(penetration_depth),
-                    .relative_normal_velocity_before_resolution =
-                        static_cast<float>(
-                            relative_normal_velocity),
-                    .normal_impulse_magnitude =
-                        static_cast<float>(normal_impulse),
                 };
+            constraints[step.contact_count] = ContactConstraint{
+                .first_body_index = first_index,
+                .second_body_index = second_index,
+                .normal = to_float3(normal),
+                .material = {
+                    .restitution = settings.restitution,
+                    .static_friction = settings.static_friction,
+                    .dynamic_friction = settings.dynamic_friction,
+                },
+                .points = {{
+                    ContactConstraintPoint{
+                        .position = to_float3(contact_position),
+                        .penetration_depth =
+                            static_cast<float>(penetration_depth),
+                    },
+                }},
+                .point_count = 1,
+            };
             ++step.contact_count;
+        }
+    }
+
+    if (step.contact_count != 0U) {
+        auto solver_result = solve_contact_constraints(
+            std::span<RigidBodyState>{
+                candidate.data(),
+                active_body_count,
+            },
+            std::span<const ContactBodyMassProperties>{
+                solver_masses.data(),
+                active_body_count,
+            },
+            std::span<const ContactConstraint>{
+                constraints.data(),
+                step.contact_count,
+            },
+            settings.solver);
+        if (!solver_result) {
+            return core::Result<
+                SphereBodyCollisionStep>::failure(
+                    std::move(solver_result).error());
+        }
+        const auto& solver_step = solver_result.value();
+        if (solver_step.constraint_count != step.contact_count) {
+            return core::Result<
+                SphereBodyCollisionStep>::failure(
+                    collision_error(
+                        core::ErrorCode::invalid_state,
+                        "Contact solver returned an inconsistent sphere "
+                        "pair result count"));
+        }
+        for (std::size_t contact_index = 0;
+             contact_index < step.contact_count;
+             ++contact_index) {
+            const auto& constraint_result =
+                solver_step.constraints[contact_index];
+            if (constraint_result.point_count != 1U) {
+                return core::Result<
+                    SphereBodyCollisionStep>::failure(
+                        collision_error(
+                            core::ErrorCode::invalid_state,
+                            "Contact solver returned an inconsistent "
+                            "sphere pair point count"));
+            }
+            step.contacts[contact_index]
+                .relative_normal_velocity_before_resolution =
+                    constraint_result.points[0]
+                        .relative_normal_velocity_before_resolution;
+            step.contacts[contact_index]
+                .normal_impulse_magnitude =
+                    constraint_result.points[0]
+                        .normal_impulse_magnitude;
         }
     }
 

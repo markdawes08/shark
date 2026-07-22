@@ -19,8 +19,10 @@ add_executable(SharkTests
     unit/math_tests.cpp
     unit/physics_ballistic_body_tests.cpp
     unit/physics_box_contact_tests.cpp
+    unit/physics_box_dynamics_tests.cpp
     unit/physics_capsule_contact_tests.cpp
     unit/physics_contact_constraint_tests.cpp
+    unit/physics_persistent_contact_tests.cpp
     unit/physics_rigid_body_tests.cpp
     unit/physics_sphere_body_collision_tests.cpp
     unit/physics_sphere_terrain_contact_tests.cpp

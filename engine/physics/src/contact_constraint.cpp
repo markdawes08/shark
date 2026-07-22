@@ -34,6 +34,8 @@ struct WorkingPoint final {
     Double3 position{};
     double relative_normal_velocity_before_resolution{};
     double restitution_target{};
+    double warm_start_normal_impulse{};
+    Double3 warm_start_tangent_impulse{};
     double accumulated_normal_impulse{};
     Double3 accumulated_tangent_impulse{};
 };
@@ -404,17 +406,20 @@ core::Result<ContactSolverStep> solve_contact_constraints(
     const std::span<RigidBodyState> states,
     const std::span<const ContactBodyMassProperties> mass_properties,
     const std::span<const ContactConstraint> constraints,
+    const std::span<const ContactConstraintWarmStart> warm_starts,
     const ContactSolverSettings settings)
 {
     if (states.size() > contact_solver_body_capacity ||
         mass_properties.size() != states.size() ||
         constraints.size() > contact_constraint_capacity ||
+        warm_starts.size() != constraints.size() ||
         !valid_settings(settings)) {
         return core::Result<ContactSolverStep>::failure(
             contact_solver_error(
                 core::ErrorCode::invalid_argument,
                 "Contact solving requires matching bounded body data, "
-                "at most ten constraints, and valid bounded settings"));
+                "aligned warm starts, at most ten constraints, and "
+                "valid bounded settings"));
     }
 
     for (std::size_t body_index = 0;
@@ -431,7 +436,11 @@ core::Result<ContactSolverStep> solve_contact_constraints(
         }
     }
 
-    for (const auto& constraint : constraints) {
+    for (std::size_t constraint_index = 0;
+         constraint_index < constraints.size();
+         ++constraint_index) {
+        const auto& constraint = constraints[constraint_index];
+        const auto& warm_start = warm_starts[constraint_index];
         const auto first_is_static =
             is_static_body(constraint.first_body_index);
         const auto second_is_static =
@@ -451,26 +460,37 @@ core::Result<ContactSolverStep> solve_contact_constraints(
             !valid_material(constraint.material) ||
             constraint.point_count == 0U ||
             constraint.point_count >
-                contact_points_per_constraint) {
+                contact_points_per_constraint ||
+            warm_start.point_count != constraint.point_count) {
             return core::Result<ContactSolverStep>::failure(
                 contact_solver_error(
                     core::ErrorCode::invalid_argument,
                     "Contact constraints require distinct valid "
                     "endpoints, a unit first-to-second normal, valid "
-                    "material coefficients, and one to four points"));
+                    "material coefficients, and aligned one-to-four-"
+                    "point warm starts"));
         }
         for (std::size_t point_index = 0;
              point_index < constraint.point_count;
              ++point_index) {
             const auto& point = constraint.points[point_index];
+            const auto& point_warm_start =
+                warm_start.points[point_index];
             if (!math::is_finite(point.position) ||
                 !std::isfinite(point.penetration_depth) ||
-                point.penetration_depth < 0.0F) {
+                point.penetration_depth < 0.0F ||
+                !std::isfinite(
+                    point_warm_start.normal_impulse_magnitude) ||
+                point_warm_start.normal_impulse_magnitude < 0.0F ||
+                !math::is_finite(
+                    point_warm_start.tangent_impulse)) {
                 return core::Result<ContactSolverStep>::failure(
                     contact_solver_error(
                         core::ErrorCode::invalid_argument,
                         "Contact points require finite world positions "
-                        "and nonnegative finite penetration"));
+                        "and nonnegative finite penetration/normal "
+                        "warm impulses plus finite tangent warm "
+                        "impulses"));
             }
         }
     }
@@ -536,6 +556,80 @@ core::Result<ContactSolverStep> solve_contact_constraints(
                       constraint.material.restitution) *
                     initial_normal_velocity
                 : 0.0;
+        }
+    }
+
+    // Restitution targets above were captured from the cold incoming state.
+    // Only now may cached accumulators affect velocities.
+    for (std::size_t constraint_index = 0;
+         constraint_index < constraints.size();
+         ++constraint_index) {
+        const auto& constraint = constraints[constraint_index];
+        const auto& warm_start = warm_starts[constraint_index];
+        auto& working = working_constraints[constraint_index];
+        for (std::size_t point_index = 0;
+             point_index < constraint.point_count;
+             ++point_index) {
+            const auto& supplied = warm_start.points[point_index];
+            auto& point = working.points[point_index];
+            const auto normal_impulse = static_cast<double>(
+                supplied.normal_impulse_magnitude);
+            auto tangent_impulse = to_double(supplied.tangent_impulse);
+            tangent_impulse = subtract(
+                tangent_impulse,
+                scale(
+                    working.normal,
+                    dot(tangent_impulse, working.normal)));
+
+            const auto tangent_length_squared =
+                length_squared(tangent_impulse);
+            const auto static_limit = static_cast<double>(
+                constraint.material.static_friction) *
+                normal_impulse;
+            const auto dynamic_limit = static_cast<double>(
+                constraint.material.dynamic_friction) *
+                normal_impulse;
+            if (!std::isfinite(tangent_length_squared) ||
+                tangent_length_squared < 0.0 ||
+                !std::isfinite(static_limit) ||
+                !std::isfinite(dynamic_limit)) {
+                return core::Result<ContactSolverStep>::failure(
+                    contact_solver_error(
+                        core::ErrorCode::unavailable,
+                        "Warm-start contact impulse exceeded finite "
+                        "range"));
+            }
+            const auto tangent_length =
+                std::sqrt(tangent_length_squared);
+            if (tangent_length > static_limit) {
+                tangent_impulse = tangent_length > 0.0 &&
+                        dynamic_limit > 0.0
+                    ? scale(
+                          tangent_impulse,
+                          dynamic_limit / tangent_length)
+                    : Double3{};
+            }
+
+            if (!apply_pair_impulse(
+                    bodies,
+                    constraint,
+                    point.position,
+                    scale(working.normal, normal_impulse)) ||
+                !apply_pair_impulse(
+                    bodies,
+                    constraint,
+                    point.position,
+                    tangent_impulse)) {
+                return core::Result<ContactSolverStep>::failure(
+                    contact_solver_error(
+                        core::ErrorCode::unavailable,
+                        "Warm-start contact application exceeded "
+                        "finite range"));
+            }
+            point.warm_start_normal_impulse = normal_impulse;
+            point.warm_start_tangent_impulse = tangent_impulse;
+            point.accumulated_normal_impulse = normal_impulse;
+            point.accumulated_tangent_impulse = tangent_impulse;
         }
     }
 
@@ -811,6 +905,11 @@ core::Result<ContactSolverStep> solve_contact_constraints(
                     point
                         .relative_normal_velocity_before_resolution) ||
                 !representable_float(
+                    point.warm_start_normal_impulse) ||
+                !store_float3(
+                    point.warm_start_tangent_impulse,
+                    impulse.warm_start_tangent_impulse) ||
+                !representable_float(
                     point.accumulated_normal_impulse) ||
                 !store_float3(
                     point.accumulated_tangent_impulse,
@@ -825,6 +924,9 @@ core::Result<ContactSolverStep> solve_contact_constraints(
                 static_cast<float>(
                     point
                         .relative_normal_velocity_before_resolution);
+            impulse.warm_start_normal_impulse_magnitude =
+                static_cast<float>(
+                    point.warm_start_normal_impulse);
             impulse.normal_impulse_magnitude =
                 static_cast<float>(
                     point.accumulated_normal_impulse);
@@ -861,6 +963,42 @@ core::Result<ContactSolverStep> solve_contact_constraints(
         states[body_index] = committed_states[body_index];
     }
     return core::Result<ContactSolverStep>::success(step);
+}
+
+core::Result<ContactSolverStep> solve_contact_constraints(
+    const std::span<RigidBodyState> states,
+    const std::span<const ContactBodyMassProperties> mass_properties,
+    const std::span<const ContactConstraint> constraints,
+    const ContactSolverSettings settings)
+{
+    if (constraints.size() > contact_constraint_capacity) {
+        return solve_contact_constraints(
+            states,
+            mass_properties,
+            constraints,
+            std::span<const ContactConstraintWarmStart>{},
+            settings);
+    }
+
+    std::array<
+        ContactConstraintWarmStart,
+        contact_constraint_capacity>
+        warm_starts{};
+    for (std::size_t constraint_index = 0;
+         constraint_index < constraints.size();
+         ++constraint_index) {
+        warm_starts[constraint_index].point_count =
+            constraints[constraint_index].point_count;
+    }
+    return solve_contact_constraints(
+        states,
+        mass_properties,
+        constraints,
+        std::span<const ContactConstraintWarmStart>{
+            warm_starts.data(),
+            constraints.size(),
+        },
+        settings);
 }
 
 } // namespace shark::physics

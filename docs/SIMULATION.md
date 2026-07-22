@@ -1,6 +1,6 @@
 # Fixed-Step Rigid-Body and Contact Contract
 
-- **Completed through:** `PHY-007`
+- **Completed through:** `PHY-008`
 - **Last verified:** July 22, 2026
 
 PHY-001 established Shark's fixed-clock ballistic path. PHY-002 gives that one
@@ -19,7 +19,9 @@ also as pure CPU queries without response. PHY-007 adds one bounded,
 deterministic sequential-impulse solver with normal response, restitution,
 Coulomb friction, angular response, and bounded positional correction. The
 existing sphere/terrain and sphere/sphere adapters now use that shared path;
-capsules and boxes remain query-only until a real runtime body needs them.
+capsules and boxes remain absent from the runtime scene. PHY-008 adds a
+separate deterministic persistence layer and uses the real box queries plus
+checked box inertia in a CPU-only three-crate stability proof.
 
 ## Ownership and data flow
 
@@ -30,7 +32,8 @@ The boundaries are intentionally narrow:
   properties, linear/angular integration, colliders, canonical-terrain
   response, sphere-pair response, capsule closest-feature contacts,
   oriented-box SAT/manifold queries, bounded contact constraints and response,
-  contact records, and interpolation;
+  persistent contact identities/cache, generic diagonal inertia, checked solid-
+  box mass properties, contact records, and interpolation;
 - `World` publishes four deterministic scenario-owned body spawns, initial
   linear/angular states, equal mass, and external torques beside the lake;
 - the sandbox composition root sequences input, fixed ticks, immutable
@@ -282,8 +285,60 @@ solver commits the body span only after every result and body component is a
 finite representable float, so even a failure discovered in the last body or
 report rolls back the entire batch. Constraints and points always retain caller
 order, velocity iterations are fixed in `[1, 32]`, and there is no early-out.
-Accumulated impulses live for one call only; persistent manifold identity,
-cached impulses, and warm starting belong to PHY-008.
+The original overload remains an intentionally cold transaction. PHY-008's
+separate wrapper supplies aligned warm seeds and owns cross-tick persistence.
+
+## Persistent contacts and box dynamics
+
+`ContactManifoldIdentity` combines two nonzero, ordered, generation-bearing
+endpoint IDs with shape IDs. A dynamic endpoint ID maps to exactly one live body
+slot during a tick; one static sentinel can legitimately represent multiple
+fixed shapes. Current narrow-phase output remains authoritative: a cache entry
+can warm an existing constraint but can never create a ghost contact.
+
+The fixed cache owns at most 30 manifolds: three generations of the solver's
+ten-constraint capacity. Entries stay compact and lexicographically sorted.
+Each current point supplies exact witnesses on both endpoints. Dynamic
+witnesses become local-space anchors using the pre-solve body transform; static
+witnesses remain in world space. Matching requires the exact identity, the same
+static/dynamic endpoint classification, an aligned normal, and both anchor
+distances inside the configured threshold. Candidate point pairs sort by
+combined squared distance and then current/cached indices before a deterministic
+greedy one-to-one selection, so manifold point reordering does not discard a
+valid seed.
+
+The default cache retains one absent fixed tick. Every call uses a strictly
+newer tick, including empty batches, so disappearance, reappearance, expiry,
+and generation reuse are explicit and repeatable. A hard two-tick age bound
+keeps public cache records canonical. Capacity, malformed identity/anchor,
+duplicate binding, nonmonotonic tick, or numerical failure leaves both the body
+span and cache byte-for-byte unchanged.
+
+Restitution targets are captured from the untouched incoming velocities before
+any seed is applied. Cached normal impulse remains nonnegative. Cached
+world-tangent impulse is reprojected into the current plane and clamped to the
+current static/dynamic Coulomb cone, then both accumulators enter the same exact
+one-to-32 solver iterations. The result reports the applied warm seed and final
+accumulators separately; only final finite accumulators are cached.
+
+`RigidBodyMassProperties` generalizes positive mass plus local diagonal inertia.
+Uniform solid boxes use `Ixx = mass/3 * (hy^2 + hz^2)` and its cyclic variants
+for positive half-extents. Angular integration treats the stored moment as the
+physical authority, derives its reciprocal in double precision, advances world
+angular momentum and orientation transactionally, and recovers world angular
+velocity under the rotated tensor. The solid-sphere overload converts through
+this common path; a 12,000-tick regression covers the valid one-ULP reciprocal
+rounding case without systematic torque-free drift.
+
+The permanent stack fixture places three one-meter, one-kilogram cubes on a
+flat canonical terrain triangle. Every 60 Hz tick applies gravity and full
+angular integration, queries real box/terrain and box/box manifolds in stable
+order, and submits one persistent batch with eight velocity iterations. There
+is no damping, rotation lock, sleeping, or fake inertia. Across 30/60/120/144 Hz
+render partitions, the final 120 ticks all retain three manifolds, 12 points,
+and 12 warm starts; final body state, cache, and metrics are bit-identical. The
+measured bounded one-pass positional-correction envelope is `0.025` meter
+center-height error and `0.0125` meter pre/post-solve penetration.
 
 ## Capsule closest-feature contacts
 
@@ -448,6 +503,21 @@ Permanent CPU coverage checks:
   correction;
 - exact constraint/point/iteration order, empty batches, complete invalid-input
   rejection, and rollback after late float overflow;
+- under/over warm seeds with pre-warm restitution capture, tangent reprojection
+  and Coulomb clamping, plus low-iteration convergence toward a 32-iteration
+  reference;
+- point reordering, local-anchor drift, whole-pair translation, deterministic
+  equal-distance ties, normal/distance misses, and generation reuse;
+- sorted fixed-capacity cache state, empty-tick retention/reappearance/expiry,
+  unique dynamic endpoint binding, malformed public cache/tick rejection, and
+  atomic body/cache rollback;
+- checked cube and rectangular-box inertia, shape-neutral angular momentum,
+  invalid/overflow transactionality, and the 12,000-tick reciprocal-rounding
+  regression;
+- the real three-cube stack retaining three manifolds, 12 points, and 12 warm
+  starts throughout its final 120 ticks; and
+- bit-identical stack state, cache, and metrics after exact 30/60/120/144 Hz
+  render partitions;
 - identity, rotated, sign-equivalent, degenerate, invalid, and overflowing
   capsule endpoint construction;
 - separated, tolerance-touching, penetrating, endpoint, parallel, crossed,
@@ -486,8 +556,8 @@ response while its state remains finite and unit-oriented. `F4` still previews
 only body 0's original fixed support normal and is intentionally available
 before and after contact; it is not a live rolling-contact marker. Camera motion
 and presentation-only water remain independent. PHY-005 adds no visible capsule,
-PHY-006 adds no visible box, and PHY-007 adds no new entity or render work to
-this manual scene; their additional acceptance evidence is CPU behavior.
+PHY-006 adds no visible box, and PHY-007/PHY-008 add no new entity or render
+work to this manual scene; their additional acceptance evidence is CPU behavior.
 
 PHY-004's focused rigid-body suite passes `1,540` assertions across nine cases
 in both Debug and Release; both full unit suites pass `182/182`. Presentation
@@ -522,20 +592,27 @@ passes 1,000 frames with the unchanged four-sphere scene and 4,000 existing
 sphere draws, unchanged GPU accounting, zero D3D12 corruption/errors, and zero
 live child objects.
 
+PHY-008's persistent-contact suite passes `55,841` assertions across 13 cases
+and its box-dynamics suite passes `55,637` across six cases in both Debug and
+Release. The complete Physics selection passes `89,119` assertions across 90
+cases; both complete unit configurations pass `462,181` assertions across
+`255/255` cases. Strict Debug and Release builds pass. The unchanged Debug
+hardware presentation smoke passes 1,000 frames with 4,000 existing sphere
+draws, zero D3D12 corruption/errors, and zero live child objects.
+
 ## Explicit non-goals
 
-PHY-007 adds no persistent manifold, cross-tick impulse cache, warm starting,
-runtime capsule or box entity, capsule/box mass adapter, continuous collision,
-broad phase, islands, sleeping, arbitrary convex collision, rolling resistance,
-or general debug-draw service. It does not couple contact response to buoyancy,
-water displacement, an entity system, or a reset control. Capsule and box
-generation remain pure queries even though their witnesses can feed the shared
-solver later.
+PHY-008 adds no runtime capsule or box entity, broad phase, islands, sleeping,
+continuous collision, arbitrary convex collision, rolling resistance, or
+general debug-draw service. It does not add damping, lock crate rotation, or
+couple contact response to buoyancy, water displacement, an entity system, or a
+reset control. The crate stack is a permanent CPU scenario built from the pure
+box queries; the interactive runtime remains the four-sphere Environment Lab.
 
 The terrain adapter remains an intentional one-sample face response for the
 current one-meter-radius, four-meter-cell, slope-bounded Environment Lab
 heightfield. It is not closest-feature sphere/triangle collision and can still
 tunnel under sufficiently large discrete motion. The lake remains W-001
 presentation-only water, and `R-001` through `R-004` remain deferred. The active
-queue is `PHY-008` manifold persistence and warm starting and is centralized in
+queue is `PHY-009` collision broad phase and is centralized in
 [ENGINE_PLAN.md](ENGINE_PLAN.md).

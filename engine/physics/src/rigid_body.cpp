@@ -22,6 +22,15 @@ struct DoubleQuaternion final {
     double w{1.0};
 };
 
+struct Double3 final {
+    double x{};
+    double y{};
+    double z{};
+};
+
+[[nodiscard]] core::Result<math::Quaternion>
+normalize_quaternion(DoubleQuaternion value);
+
 [[nodiscard]] core::Error physics_error(
     const core::ErrorCode code,
     std::string message)
@@ -61,6 +70,139 @@ struct DoubleQuaternion final {
     };
 }
 
+[[nodiscard]] Double3 to_double(
+    const math::Float3 value) noexcept
+{
+    return {
+        static_cast<double>(value.x),
+        static_cast<double>(value.y),
+        static_cast<double>(value.z),
+    };
+}
+
+[[nodiscard]] bool is_finite(const Double3 value) noexcept
+{
+    return std::isfinite(value.x) &&
+        std::isfinite(value.y) &&
+        std::isfinite(value.z);
+}
+
+[[nodiscard]] Double3 add(
+    const Double3 first,
+    const Double3 second) noexcept
+{
+    return {
+        first.x + second.x,
+        first.y + second.y,
+        first.z + second.z,
+    };
+}
+
+[[nodiscard]] Double3 scale(
+    const Double3 value,
+    const double factor) noexcept
+{
+    return {
+        value.x * factor,
+        value.y * factor,
+        value.z * factor,
+    };
+}
+
+[[nodiscard]] Double3 cross(
+    const Double3 first,
+    const Double3 second) noexcept
+{
+    return {
+        first.y * second.z - first.z * second.y,
+        first.z * second.x - first.x * second.z,
+        first.x * second.y - first.y * second.x,
+    };
+}
+
+[[nodiscard]] double length_squared(
+    const Double3 value) noexcept
+{
+    return value.x * value.x +
+        value.y * value.y +
+        value.z * value.z;
+}
+
+[[nodiscard]] Double3 rotate(
+    const math::Quaternion orientation,
+    const Double3 value) noexcept
+{
+    const Double3 quaternion_vector{
+        static_cast<double>(orientation.x),
+        static_cast<double>(orientation.y),
+        static_cast<double>(orientation.z),
+    };
+    const auto twice_cross = scale(
+        cross(quaternion_vector, value),
+        2.0);
+    return add(
+        add(
+            value,
+            scale(
+                twice_cross,
+                static_cast<double>(orientation.w))),
+        cross(quaternion_vector, twice_cross));
+}
+
+[[nodiscard]] Double3 inverse_rotate(
+    const math::Quaternion orientation,
+    const Double3 value) noexcept
+{
+    return rotate(
+        math::Quaternion{
+            -orientation.x,
+            -orientation.y,
+            -orientation.z,
+            orientation.w,
+        },
+        value);
+}
+
+[[nodiscard]] Double3 apply_world_diagonal_tensor(
+    const math::Quaternion orientation,
+    const Double3 local_diagonal,
+    const Double3 value) noexcept
+{
+    const auto local = inverse_rotate(orientation, value);
+    return rotate(
+        orientation,
+        Double3{
+            local.x * local_diagonal.x,
+            local.y * local_diagonal.y,
+            local.z * local_diagonal.z,
+        });
+}
+
+[[nodiscard]] bool representable_float3(
+    const Double3 value) noexcept
+{
+    return is_finite(value) &&
+        representable_float(value.x) &&
+        representable_float(value.y) &&
+        representable_float(value.z);
+}
+
+[[nodiscard]] core::Result<math::Float3> to_float3(
+    const Double3 value)
+{
+    if (!representable_float3(value)) {
+        return core::Result<math::Float3>::failure(
+            physics_error(
+                core::ErrorCode::unavailable,
+                "Angular integration exceeded finite float range"));
+    }
+    return core::Result<math::Float3>::success({
+        static_cast<float>(value.x),
+        static_cast<float>(value.y),
+        static_cast<float>(value.z),
+    });
+}
+
 [[nodiscard]] DoubleQuaternion multiply(
     const DoubleQuaternion left,
     const DoubleQuaternion right) noexcept
@@ -75,6 +217,61 @@ struct DoubleQuaternion final {
         left.w * right.w - left.x * right.x -
             left.y * right.y - left.z * right.z,
     };
+}
+
+[[nodiscard]] core::Result<math::Quaternion> advance_orientation(
+    const math::Quaternion orientation,
+    const Double3 angular_velocity,
+    const double fixed_delta_seconds)
+{
+    const auto speed_squared = length_squared(angular_velocity);
+    if (!std::isfinite(speed_squared) || speed_squared < 0.0) {
+        return core::Result<math::Quaternion>::failure(
+            physics_error(
+                core::ErrorCode::unavailable,
+                "Angular speed exceeded finite range"));
+    }
+    const auto speed = std::sqrt(speed_squared);
+    DoubleQuaternion increment;
+    if (speed > 0.0) {
+        const auto half_angle =
+            0.5 * speed * fixed_delta_seconds;
+        const auto sine = std::sin(half_angle);
+        const auto axis_scale = sine / speed;
+        increment = {
+            angular_velocity.x * axis_scale,
+            angular_velocity.y * axis_scale,
+            angular_velocity.z * axis_scale,
+            std::cos(half_angle),
+        };
+    }
+    return normalize_quaternion(
+        multiply(increment, to_double(orientation)));
+}
+
+[[nodiscard]] bool valid_positive_reciprocal_pair(
+    const float value,
+    const float inverse) noexcept
+{
+    if (!std::isfinite(value) ||
+        value <= 0.0F ||
+        !std::isfinite(inverse) ||
+        inverse <= 0.0F) {
+        return false;
+    }
+    const auto expected_inverse =
+        1.0 / static_cast<double>(value);
+    if (!positive_representable_float(expected_inverse)) {
+        return false;
+    }
+    const auto difference = std::abs(
+        static_cast<double>(inverse) - expected_inverse);
+    const auto scale = std::max(
+        static_cast<double>(inverse),
+        expected_inverse);
+    return difference <= scale *
+        (4.0 * static_cast<double>(
+             std::numeric_limits<float>::epsilon()));
 }
 
 [[nodiscard]] core::Result<math::Quaternion>
@@ -123,34 +320,6 @@ normalize_quaternion(const DoubleQuaternion value)
                 "Quaternion normalization lost unit length"));
     }
     return core::Result<math::Quaternion>::success(result);
-}
-
-[[nodiscard]] core::Result<math::Float3> advance_componentwise(
-    const math::Float3 value,
-    const math::Float3 rate,
-    const double scale)
-{
-    const std::array<double, 3> advanced{
-        static_cast<double>(value.x) +
-            static_cast<double>(rate.x) * scale,
-        static_cast<double>(value.y) +
-            static_cast<double>(rate.y) * scale,
-        static_cast<double>(value.z) +
-            static_cast<double>(rate.z) * scale,
-    };
-    for (const auto component : advanced) {
-        if (!representable_float(component)) {
-            return core::Result<math::Float3>::failure(
-                physics_error(
-                    core::ErrorCode::unavailable,
-                    "Angular integration exceeded finite float range"));
-        }
-    }
-    return core::Result<math::Float3>::success({
-        static_cast<float>(advanced[0]),
-        static_cast<float>(advanced[1]),
-        static_cast<float>(advanced[2]),
-    });
 }
 
 [[nodiscard]] core::Result<math::Float3> interpolate_componentwise(
@@ -243,6 +412,23 @@ bool is_valid(const RigidBodyState& state) noexcept
 }
 
 bool is_valid(
+    const RigidBodyMassProperties& properties) noexcept
+{
+    return valid_positive_reciprocal_pair(
+               properties.mass,
+               properties.inverse_mass) &&
+        valid_positive_reciprocal_pair(
+               properties.local_moment_of_inertia.x,
+               properties.local_inverse_moment_of_inertia.x) &&
+        valid_positive_reciprocal_pair(
+               properties.local_moment_of_inertia.y,
+               properties.local_inverse_moment_of_inertia.y) &&
+        valid_positive_reciprocal_pair(
+               properties.local_moment_of_inertia.z,
+               properties.local_inverse_moment_of_inertia.z);
+}
+
+bool is_valid(
     const SolidSphereMassProperties& properties) noexcept
 {
     if (!std::isfinite(properties.mass) ||
@@ -322,7 +508,7 @@ make_solid_sphere_mass_properties(
 
 core::Result<void> advance_rigid_body_angular_motion(
     RigidBodyState& state,
-    const SolidSphereMassProperties& properties,
+    const RigidBodyMassProperties& properties,
     const math::Float3 torque,
     const float fixed_delta_seconds)
 {
@@ -339,55 +525,70 @@ core::Result<void> advance_rigid_body_angular_motion(
                 "and a fixed delta in (0, 0.25] seconds"));
     }
 
-    const math::Float3 angular_acceleration{
-        torque.x * properties.inverse_moment_of_inertia,
-        torque.y * properties.inverse_moment_of_inertia,
-        torque.z * properties.inverse_moment_of_inertia,
+    const auto local_moment =
+        to_double(properties.local_moment_of_inertia);
+    const Double3 local_inverse_moment{
+        1.0 / local_moment.x,
+        1.0 / local_moment.y,
+        1.0 / local_moment.z,
     };
-    if (!math::is_finite(angular_acceleration)) {
+    const auto isotropic =
+        local_moment.x == local_moment.y &&
+        local_moment.x == local_moment.z;
+    const auto initial_world_angular_momentum = isotropic
+        ? scale(
+              to_double(state.angular_velocity),
+              local_moment.x)
+        : apply_world_diagonal_tensor(
+              state.orientation,
+              local_moment,
+              to_double(state.angular_velocity));
+    const auto world_angular_momentum = add(
+        initial_world_angular_momentum,
+        scale(to_double(torque), fixed_delta_seconds));
+    if (!is_finite(world_angular_momentum)) {
         return core::Result<void>::failure(
             physics_error(
                 core::ErrorCode::unavailable,
-                "Angular acceleration exceeded finite float range"));
+                "Angular momentum exceeded finite range"));
     }
-    auto velocity_result = advance_componentwise(
-        state.angular_velocity,
-        angular_acceleration,
-        fixed_delta_seconds);
-    if (!velocity_result) {
+    const auto predicted_angular_velocity = isotropic
+        ? scale(world_angular_momentum, local_inverse_moment.x)
+        : apply_world_diagonal_tensor(
+              state.orientation,
+              local_inverse_moment,
+              world_angular_momentum);
+    if (!representable_float3(predicted_angular_velocity)) {
         return core::Result<void>::failure(
-            std::move(velocity_result).error());
+            physics_error(
+                core::ErrorCode::unavailable,
+                "Angular velocity exceeded finite range"));
     }
 
-    const auto angular_velocity = velocity_result.value();
-    const auto speed_squared =
-        static_cast<double>(angular_velocity.x) * angular_velocity.x +
-        static_cast<double>(angular_velocity.y) * angular_velocity.y +
-        static_cast<double>(angular_velocity.z) * angular_velocity.z;
-    const auto speed = std::sqrt(speed_squared);
-    DoubleQuaternion increment;
-    if (speed > 0.0) {
-        const auto half_angle =
-            0.5 * speed * fixed_delta_seconds;
-        const auto sine = std::sin(half_angle);
-        const auto scale = sine / speed;
-        increment = {
-            angular_velocity.x * scale,
-            angular_velocity.y * scale,
-            angular_velocity.z * scale,
-            std::cos(half_angle),
-        };
-    }
-    auto orientation_result = normalize_quaternion(
-        multiply(increment, to_double(state.orientation)));
+    auto orientation_result = advance_orientation(
+        state.orientation,
+        predicted_angular_velocity,
+        fixed_delta_seconds);
     if (!orientation_result) {
         return core::Result<void>::failure(
             std::move(orientation_result).error());
     }
 
+    auto final_velocity_result = to_float3(
+        isotropic
+            ? predicted_angular_velocity
+            : apply_world_diagonal_tensor(
+                  orientation_result.value(),
+                  local_inverse_moment,
+                  world_angular_momentum));
+    if (!final_velocity_result) {
+        return core::Result<void>::failure(
+            std::move(final_velocity_result).error());
+    }
+
     auto candidate = state;
     candidate.orientation = orientation_result.value();
-    candidate.angular_velocity = angular_velocity;
+    candidate.angular_velocity = final_velocity_result.value();
     if (!is_valid(candidate)) {
         return core::Result<void>::failure(
             physics_error(
@@ -396,6 +597,59 @@ core::Result<void> advance_rigid_body_angular_motion(
     }
     state = candidate;
     return core::Result<void>::success();
+}
+
+core::Result<RigidBodyMassProperties>
+to_rigid_body_mass_properties(
+    const SolidSphereMassProperties& properties)
+{
+    if (!is_valid(properties)) {
+        return core::Result<RigidBodyMassProperties>::failure(
+            physics_error(
+                core::ErrorCode::invalid_argument,
+                "Rigid-body mass conversion requires checked solid-sphere "
+                "properties"));
+    }
+
+    RigidBodyMassProperties converted{
+        .mass = properties.mass,
+        .inverse_mass = properties.inverse_mass,
+        .local_moment_of_inertia = {
+            properties.moment_of_inertia,
+            properties.moment_of_inertia,
+            properties.moment_of_inertia,
+        },
+        .local_inverse_moment_of_inertia = {
+            properties.inverse_moment_of_inertia,
+            properties.inverse_moment_of_inertia,
+            properties.inverse_moment_of_inertia,
+        },
+    };
+    if (!is_valid(converted)) {
+        return core::Result<RigidBodyMassProperties>::failure(
+            physics_error(
+                core::ErrorCode::unavailable,
+                "Solid-sphere mass conversion lost reciprocal precision"));
+    }
+    return core::Result<RigidBodyMassProperties>::success(converted);
+}
+
+core::Result<void> advance_rigid_body_angular_motion(
+    RigidBodyState& state,
+    const SolidSphereMassProperties& properties,
+    const math::Float3 torque,
+    const float fixed_delta_seconds)
+{
+    auto converted_result = to_rigid_body_mass_properties(properties);
+    if (!converted_result) {
+        return core::Result<void>::failure(
+            std::move(converted_result).error());
+    }
+    return advance_rigid_body_angular_motion(
+        state,
+        converted_result.value(),
+        torque,
+        fixed_delta_seconds);
 }
 
 core::Result<RigidBodyState> interpolate_rigid_body(

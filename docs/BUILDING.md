@@ -1,6 +1,6 @@
 # Building Shark
 
-- **Completed through:** `PHY-007`
+- **Completed through:** `PHY-008`
 - **Last verified:** July 22, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
@@ -627,8 +627,26 @@ Physics label passes `21,215` assertions across 71 cases, and both complete unit
 configurations pass `394,277` assertions across `236/236` cases. Strict Debug
 and Release sandbox builds pass. The Debug hardware smoke passes 1,000 frames,
 records the unchanged 4,000 existing sphere draws and GPU accounting, and
-reports zero D3D12 corruption/errors or live child objects. The next increment
-is `PHY-008`, persistent manifolds and warm starting.
+reports zero D3D12 corruption/errors or live child objects. That result remains
+the cold-solver baseline for PHY-008.
+
+PHY-008 is CPU-only at runtime. It adds the bounded contact cache/warm-start
+transaction, checked generic diagonal and solid-box inertia, and a permanent
+three-cube stability scenario assembled from the existing pure box contacts.
+It adds no sandbox body, shader, root-signature value, draw, resource,
+descriptor, pass, or upload. Iterate with the `[physics][persistent-contact]`,
+`[physics][box][dynamics]`, and `[physics][rigid-body]` filters before running
+both complete unit configurations; one Debug hardware presentation smoke is
+the proportionate graphics regression gate.
+
+At PHY-008 completion, the persistent-contact suite passes `55,841` assertions
+across 13 cases and the box-dynamics suite passes `55,637` across six cases in
+both Debug and Release. The complete Physics selection passes `89,119`
+assertions across 90 cases; both complete unit configurations pass `462,181`
+assertions across `255/255` cases. Strict Debug and Release builds pass. The
+unchanged Debug hardware presentation smoke passes 1,000 frames, records the
+existing 4,000 sphere draws, and reports zero D3D12 corruption/errors or live
+child objects. The next increment is `PHY-009`, collision broad phase.
 
 ## Visual Studio
 

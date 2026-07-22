@@ -18,6 +18,19 @@ struct RigidBodyState final {
         const RigidBodyState&) noexcept = default;
 };
 
+struct RigidBodyMassProperties final {
+    // Mass and local moment are authoritative physical values. Their stored
+    // reciprocals must be consistent and are published for constraint use.
+    float mass{};
+    float inverse_mass{};
+    math::Float3 local_moment_of_inertia{};
+    math::Float3 local_inverse_moment_of_inertia{};
+
+    [[nodiscard]] friend bool operator==(
+        const RigidBodyMassProperties&,
+        const RigidBodyMassProperties&) noexcept = default;
+};
+
 struct SolidSphereMassProperties final {
     float mass{};
     float inverse_mass{};
@@ -32,11 +45,16 @@ struct SolidSphereMassProperties final {
 
 static_assert(std::is_standard_layout_v<RigidBodyState>);
 static_assert(std::is_trivially_copyable_v<RigidBodyState>);
+static_assert(std::is_standard_layout_v<RigidBodyMassProperties>);
+static_assert(std::is_trivially_copyable_v<RigidBodyMassProperties>);
 static_assert(std::is_standard_layout_v<SolidSphereMassProperties>);
 static_assert(std::is_trivially_copyable_v<SolidSphereMassProperties>);
 
 [[nodiscard]] bool is_valid(
     const RigidBodyState& state) noexcept;
+
+[[nodiscard]] bool is_valid(
+    const RigidBodyMassProperties& properties) noexcept;
 
 [[nodiscard]] bool is_valid(
     const SolidSphereMassProperties& properties) noexcept;
@@ -46,8 +64,24 @@ make_solid_sphere_mass_properties(
     float mass,
     float radius);
 
-// Angular velocity and torque are expressed in world space. The update uses
-// semi-implicit Euler and left-multiplies the exact axis-angle increment.
+// Converts the checked scalar inertia of a solid sphere into the common local
+// diagonal-inertia representation used by shape-neutral rigid-body motion.
+[[nodiscard]] core::Result<RigidBodyMassProperties>
+to_rigid_body_mass_properties(
+    const SolidSphereMassProperties& properties);
+
+// Angular velocity and torque are expressed in world space. The update
+// advances world angular momentum through the body's local diagonal inertia,
+// left-multiplies the exact axis-angle orientation increment, then derives the
+// new world angular velocity from the rotated inertia tensor.
+[[nodiscard]] core::Result<void> advance_rigid_body_angular_motion(
+    RigidBodyState& state,
+    const RigidBodyMassProperties& properties,
+    math::Float3 torque,
+    float fixed_delta_seconds);
+
+// Compatibility overload for existing solid-sphere callers. It converts to
+// the common diagonal-inertia representation before advancing motion.
 [[nodiscard]] core::Result<void> advance_rigid_body_angular_motion(
     RigidBodyState& state,
     const SolidSphereMassProperties& properties,

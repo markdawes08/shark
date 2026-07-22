@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 22, 2026
-- **Latest completed:** `PHY-007` - contact constraint solver
-- **Next increment:** `PHY-008` - persistent manifolds and warm starting
+- **Latest completed:** `PHY-008` - persistent contacts and warm starting
+- **Next increment:** `PHY-009` - collision broad phase
 
 ## 1. Project direction
 
@@ -804,7 +804,7 @@ M5.
 | `PHY-005` | S | Complete: add a finite local-half-segment capsule collider; derive world endpoints from normalized rigid orientation; add a bounded canonical LOD0 segment/triangle closest-feature query; generate pure capsule/terrain, capsule/sphere, and capsule/capsule contacts with signed separation, penetration depth, stable witnesses, one-sided terrain normals, and deterministic degenerate-feature fallbacks; and prove the analytic contracts without adding a solver or render proxy | `feat(physics): add capsule collision` |
 | `PHY-006` | S | Complete: add finite positive-half-extent oriented boxes; derive checked world axes, sign-bit vertices, and bounds from normalized rigid orientation; test all 15 box/box and 13 box/canonical-triangle SAT axes in stable order; generate deterministic face-clipped or edge-pair witnesses in fixed-capacity manifolds of at most four points; retain exact terrain ownership through a bounded row-major triangle query; and prove the CPU geometry without adding response or a misleading render proxy | `feat(physics): add box contact manifolds` |
 | `PHY-007` | S | Complete: add a fixed-capacity four-body/ten-constraint/four-point solver with explicit inverse mass, local inverse inertia, static endpoints, material restitution/friction, and one-to-32 stable iterations; accumulate normal and world-tangent impulses with one captured restitution target and a Coulomb static/dynamic cone; apply off-center angular response plus deepest-point, slop-aware, inverse-mass-weighted bounded translation; commit only after double-precision scratch state and reports fit finite floats; route canonical-terrain and lexicographic sphere-pair response through the shared path while retaining the four-sphere render and smoke budgets; and prove analytic momentum, restitution, friction, slope, angular, correction, order, rollback, and fixed-step behavior without persisting impulses between calls | `feat(physics): add contact constraint solver` |
-| `PHY-008` | S | Add manifold persistence and warm starting; a small crate stack remains stable within tolerance | `feat(physics): stabilize persistent contacts` |
+| `PHY-008` | S | Complete: add unique generation-bearing endpoint/shape identities, exact dynamic-local/static-world witness anchors, a sorted fixed 30-manifold cache with deterministic point matching and bounded absence retention (one tick by default), pre-solve restitution capture, reprojected and friction-clamped normal/tangent warm starts, and atomic body/cache transactions; add checked uniform-box mass/inertia plus shape-neutral momentum-form angular integration; and prove analytic cache behavior plus a real three-cube stack across exact 30/60/120/144 Hz partitions without damping, locked rotation, sleeping, or renderer work | `feat(physics): stabilize persistent contacts` |
 | `PHY-009` | S | Replace brute-force pairs with a verified dynamic AABB tree or sweep-and-prune and expose pair/timing counts | `perf(physics): add collision broad phase` |
 | `PHY-010` | S | Add islands and sleeping without changing awake-body results; wake/sleep transitions are test-covered | `perf(physics): add body islands and sleeping` |
 
@@ -864,7 +864,7 @@ this section competes with the coupled-environment critical path through M7.
 ### Deferred visual-weather track
 
 The owner deferred these effects on July 19, 2026. They remain approved but
-have no position on the active `PHY-008 -> PHY-009`
+have no position on the active `PHY-009 -> PHY-010`
 path. Resuming one requires a small plan update; skipping them does not remove
 the numerical precipitation rate used by later hydrology.
 
@@ -967,19 +967,20 @@ online architecture is not implied.
 
 ## 14. Immediate next increment
 
-After PHY-007 is reviewed and committed by the owner, implement only `PHY-008`:
+After PHY-008 is reviewed and committed by the owner, implement only `PHY-009`:
 
-- define bounded, stable contact identities and a deterministic manifold cache
-  owned by Physics rather than by shape queries or the renderer;
-- match current contacts to prior contacts, expire stale entries, and retain
-  normal plus world-tangent impulse accumulators without dynamic allocation;
-- warm-start the existing sequential solver, reproject cached tangent impulses
-  into the current contact plane, and clamp them to the current friction cone;
-- prove that cold-start and warm-start single-contact results agree, that cache
-  ordering and expiry are repeatable, and that a small crate stack remains
-  stable across 30/60/120/144 Hz render partitions; and
-- stop before broad phase (`PHY-009`), islands/sleeping (`PHY-010`), continuous
-  collision, arbitrary convex collision, buoyancy, or water coupling.
+- add a bounded, shape-neutral broad-phase proxy record with a stable body ID
+  and finite world AABB owned by Physics;
+- generate deterministic overlap candidates with sweep-and-prune, canonicalize
+  pair order, and retain exact-touching pairs without allocating per tick;
+- verify candidate sets against a brute-force oracle across seeded static and
+  moving fixtures, including ties, duplicate/reused IDs, boundary touching,
+  invalid bounds, capacity, and transactional failure;
+- route the four-sphere Environment Lab pair traversal through that candidate
+  list and expose proxy/candidate/narrow-phase counts without changing the
+  visible scene; and
+- stop before islands/sleeping (`PHY-010`), continuous collision, arbitrary
+  convex collision, runtime crates, buoyancy, or water coupling.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -1106,11 +1107,35 @@ cases. The complete Physics label passes `21,215` assertions across 71 cases,
 and both complete unit configurations pass `394,277` assertions across
 `236/236` cases. The Debug hardware smoke passes 1,000 frames, records 4,000
 existing sphere draws with unchanged GPU accounting, and reports zero D3D12
-corruption/errors or live child objects. Impulses remain call-local; PHY-008
-owns contact identity, persistence, and warm starting.
+corruption/errors or live child objects. The cold overload remains available;
+cross-tick impulse ownership is supplied separately by PHY-008.
 
-The active queue is `PHY-008` manifold persistence and warm starting, then
-`PHY-009` collision broad phase. `R-001` through `R-004` remain deferred.
+PHY-008 adds generation-bearing ordered endpoint/shape identities, exact
+dynamic-local and static-world anchors, deterministic one-to-one point matching,
+and a compact lexicographically sorted 30-manifold cache. One fixed-tick
+transaction reprojects and clamps cached tangent impulses, warms the existing
+solver only for current contacts, ages empty ticks, and commits body state plus
+cache atomically. Dynamic endpoint IDs are one-to-one with live body slots;
+static endpoints may name multiple fixed shapes. Checked uniform-box mass and
+diagonal inertia plus shape-neutral momentum-form angular integration support an
+honest CPU stack proof without adding a runtime crate or render proxy.
+
+The three-cube stack uses exact box/terrain and box/box manifolds, gravity, full
+angular motion, eight velocity iterations, and one bounded position-correction
+pass. Across exact 30/60/120/144 Hz render partitions, all final 120 fixed ticks
+retain three manifolds, 12 points, and 12 warm starts; complete state, cache, and
+metrics are bit-identical. The measured one-pass envelope is bounded by `0.025`
+meter center-height error and `0.0125` meter pre/post-solve penetration, with no
+artificial damping, rotation locks, or sleeping. Focused Debug and Release
+results pass `55,841` persistent-contact assertions across 13 cases and `55,637`
+box-dynamics assertions across six cases. The complete Physics selection passes
+`89,119` assertions across 90 cases, and both complete unit configurations pass
+`462,181` assertions across `255/255` cases. The unchanged Debug hardware smoke
+passes 1,000 frames with 4,000 existing sphere draws, zero D3D12 corruption or
+errors, and zero live child objects.
+
+The active queue is `PHY-009` collision broad phase, then `PHY-010` islands and
+sleeping. `R-001` through `R-004` remain deferred.
 
 ## 15. Primary technical references
 

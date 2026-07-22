@@ -76,8 +76,32 @@ struct ContactSolverSettings final {
         const ContactSolverSettings&) noexcept = default;
 };
 
+struct ContactPointWarmStart final {
+    float normal_impulse_magnitude{};
+    // World-space tangent impulse applied to the second endpoint.
+    math::Float3 tangent_impulse{};
+
+    [[nodiscard]] friend bool operator==(
+        const ContactPointWarmStart&,
+        const ContactPointWarmStart&) noexcept = default;
+};
+
+struct ContactConstraintWarmStart final {
+    std::array<
+        ContactPointWarmStart,
+        contact_points_per_constraint>
+        points{};
+    std::size_t point_count{};
+
+    [[nodiscard]] friend bool operator==(
+        const ContactConstraintWarmStart&,
+        const ContactConstraintWarmStart&) noexcept = default;
+};
+
 struct ContactPointImpulse final {
     float relative_normal_velocity_before_resolution{};
+    float warm_start_normal_impulse_magnitude{};
+    math::Float3 warm_start_tangent_impulse{};
     float normal_impulse_magnitude{};
     // Accumulated world-space tangent impulse applied to the second endpoint.
     math::Float3 tangent_impulse{};
@@ -122,6 +146,10 @@ static_assert(std::is_standard_layout_v<ContactConstraint>);
 static_assert(std::is_trivially_copyable_v<ContactConstraint>);
 static_assert(std::is_standard_layout_v<ContactSolverSettings>);
 static_assert(std::is_trivially_copyable_v<ContactSolverSettings>);
+static_assert(std::is_standard_layout_v<ContactPointWarmStart>);
+static_assert(std::is_trivially_copyable_v<ContactPointWarmStart>);
+static_assert(std::is_standard_layout_v<ContactConstraintWarmStart>);
+static_assert(std::is_trivially_copyable_v<ContactConstraintWarmStart>);
 static_assert(std::is_standard_layout_v<ContactPointImpulse>);
 static_assert(std::is_trivially_copyable_v<ContactPointImpulse>);
 static_assert(std::is_standard_layout_v<ContactConstraintResult>);
@@ -136,13 +164,26 @@ static_assert(std::is_trivially_copyable_v<ContactSolverStep>);
 // Normal and tangent impulses accumulate only within this call. A bounded,
 // inverse-mass-weighted translation follows the velocity solve using each
 // manifold's deepest point. Validation or numerical failure leaves every
-// input state unchanged; persistence and warm starting are intentionally not
-// part of this contract.
+// input state unchanged.
 [[nodiscard]] core::Result<ContactSolverStep>
 solve_contact_constraints(
     std::span<RigidBodyState> states,
     std::span<const ContactBodyMassProperties> mass_properties,
     std::span<const ContactConstraint> constraints,
+    ContactSolverSettings settings = {});
+
+// Warm-start values must align one-for-one with constraints and their points.
+// The solver captures restitution targets before applying warm impulses,
+// reprojects cached world tangents into each current contact plane, clamps
+// them to the current Coulomb cone, and then performs the same exact fixed
+// iteration count as the cold overload. The supplied warm starts are never
+// mutated, and any failure leaves every body state unchanged.
+[[nodiscard]] core::Result<ContactSolverStep>
+solve_contact_constraints(
+    std::span<RigidBodyState> states,
+    std::span<const ContactBodyMassProperties> mass_properties,
+    std::span<const ContactConstraint> constraints,
+    std::span<const ContactConstraintWarmStart> warm_starts,
     ContactSolverSettings settings = {});
 
 } // namespace shark::physics

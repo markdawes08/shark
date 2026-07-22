@@ -30,14 +30,17 @@ add_library(SharkEngine STATIC
     physics/include/shark/physics/capsule_collider.hpp
     physics/include/shark/physics/capsule_contact.hpp
     physics/include/shark/physics/contact_constraint.hpp
+    physics/include/shark/physics/persistent_contact.hpp
     physics/include/shark/physics/rigid_body.hpp
     physics/include/shark/physics/sphere_body_collision.hpp
     physics/include/shark/physics/sphere_collider.hpp
     physics/include/shark/physics/sphere_terrain_contact.hpp
     physics/src/ballistic_body.cpp
+    physics/src/box_collider.cpp
     physics/src/box_contact.cpp
     physics/src/capsule_contact.cpp
     physics/src/contact_constraint.cpp
+    physics/src/persistent_contact.cpp
     physics/src/rigid_body.cpp
     physics/src/sphere_body_collision.cpp
     physics/src/sphere_terrain_contact.cpp

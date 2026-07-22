@@ -1,6 +1,6 @@
 # Canonical Terrain-Tile Contract
 
-- **Completed through:** `PHY-007`
+- **Completed through:** `PHY-008`
 - **Last verified:** July 22, 2026
 
 T-008 composes the untouched T-007 rolling-height oracle with a bounded
@@ -1108,6 +1108,8 @@ PHY-005 adds the bounded finite-segment closest-feature query for pure capsule
 contacts. PHY-006 adds only the bounded exact-triangle candidate query used by
 pure oriented-box SAT; it does not add a physics acceleration structure or
 mutate canonical terrain. Those capsule and box queries remain response-free
-until a runtime body adapter needs them. The active queue is `PHY-008` manifold
-persistence and warm starting and remains centralized in
+until a runtime body adapter needs them. PHY-008 exercises those exact box
+witnesses in a CPU-only persistent stack proof without changing Terrain or the
+runtime scene. The active queue is `PHY-009` collision broad phase and remains
+centralized in
 [ENGINE_PLAN.md](ENGINE_PLAN.md).

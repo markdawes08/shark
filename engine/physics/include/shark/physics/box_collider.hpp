@@ -18,6 +18,15 @@ struct BoxCollider final {
         const BoxCollider&) noexcept = default;
 };
 
+struct SolidBoxMassProperties final {
+    BoxCollider collider{};
+    RigidBodyMassProperties body{};
+
+    [[nodiscard]] friend bool operator==(
+        const SolidBoxMassProperties&,
+        const SolidBoxMassProperties&) noexcept = default;
+};
+
 struct BoxWorldGeometry final {
     math::Float3 center{};
     std::array<math::Float3, 3> axes{};
@@ -32,6 +41,8 @@ struct BoxWorldGeometry final {
 
 static_assert(std::is_standard_layout_v<BoxCollider>);
 static_assert(std::is_trivially_copyable_v<BoxCollider>);
+static_assert(std::is_standard_layout_v<SolidBoxMassProperties>);
+static_assert(std::is_trivially_copyable_v<SolidBoxMassProperties>);
 static_assert(std::is_standard_layout_v<BoxWorldGeometry>);
 static_assert(std::is_trivially_copyable_v<BoxWorldGeometry>);
 
@@ -43,6 +54,17 @@ static_assert(std::is_trivially_copyable_v<BoxWorldGeometry>);
         collider.local_half_extents.y > 0.0F &&
         collider.local_half_extents.z > 0.0F;
 }
+
+[[nodiscard]] bool is_valid(
+    const SolidBoxMassProperties& properties) noexcept;
+
+// Computes the exact local diagonal inertia of a uniform solid box from its
+// positive half-extents. The returned collider copy keeps mass and collision
+// geometry explicitly paired for later body adapters.
+[[nodiscard]] core::Result<SolidBoxMassProperties>
+make_solid_box_mass_properties(
+    float mass,
+    const BoxCollider& collider);
 
 // Produces the exact finite world-space axes, corners, and inclusive bounds
 // used by every box query. Vertex order is the XYZ sign-bit order.

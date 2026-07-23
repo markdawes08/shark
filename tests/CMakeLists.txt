@@ -18,6 +18,7 @@ add_executable(SharkTests
     unit/logging_tests.cpp
     unit/math_tests.cpp
     unit/physics_ballistic_body_tests.cpp
+    unit/physics_body_island_tests.cpp
     unit/physics_broad_phase_tests.cpp
     unit/physics_box_contact_tests.cpp
     unit/physics_box_dynamics_tests.cpp

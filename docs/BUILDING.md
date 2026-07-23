@@ -1,6 +1,6 @@
 # Building Shark
 
-- **Completed through:** `PHY-009`
+- **Completed through:** `PHY-010`
 - **Last verified:** July 22, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
@@ -556,7 +556,8 @@ See [the fixed-step simulation contract](SIMULATION.md) for the 60 Hz clock,
 pause/single-step controls, semi-implicit linear/angular state, normalized
 orientation interpolation, canonical one-sample sphere support, and the fixed
 four-body deterministic collision pass, plus PHY-005's pure capsule
-closest-feature contacts and PHY-006's pure oriented-box SAT manifolds.
+closest-feature contacts, PHY-006's pure oriented-box SAT manifolds, and
+PHY-010's CPU-only body-island and sleeping contract.
 
 W-001 consumes that scenario-owned waterline in a dedicated transparent pass
 after `Skybox`. The vertex shader expands a six-vertex quad from `SV_VertexID`
@@ -665,8 +666,31 @@ invariance. Both Debug and Release complete test runs pass `477,236` assertions
 across `267/267` cases. The 1,000-frame RTX 4070 Laptop GPU presentation smoke
 records exact structural totals `4000/6000/255/3/3/2` for proxies/possible/
 X-overlaps/candidates/narrow/contacts, retains the existing 4,000 sphere draws,
-and reports zero D3D12 corruption/errors and zero live child objects. The next
-increment is `PHY-010`, body islands and sleeping.
+and reports zero D3D12 corruption/errors and zero live child objects.
+
+PHY-010 is also CPU-only. It adds exact-contact connected components at the
+existing four-body/ten-constraint solver bounds and a compact stable-ID sleep
+registry with pure prepare and atomic commit phases. Static-world constraints
+never join dynamic bodies, canonical island/member order is independent of
+execution slots, and active-constraint masks retain caller order. The default
+sleep gate is 60 complete quiet fixed ticks at or below `0.05` m/s and `0.05`
+rad/s, with no damping or activity-tick aging. Iterate with:
+
+```powershell
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[physics][body-island]"
+& .\out\build\windows-vs2026\bin\Release\SharkTests.exe "[physics][body-island]"
+```
+
+The focused Debug and Release runs each pass `2,500` assertions across 13
+cases. Both complete configurations pass `479,736` assertions across
+`280/280` cases. The unchanged 1,000-frame RTX 4070 Laptop GPU presentation
+smoke records `4000/6000/255/3/3/2`
+proxies/possible/X-overlaps/candidates/narrow/contacts, retains 4,000 sphere
+draws, and reports zero D3D12 corruption/errors and zero live child objects.
+The sandbox remains unchanged because its current terrain and sphere-pair
+adapters fuse contact generation with response and body 3 receives continuous
+torque. The next increment is `W-002`: a CPU depth/momentum grid with solid
+boundaries and a lake-at-rest proof over uneven terrain, without GPU fluid work.
 
 ## Visual Studio
 

@@ -1,6 +1,6 @@
 # Canonical Terrain-Tile Contract
 
-- **Completed through:** `PHY-009`
+- **Completed through:** `PHY-010`
 - **Last verified:** July 22, 2026
 
 T-008 composes the untouched T-007 rolling-height oracle with a bounded
@@ -1119,5 +1119,20 @@ invalid/rollback, moving-generation, and fixed-rate checks contribute to the
 `477,236` assertions across `267/267` cases passed by both Debug and Release.
 The 1,000-frame RTX 4070 Laptop GPU smoke reports exact structural totals
 `4000/6000/255/3/3/2`, zero D3D12 corruption/errors, and zero live child
-objects. The active queue is `PHY-010` body islands and sleeping and remains
-centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).
+objects.
+
+PHY-010 builds its four-body/ten-constraint islands only from exact Physics
+contact topology. Stable generation IDs establish canonical island/member
+order, caller constraint order remains intact, and the shared static terrain
+endpoint never joins otherwise independent supported bodies. Its sorted sleep
+registry, prepare/atomic-commit phases, wake obligations, and default
+`0.05` m/s, `0.05` rad/s, 60-complete-tick threshold neither read nor mutate
+`HeightTileSurface`. The proof remains CPU-only; the four-sphere sandbox and
+the exact PHY-009 smoke totals above are unchanged. Focused Debug and Release
+tests each pass `2,500` assertions across 13 cases, while both complete
+configurations pass `479,736` assertions across `280/280` cases.
+
+The active queue is `W-002`. Its CPU depth/momentum reference grid will use
+uneven canonical terrain as the bed for solid-boundary and lake-at-rest tests,
+but it will not add GPU fluid work or mutate terrain ownership. The queue
+remains centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).

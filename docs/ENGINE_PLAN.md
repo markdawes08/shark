@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 22, 2026
-- **Latest completed:** `PHY-009` - deterministic collision broad phase
-- **Next increment:** `PHY-010` - body islands and sleeping
+- **Latest completed:** `PHY-010` - body islands and sleeping
+- **Next increment:** `W-002` - CPU shallow-water reference state
 
 ## 1. Project direction
 
@@ -602,7 +602,7 @@ Start with semi-implicit Euler, terrain contact, spheres, capsules, and boxes.
 Retain brute-force pair generation as the verification oracle for the bounded,
 fixed-X sweep-and-prune broad phase. Add analytic primitive contacts,
 sequential impulses, friction, and restitution before considering arbitrary
-convex shapes, GJK/EPA, CCD, islands, or sleeping.
+convex shapes, GJK/EPA, or CCD.
 
 PHY-001 completed the timing and motion foundation: an initially paused fixed
 60 Hz clock supports `F5` pause/resume and `F6` single-step, one collision-free
@@ -806,7 +806,7 @@ M5.
 | `PHY-007` | S | Complete: add a fixed-capacity four-body/ten-constraint/four-point solver with explicit inverse mass, local inverse inertia, static endpoints, material restitution/friction, and one-to-32 stable iterations; accumulate normal and world-tangent impulses with one captured restitution target and a Coulomb static/dynamic cone; apply off-center angular response plus deepest-point, slop-aware, inverse-mass-weighted bounded translation; commit only after double-precision scratch state and reports fit finite floats; route canonical-terrain and lexicographic sphere-pair response through the shared path while retaining the four-sphere render and smoke budgets; and prove analytic momentum, restitution, friction, slope, angular, correction, order, rollback, and fixed-step behavior without persisting impulses between calls | `feat(physics): add contact constraint solver` |
 | `PHY-008` | S | Complete: add unique generation-bearing endpoint/shape identities, exact dynamic-local/static-world witness anchors, a sorted fixed 30-manifold cache with deterministic point matching and bounded absence retention (one tick by default), pre-solve restitution capture, reprojected and friction-clamped normal/tangent warm starts, and atomic body/cache transactions; add checked uniform-box mass/inertia plus shape-neutral momentum-form angular integration; and prove analytic cache behavior plus a real three-cube stack across exact 30/60/120/144 Hz partitions without damping, locked rotation, sleeping, or renderer work | `feat(physics): stabilize persistent contacts` |
 | `PHY-009` | S | Complete: add a shape-neutral fixed-X sweep-and-prune boundary with 64 stable-ID proxies, closed finite world AABBs, complete 2,016-candidate capacity, canonical pair order, and deterministic proxy/possible/X-overlap/candidate/narrow/contact counters; route the four-sphere adapter through outward-rounded conservative bounds and exact candidate-only narrow phase; and prove oracle equivalence, ordering, touching, validation, rollback, and fixed-rate behavior without embedding a wall-clock timer in Physics | `perf(physics): add collision broad phase` |
-| `PHY-010` | S | Add islands and sleeping without changing awake-body results; wake/sleep transitions are test-covered | `perf(physics): add body islands and sleeping` |
+| `PHY-010` | S | Complete: build deterministic exact-contact islands within the existing four-body/ten-constraint solver bounds; key canonical island/member order and a compact sorted sleep registry by stable generation-bearing IDs; keep static world contacts inside one dynamic island without joining bodies through the world; preserve caller constraint order in active masks; separate pure wake preparation from atomic fixed-tick commit; require 60 complete quiet ticks at or below `0.05` m/s and `0.05` rad/s by default; propagate explicit activity across whole islands without damping or activity-tick aging; zero only the two velocity vectors on a whole-island sleep transition; and prove malformed-plan rollback, identity reuse, wake isolation, fixed-rate invariance, and exact awake solver results without changing the sandbox | `perf(physics): add body islands and sleeping` |
 
 ### M6 - Fluid simulation
 
@@ -848,7 +848,7 @@ physical source term.
 | Sky/assets | Cubemap orientation, translation invariance, sRGB/linear correctness, missing-asset error |
 | Terrain | Flat/ramp samples, ray and finite-segment closest-feature hits, normals, cell/chunk boundary equality, LOD seam captures, resident-region index/memory budgets, deterministic natural-height metrics, and closed-basin/spawn assertions |
 | Rain | Seed repeatability, capacity bounds, emission statistics, impact height, GPU timing |
-| Physics | Gravity trajectory, resting contact, analytic sphere/capsule closest features, full oriented-box SAT/manifold geometry, slope friction, restitution, stack stability, and NaN scan |
+| Physics | Gravity trajectory, resting contact, analytic sphere/capsule closest features, full oriented-box SAT/manifold geometry, slope friction, restitution, stack stability, canonical islands, sleep/wake transitions, awake-path identity, rollback, and NaN scan |
 | Fluids | Lake at rest, dam break, walls, wet/dry front, non-negative depth, mass accounting, CPU/GPU tolerance |
 | Coupling | Sealed-bowl rainfall volume, cross-tile runoff, floating block, displacement conservation |
 
@@ -864,7 +864,7 @@ this section competes with the coupled-environment critical path through M7.
 ### Deferred visual-weather track
 
 The owner deferred these effects on July 19, 2026. They remain approved but
-have no position on the active `PHY-010`
+have no position on the active `W-002`
 path. Resuming one requires a small plan update; skipping them does not remove
 the numerical precipitation rate used by later hydrology.
 
@@ -967,15 +967,15 @@ online architecture is not implied.
 
 ## 14. Immediate next increment
 
-After PHY-009 is reviewed and committed by the owner, implement only `PHY-010`:
+After PHY-010 is reviewed and committed by the owner, implement only `W-002`:
 
-- build deterministic body islands from the existing bounded contact graph;
-- add explicit sleeping and waking state with test-covered thresholds,
-  propagation, and stable ordering;
-- prove that bodies which remain awake produce the unchanged PHY-009 results;
-  and
-- stop before continuous collision, arbitrary convex collision, runtime
-  capsules/crates, buoyancy, or water coupling.
+- add a tiny CPU reference grid storing water depth and horizontal momentum;
+- add solid boundary handling and a well-balanced lake-at-rest case over
+  uneven canonical terrain;
+- expose conservation and finite-state checks suitable for later solver
+  increments; and
+- stop before wet fluxes, shoreline activation, rain coupling, GPU compute,
+  or rendering from simulated water.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -1150,8 +1150,42 @@ GPU smoke records exact structural totals `4000/6000/255/3/3/2` in the order
 above, retains 4,000 existing sphere draws, and reports zero D3D12
 corruption/errors and zero live child objects.
 
-The active queue is `PHY-010` body islands and sleeping. `R-001` through
-`R-004` remain deferred.
+PHY-010 builds deterministic connected components from exact contact
+constraints inside the existing four-body/ten-constraint solver boundary.
+Generation-bearing stable IDs order members and islands canonically while
+constraint indices retain caller order. Static endpoints are assigned to the
+one dynamic island they touch and never join otherwise independent bodies
+through the shared world. Isolated bodies remain one-member islands.
+
+Sleeping state lives in a compact registry sorted by stable ID rather than in
+`RigidBodyState`. A pure prepare phase reconciles new, removed, permuted, and
+reused IDs; propagates explicit activity through whole dynamic islands; and
+publishes an order-preserving active-constraint mask. Atomic commit verifies
+the complete public plan and any held sleeping-body state against the source
+registry, accepts an arbitrary nonzero first fixed tick and then exact
+consecutive ticks, and leaves every input unchanged on failure. The defaults
+require 60 complete quiet fixed ticks at or below `0.05` m/s linear speed and
+`0.05` rad/s angular speed. New bodies, explicit wake requests, non-sleepable
+bodies, sleeping-body motion, and mixed awake/sleeping islands mark the whole
+island active, reset quiet age, and never count that activity tick as quiet.
+There is no damping: awake state remains exact, and only linear/angular
+velocity becomes exact zero when an entire island transitions to sleep.
+
+Gravity does not itself request a wake; unchanged sleepers skip integration.
+Forces, torque, impulses, pose/shape/mass changes, contact topology changes,
+support removal, and moving static geometry are explicit caller wake
+obligations. The proof is deliberately CPU-only. The sandbox retains its
+four-sphere adapters and exact PHY-009 accounting because terrain and pair
+generation are still fused with response, while body 3 receives continuous
+torque. Focused Debug and Release tests each pass `2,500` assertions across 13
+cases; both complete configurations pass `479,736` assertions across
+`280/280` cases. The unchanged 1,000-frame RTX 4070 Laptop GPU smoke records
+`4000/6000/255/3/3/2` proxies/possible/X-overlaps/candidates/narrow/contacts,
+retains 4,000 sphere draws, and reports zero D3D12 corruption/errors and zero
+live child objects.
+
+The active queue is `W-002`, the CPU shallow-water reference state. It adds no
+GPU fluid work. `R-001` through `R-004` remain deferred.
 
 ## 15. Primary technical references
 

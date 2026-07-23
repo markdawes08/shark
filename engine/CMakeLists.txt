@@ -25,6 +25,7 @@ add_library(SharkEngine STATIC
     core/src/logging.cpp
     core/src/math.cpp
     physics/include/shark/physics/ballistic_body.hpp
+    physics/include/shark/physics/body_island.hpp
     physics/include/shark/physics/broad_phase.hpp
     physics/include/shark/physics/box_collider.hpp
     physics/include/shark/physics/box_contact.hpp
@@ -37,6 +38,7 @@ add_library(SharkEngine STATIC
     physics/include/shark/physics/sphere_collider.hpp
     physics/include/shark/physics/sphere_terrain_contact.hpp
     physics/src/ballistic_body.cpp
+    physics/src/body_island.cpp
     physics/src/broad_phase.cpp
     physics/src/box_collider.cpp
     physics/src/box_contact.cpp

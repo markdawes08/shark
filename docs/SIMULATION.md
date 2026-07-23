@@ -1,6 +1,6 @@
 # Fixed-Step Rigid-Body and Contact Contract
 
-- **Completed through:** `PHY-009`
+- **Completed through:** `PHY-010`
 - **Last verified:** July 22, 2026
 
 PHY-001 established Shark's fixed-clock ballistic path. PHY-002 gives that one
@@ -24,6 +24,9 @@ separate deterministic persistence layer and uses the real box queries plus
 checked box inertia in a CPU-only three-crate stability proof. PHY-009 adds a
 shape-neutral deterministic broad phase and routes the existing four-sphere
 pair traversal through it without changing the visible scene or response.
+PHY-010 adds deterministic exact-contact islands plus an explicit sleeping
+registry and two-phase wake/commit contract, also without changing the visible
+scene or response.
 
 ## Ownership and data flow
 
@@ -35,8 +38,8 @@ The boundaries are intentionally narrow:
   response, sphere-pair response, capsule closest-feature contacts,
   oriented-box SAT/manifold queries, bounded contact constraints and response,
   persistent contact identities/cache, generic diagonal inertia, checked solid-
-  box mass properties, the fixed-capacity broad phase, contact records, and
-  interpolation;
+  box mass properties, the fixed-capacity broad phase, deterministic body
+  islands, the stable-ID sleep registry, contact records, and interpolation;
 - `World` publishes four deterministic scenario-owned body spawns, initial
   linear/angular states, equal mass, and external torques beside the lake;
 - the sandbox composition root sequences input, fixed ticks, immutable
@@ -362,6 +365,61 @@ and 12 warm starts; final body state, cache, and metrics are bit-identical. The
 measured bounded one-pass positional-correction envelope is `0.025` meter
 center-height error and `0.0125` meter pre/post-solve penetration.
 
+## Body islands and sleeping
+
+PHY-010 builds connected components from current exact contact constraints
+within the existing four-body/ten-constraint solver limits. Every dynamic body
+has a nonzero generation-bearing ID. Members sort by that ID; islands sort by
+their minimum member ID. Constraint indices remain in caller order. A static
+endpoint belongs to the one dynamic island it touches but is never a graph
+vertex, so two bodies supported by the same terrain do not become one island.
+Bodies with no current constraint remain explicit one-member islands.
+
+Sleeping metadata does not alter `RigidBodyState`. `BodySleepRegistry` keeps a
+compact prefix sorted by stable ID, so execution-slot permutation preserves
+history while a reused lifetime with a new ID starts awake. The registry
+records quiet fixed ticks and the sleeping flag. Its first transaction may use
+any nonzero global fixed tick; later transactions must be exactly consecutive.
+Malformed IDs, impossible quiet histories, nonconsecutive ticks, altered public
+plans, changed source registries, or held-sleeper motion fail without mutating
+body state or the registry.
+
+One fixed tick uses an explicit two-phase contract:
+
+1. The caller holds unchanged same-ID sleepers while integrating prior awake,
+   explicitly waking, or non-sleepable bodies, then generates current exact
+   contacts.
+2. `prepare_body_island_sleep` reconciles identities and propagates activity
+   through whole dynamic islands without mutating state. Its active-constraint
+   mask preserves the original constraint order.
+3. The caller solves only active constraints in that retained order.
+4. `commit_body_island_sleep` recreates the plan against the post-solve states
+   and atomically advances registry state for the same fixed tick.
+
+The defaults require 60 complete quiet fixed ticks with linear speed at or
+below `0.05` meter/second and angular speed at or below `0.05` radian/second.
+The evaluator compares squared speeds in double precision and retains the
+inclusive threshold. New or reused IDs, explicit wake requests, non-sleepable
+bodies, motion on a registered sleeper, and a mixed awake/sleeping island mark
+the whole island active. That tick resets quiet age and never counts as quiet.
+When islands merge, their quiet age is the minimum member age. There is no
+artificial damping: awake state stays exact, and only linear and angular
+velocity become exact zero when the entire island crosses the threshold.
+
+Gravity is a persistent field and does not itself request a wake; an unchanged
+sleeper skips integration. Any nonzero force, torque, or impulse, any pose,
+shape, or mass change, contact start/end, support removal, or moving static
+geometry is an explicit caller wake obligation. Continued static support alone
+does not wake a body. An awake body contacting a sleeper wakes their entire
+dynamic island before response.
+
+This is a CPU-only proof. The interactive Environment Lab remains the existing
+four-sphere scene because its terrain and pair adapters currently fuse contact
+generation with response, while body 3 receives continuous external torque.
+Adopting sleeping there now would require a larger coordinator refactor and
+would change PHY-009's exact smoke accounting. No renderer or world snapshot
+contains sleep state.
+
 ## Capsule closest-feature contacts
 
 `CapsuleCollider` contains a finite positive radius and a finite local
@@ -578,7 +636,7 @@ response while its state remains finite and unit-oriented. `F4` still previews
 only body 0's original fixed support normal and is intentionally available
 before and after contact; it is not a live rolling-contact marker. Camera motion
 and presentation-only water remain independent. PHY-005 adds no visible capsule,
-PHY-006 adds no visible box, and PHY-007 through PHY-009 add no new entity or
+PHY-006 adds no visible box, and PHY-007 through PHY-010 add no new entity or
 render work to this manual scene; their additional acceptance evidence is CPU
 behavior.
 
@@ -635,19 +693,33 @@ structural totals `4000/6000/255/3/3/2` for proxies/possible/X-overlaps/
 candidates/narrow/contacts, retains 4,000 sphere draws, and reports zero D3D12
 corruption/errors and zero live child objects.
 
+PHY-010's focused island/sleep suite covers canonical topology and order,
+isolated/static-supported bodies, slot and edge permutations, exact threshold
+ULPs, 60 complete quiet ticks, whole-island sleep/wake propagation, explicit
+support-removal isolation, generation reuse, malformed registry and public-plan
+rollback, planned-sleeper motion rejection, direct and persistent awake-solver
+identity, and 30/60/120/144 Hz invariance. Debug and Release each pass `2,500`
+assertions across 13 focused cases; both complete configurations pass `479,736`
+assertions across `280/280` cases. The unchanged 1,000-frame RTX 4070 Laptop
+GPU presentation smoke reports `4000/6000/255/3/3/2`
+proxies/possible/X-overlaps/candidates/narrow/contacts, retains 4,000 sphere
+draws, and reports zero D3D12 corruption/errors and zero live child objects.
+
 ## Explicit non-goals
 
-PHY-009 adds no runtime capsule or box entity, islands, sleeping, continuous
-collision, arbitrary convex collision, rolling resistance, or general debug-
-draw service. It does not add damping, lock crate rotation, or couple contact
-response to buoyancy, water displacement, an entity system, or a reset control.
-The crate stack remains a permanent CPU scenario built from the pure box
-queries; the interactive runtime remains the four-sphere Environment Lab.
+PHY-010 adds no runtime capsule or box entity, runtime sleeping integration,
+continuous collision, arbitrary convex collision, rolling resistance, or
+general debug-draw service. It does not add damping, lock crate rotation, or
+couple contact response to buoyancy, water displacement, an entity system, or
+a reset control. The crate stack remains a permanent CPU scenario built from
+the pure box queries; the interactive runtime remains the four-sphere
+Environment Lab.
 
 The terrain adapter remains an intentional one-sample face response for the
 current one-meter-radius, four-meter-cell, slope-bounded Environment Lab
 heightfield. It is not closest-feature sphere/triangle collision and can still
 tunnel under sufficiently large discrete motion. The lake remains W-001
 presentation-only water, and `R-001` through `R-004` remain deferred. The active
-queue is `PHY-010` body islands and sleeping and is centralized in
-[ENGINE_PLAN.md](ENGINE_PLAN.md).
+queue is `W-002`, a CPU depth/momentum reference grid with solid boundaries and
+a lake-at-rest proof over uneven terrain. It adds no GPU fluid work and is
+centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).

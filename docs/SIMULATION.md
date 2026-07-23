@@ -1,6 +1,6 @@
 # Fixed-Step Rigid-Body and Contact Contract
 
-- **Completed through:** `PHY-008`
+- **Completed through:** `PHY-009`
 - **Last verified:** July 22, 2026
 
 PHY-001 established Shark's fixed-clock ballistic path. PHY-002 gives that one
@@ -21,7 +21,9 @@ Coulomb friction, angular response, and bounded positional correction. The
 existing sphere/terrain and sphere/sphere adapters now use that shared path;
 capsules and boxes remain absent from the runtime scene. PHY-008 adds a
 separate deterministic persistence layer and uses the real box queries plus
-checked box inertia in a CPU-only three-crate stability proof.
+checked box inertia in a CPU-only three-crate stability proof. PHY-009 adds a
+shape-neutral deterministic broad phase and routes the existing four-sphere
+pair traversal through it without changing the visible scene or response.
 
 ## Ownership and data flow
 
@@ -33,7 +35,8 @@ The boundaries are intentionally narrow:
   response, sphere-pair response, capsule closest-feature contacts,
   oriented-box SAT/manifold queries, bounded contact constraints and response,
   persistent contact identities/cache, generic diagonal inertia, checked solid-
-  box mass properties, contact records, and interpolation;
+  box mass properties, the fixed-capacity broad phase, contact records, and
+  interpolation;
 - `World` publishes four deterministic scenario-owned body spawns, initial
   linear/angular states, equal mass, and external torques beside the lake;
 - the sandbox composition root sequences input, fixed ticks, immutable
@@ -180,16 +183,29 @@ solving, and finite-float validation all succeed.
 ## Sphere-pair collision
 
 After every active sphere has completed ballistic prediction and terrain
-support, Physics tests the active pairs exactly once in lexicographic order:
+support, Physics publishes one conservative proxy per active body to the
+shape-neutral broad phase. Its fixed capacity is 64 proxies and all 2,016
+possible candidates. Every proxy carries a stable nonzero body ID, a unique
+current execution index, and a finite closed world AABB. The stateless broad
+phase validates the complete input before work, sorts by minimum X then body ID,
+performs one fixed-X sweep, checks Y/Z only for X-overlapping intervals, and
+sorts complete candidates into canonical body-ID order. Closed comparisons keep
+face, edge, and point touching. There is no per-tick dynamic allocation.
+
+The sphere adapter retains four fixed body slots and six possible pairs. Slot
+`i` uses stable ID `i + 1`; each sphere AABB is calculated from double-precision
+center/radius endpoints and rounded outward to a finite float bound. Only broad-
+phase candidates reach the exact sphere test. Because the IDs follow the fixed
+slots, candidates, contacts, and shared solver constraints retain the original
+lexicographic order:
 
 ```text
 (0,1), (0,2), (0,3), (1,2), (1,3), (2,3)
 ```
 
-The fixed capacity is four bodies and six possible pairs. There is no dynamic
-allocation and no broad phase. Each active body supplies checked solid-sphere
-mass and inertia rather than relying on an implicit unit-mass rule. For centers
-`A` and `B`, radii `rA` and `rB`, and first-to-second normal `N`:
+Each active body supplies checked solid-sphere mass and inertia rather than
+relying on an implicit unit-mass rule. For centers `A` and `B`, radii `rA` and
+`rB`, and first-to-second normal `N`:
 
 ```text
 offset      = B - A
@@ -216,14 +232,20 @@ the old unbounded full-overlap split.
 Each contact records stable body indices, normal, original penetration,
 incoming relative normal velocity at its witness, and accumulated normal
 impulse. Invalid counts, states, collider/mass mismatches, materials, settings,
-or non-representable results fail transactionally without changing the input
-array.
+non-representable conservative bounds, or non-representable results fail
+transactionally without changing the input array.
+
+The collision step reports six structural counts: proxies, all possible pairs,
+X-overlapping pairs sent to Y/Z tests, complete-AABB candidates, exact narrow-
+phase tests, and published contacts. These are deterministic work/accounting
+metrics, not time.
+Physics deliberately owns no wall-clock timer; CPU timing belongs to an external
+profiler so measurement cannot affect this fixed-step contract.
 
 The first Environment Lab pair collision is deliberately airborne, while body
-0 independently proves canonical terrain support. Pair detection is still one
-discrete brute-force pass and cannot prevent fast bodies from tunneling.
-Velocity constraints iterate, but no impulse survives to the next fixed tick
-yet.
+0 independently proves canonical terrain support. Pair detection remains
+discrete and cannot prevent fast bodies from tunneling. Velocity constraints
+iterate, but the sphere adapter does not yet retain impulses across fixed ticks.
 
 ## Contact constraint solver
 
@@ -556,8 +578,9 @@ response while its state remains finite and unit-oriented. `F4` still previews
 only body 0's original fixed support normal and is intentionally available
 before and after contact; it is not a live rolling-contact marker. Camera motion
 and presentation-only water remain independent. PHY-005 adds no visible capsule,
-PHY-006 adds no visible box, and PHY-007/PHY-008 add no new entity or render
-work to this manual scene; their additional acceptance evidence is CPU behavior.
+PHY-006 adds no visible box, and PHY-007 through PHY-009 add no new entity or
+render work to this manual scene; their additional acceptance evidence is CPU
+behavior.
 
 PHY-004's focused rigid-body suite passes `1,540` assertions across nine cases
 in both Debug and Release; both full unit suites pass `182/182`. Presentation
@@ -600,19 +623,31 @@ cases; both complete unit configurations pass `462,181` assertions across
 hardware presentation smoke passes 1,000 frames with 4,000 existing sphere
 draws, zero D3D12 corruption/errors, and zero live child objects.
 
+PHY-009's fixed-capacity broad-phase tests compare every candidate set against a
+brute-force oracle across full capacity, seeded and permuted fixtures, closed
+touching, axis ties, invalid/duplicate input, transactional failure, moving ID
+generations, and fixed-rate schedules. The migrated sphere tests preserve exact
+contacts and state while proving conservative false positives, outward-bound
+overflow rollback, canonical order, and 30/60/120/144 Hz invariance. Both Debug
+and Release complete unit runs pass `477,236` assertions across `267/267` cases.
+The unchanged 1,000-frame RTX 4070 Laptop GPU presentation smoke reports
+structural totals `4000/6000/255/3/3/2` for proxies/possible/X-overlaps/
+candidates/narrow/contacts, retains 4,000 sphere draws, and reports zero D3D12
+corruption/errors and zero live child objects.
+
 ## Explicit non-goals
 
-PHY-008 adds no runtime capsule or box entity, broad phase, islands, sleeping,
-continuous collision, arbitrary convex collision, rolling resistance, or
-general debug-draw service. It does not add damping, lock crate rotation, or
-couple contact response to buoyancy, water displacement, an entity system, or a
-reset control. The crate stack is a permanent CPU scenario built from the pure
-box queries; the interactive runtime remains the four-sphere Environment Lab.
+PHY-009 adds no runtime capsule or box entity, islands, sleeping, continuous
+collision, arbitrary convex collision, rolling resistance, or general debug-
+draw service. It does not add damping, lock crate rotation, or couple contact
+response to buoyancy, water displacement, an entity system, or a reset control.
+The crate stack remains a permanent CPU scenario built from the pure box
+queries; the interactive runtime remains the four-sphere Environment Lab.
 
 The terrain adapter remains an intentional one-sample face response for the
 current one-meter-radius, four-meter-cell, slope-bounded Environment Lab
 heightfield. It is not closest-feature sphere/triangle collision and can still
 tunnel under sufficiently large discrete motion. The lake remains W-001
 presentation-only water, and `R-001` through `R-004` remain deferred. The active
-queue is `PHY-009` collision broad phase and is centralized in
+queue is `PHY-010` body islands and sleeping and is centralized in
 [ENGINE_PLAN.md](ENGINE_PLAN.md).

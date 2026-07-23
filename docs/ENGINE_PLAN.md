@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 22, 2026
-- **Latest completed:** `PHY-008` - persistent contacts and warm starting
-- **Next increment:** `PHY-009` - collision broad phase
+- **Latest completed:** `PHY-009` - deterministic collision broad phase
+- **Next increment:** `PHY-010` - body islands and sleeping
 
 ## 1. Project direction
 
@@ -599,10 +599,10 @@ weather boundary remains available to later hydrology independently.
 ### Rigid-body physics
 
 Start with semi-implicit Euler, terrain contact, spheres, capsules, and boxes.
-Use brute-force pair generation before a broad-phase structure because it is
-easy to verify. Add analytic primitive contacts, sequential impulses, friction,
-and restitution before considering arbitrary convex shapes, GJK/EPA, CCD,
-islands, or sleeping.
+Retain brute-force pair generation as the verification oracle for the bounded,
+fixed-X sweep-and-prune broad phase. Add analytic primitive contacts,
+sequential impulses, friction, and restitution before considering arbitrary
+convex shapes, GJK/EPA, CCD, islands, or sleeping.
 
 PHY-001 completed the timing and motion foundation: an initially paused fixed
 60 Hz clock supports `F5` pause/resume and `F6` single-step, one collision-free
@@ -805,7 +805,7 @@ M5.
 | `PHY-006` | S | Complete: add finite positive-half-extent oriented boxes; derive checked world axes, sign-bit vertices, and bounds from normalized rigid orientation; test all 15 box/box and 13 box/canonical-triangle SAT axes in stable order; generate deterministic face-clipped or edge-pair witnesses in fixed-capacity manifolds of at most four points; retain exact terrain ownership through a bounded row-major triangle query; and prove the CPU geometry without adding response or a misleading render proxy | `feat(physics): add box contact manifolds` |
 | `PHY-007` | S | Complete: add a fixed-capacity four-body/ten-constraint/four-point solver with explicit inverse mass, local inverse inertia, static endpoints, material restitution/friction, and one-to-32 stable iterations; accumulate normal and world-tangent impulses with one captured restitution target and a Coulomb static/dynamic cone; apply off-center angular response plus deepest-point, slop-aware, inverse-mass-weighted bounded translation; commit only after double-precision scratch state and reports fit finite floats; route canonical-terrain and lexicographic sphere-pair response through the shared path while retaining the four-sphere render and smoke budgets; and prove analytic momentum, restitution, friction, slope, angular, correction, order, rollback, and fixed-step behavior without persisting impulses between calls | `feat(physics): add contact constraint solver` |
 | `PHY-008` | S | Complete: add unique generation-bearing endpoint/shape identities, exact dynamic-local/static-world witness anchors, a sorted fixed 30-manifold cache with deterministic point matching and bounded absence retention (one tick by default), pre-solve restitution capture, reprojected and friction-clamped normal/tangent warm starts, and atomic body/cache transactions; add checked uniform-box mass/inertia plus shape-neutral momentum-form angular integration; and prove analytic cache behavior plus a real three-cube stack across exact 30/60/120/144 Hz partitions without damping, locked rotation, sleeping, or renderer work | `feat(physics): stabilize persistent contacts` |
-| `PHY-009` | S | Replace brute-force pairs with a verified dynamic AABB tree or sweep-and-prune and expose pair/timing counts | `perf(physics): add collision broad phase` |
+| `PHY-009` | S | Complete: add a shape-neutral fixed-X sweep-and-prune boundary with 64 stable-ID proxies, closed finite world AABBs, complete 2,016-candidate capacity, canonical pair order, and deterministic proxy/possible/X-overlap/candidate/narrow/contact counters; route the four-sphere adapter through outward-rounded conservative bounds and exact candidate-only narrow phase; and prove oracle equivalence, ordering, touching, validation, rollback, and fixed-rate behavior without embedding a wall-clock timer in Physics | `perf(physics): add collision broad phase` |
 | `PHY-010` | S | Add islands and sleeping without changing awake-body results; wake/sleep transitions are test-covered | `perf(physics): add body islands and sleeping` |
 
 ### M6 - Fluid simulation
@@ -864,7 +864,7 @@ this section competes with the coupled-environment critical path through M7.
 ### Deferred visual-weather track
 
 The owner deferred these effects on July 19, 2026. They remain approved but
-have no position on the active `PHY-009 -> PHY-010`
+have no position on the active `PHY-010`
 path. Resuming one requires a small plan update; skipping them does not remove
 the numerical precipitation rate used by later hydrology.
 
@@ -967,20 +967,15 @@ online architecture is not implied.
 
 ## 14. Immediate next increment
 
-After PHY-008 is reviewed and committed by the owner, implement only `PHY-009`:
+After PHY-009 is reviewed and committed by the owner, implement only `PHY-010`:
 
-- add a bounded, shape-neutral broad-phase proxy record with a stable body ID
-  and finite world AABB owned by Physics;
-- generate deterministic overlap candidates with sweep-and-prune, canonicalize
-  pair order, and retain exact-touching pairs without allocating per tick;
-- verify candidate sets against a brute-force oracle across seeded static and
-  moving fixtures, including ties, duplicate/reused IDs, boundary touching,
-  invalid bounds, capacity, and transactional failure;
-- route the four-sphere Environment Lab pair traversal through that candidate
-  list and expose proxy/candidate/narrow-phase counts without changing the
-  visible scene; and
-- stop before islands/sleeping (`PHY-010`), continuous collision, arbitrary
-  convex collision, runtime crates, buoyancy, or water coupling.
+- build deterministic body islands from the existing bounded contact graph;
+- add explicit sleeping and waking state with test-covered thresholds,
+  propagation, and stable ordering;
+- prove that bodies which remain awake produce the unchanged PHY-009 results;
+  and
+- stop before continuous collision, arbitrary convex collision, runtime
+  capsules/crates, buoyancy, or water coupling.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -1134,8 +1129,29 @@ box-dynamics assertions across six cases. The complete Physics selection passes
 passes 1,000 frames with 4,000 existing sphere draws, zero D3D12 corruption or
 errors, and zero live child objects.
 
-The active queue is `PHY-009` collision broad phase, then `PHY-010` islands and
-sleeping. `R-001` through `R-004` remain deferred.
+PHY-009 adds a shape-neutral, allocation-free fixed-X sweep-and-prune boundary
+with 64 proxy slots and full capacity for all 2,016 pairs. Proxies carry stable
+nonzero body IDs, unique execution indices, and finite closed world AABBs.
+Candidates retain face/edge/point touching, are canonicalized and sorted by
+body ID, and therefore do not expose spatial sweep order to the sequential
+solver. The four-sphere adapter derives conservative bounds with outward float
+rounding, uses fixed slot IDs, and preserves the existing lexicographic contact,
+constraint, and visible response order.
+
+Each step exposes deterministic structural counts for active proxies, all
+possible pairs, X-overlapping pairs sent to Y/Z tests, complete-AABB candidates,
+exact narrow-phase tests, and contacts. Physics intentionally contains no wall-
+clock timer;
+timing remains an external profiling concern. Brute-force-oracle, seeded,
+permuted-input, exact-touching, invalid/capacity/rollback, moving-generation,
+and 30/60/120/144 Hz tests pass in both configurations. Both complete unit runs
+pass `477,236` assertions across `267/267` cases. The 1,000-frame RTX 4070 Laptop
+GPU smoke records exact structural totals `4000/6000/255/3/3/2` in the order
+above, retains 4,000 existing sphere draws, and reports zero D3D12
+corruption/errors and zero live child objects.
+
+The active queue is `PHY-010` body islands and sleeping. `R-001` through
+`R-004` remain deferred.
 
 ## 15. Primary technical references
 

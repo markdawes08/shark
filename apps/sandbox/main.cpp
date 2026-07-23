@@ -1650,6 +1650,11 @@ void log_platform_event(const shark::platform::Event& event)
         };
     bool observed_airborne_pair_collision = false;
     bool observed_torque_driven_rotation = false;
+    std::uint64_t broad_phase_proxy_count = 0;
+    std::uint64_t broad_phase_possible_pair_count = 0;
+    std::uint64_t broad_phase_x_overlap_pair_count = 0;
+    std::uint64_t broad_phase_candidate_pair_count = 0;
+    std::uint64_t narrow_phase_tested_pair_count = 0;
     std::uint64_t sphere_pair_contact_count = 0;
     const renderer::DaylightSettings daylight{};
     sandbox::CameraController camera_controller{
@@ -2126,6 +2131,16 @@ void log_platform_event(const shark::platform::Event& event)
             }
             const auto& collision_step =
                 collision_result.value();
+            broad_phase_proxy_count +=
+                collision_step.broad_phase_proxy_count;
+            broad_phase_possible_pair_count +=
+                collision_step.possible_pair_count;
+            broad_phase_x_overlap_pair_count +=
+                collision_step.x_overlap_pair_count;
+            broad_phase_candidate_pair_count +=
+                collision_step.candidate_pair_count;
+            narrow_phase_tested_pair_count +=
+                collision_step.narrow_phase_tested_pair_count;
             sphere_pair_contact_count +=
                 collision_step.contact_count;
             for (std::size_t contact_index = 0;
@@ -2301,6 +2316,32 @@ void log_platform_event(const shark::platform::Event& event)
                 renderer_smoke_error(
                     "The presentation smoke did not observe the "
                     "airborne sphere-pair impulse"));
+        }
+        const auto expected_broad_phase_proxy_count =
+            simulation_clock.total_step_count() *
+            world::environment_lab_sphere_body_count;
+        const auto expected_broad_phase_possible_pair_count =
+            simulation_clock.total_step_count() *
+            physics::sphere_pair_capacity;
+        if (broad_phase_proxy_count !=
+                expected_broad_phase_proxy_count ||
+            broad_phase_possible_pair_count !=
+                expected_broad_phase_possible_pair_count ||
+            broad_phase_x_overlap_pair_count <
+                broad_phase_candidate_pair_count ||
+            broad_phase_x_overlap_pair_count >
+                broad_phase_possible_pair_count ||
+            broad_phase_candidate_pair_count !=
+                narrow_phase_tested_pair_count ||
+            sphere_pair_contact_count >
+                narrow_phase_tested_pair_count ||
+            narrow_phase_tested_pair_count == 0 ||
+            narrow_phase_tested_pair_count >=
+                broad_phase_possible_pair_count) {
+            return core::Result<void>::failure(
+                renderer_smoke_error(
+                    "The presentation smoke broad-phase accounting "
+                    "was inconsistent or did not prune sphere pairs"));
         }
         if (!observed_torque_driven_rotation ||
             !physics::is_valid(current_sphere_bodies[3]) ||
@@ -2680,6 +2721,24 @@ void log_platform_event(const shark::platform::Event& event)
         summary.append(std::to_string(stats.presented_frames));
         summary.append(", occluded=");
         summary.append(std::to_string(stats.occluded_frames));
+        summary.append(
+            ", physics-broad-phase(proxies/possible/x-overlaps/"
+            "candidates/narrow/contacts)=");
+        summary.append(std::to_string(broad_phase_proxy_count));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            broad_phase_possible_pair_count));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            broad_phase_x_overlap_pair_count));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            broad_phase_candidate_pair_count));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            narrow_phase_tested_pair_count));
+        summary.push_back('/');
+        summary.append(std::to_string(sphere_pair_contact_count));
         summary.append(", resizes=");
         summary.append(std::to_string(stats.resize_count));
         summary.append(", context-reuses=");

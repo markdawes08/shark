@@ -104,7 +104,15 @@ struct CollisionRun final {
     shark::physics::SphereBodyStates states;
     std::uint64_t step_count{};
     std::uint64_t contact_count{};
-    std::uint64_t tested_pair_count{};
+    std::uint64_t broad_phase_proxy_count{};
+    std::uint64_t possible_pair_count{};
+    std::uint64_t x_overlap_pair_count{};
+    std::uint64_t candidate_pair_count{};
+    std::uint64_t narrow_phase_tested_pair_count{};
+
+    [[nodiscard]] friend bool operator==(
+        const CollisionRun&,
+        const CollisionRun&) noexcept = default;
 };
 
 [[nodiscard]] CollisionRun run_collision_schedule(
@@ -135,7 +143,11 @@ struct CollisionRun final {
         static_cast<std::uint64_t>(render_rate_hz) *
         duration_seconds;
     std::uint64_t contact_count = 0;
-    std::uint64_t tested_pair_count = 0;
+    std::uint64_t broad_phase_proxy_count = 0;
+    std::uint64_t possible_pair_count = 0;
+    std::uint64_t x_overlap_pair_count = 0;
+    std::uint64_t candidate_pair_count = 0;
+    std::uint64_t narrow_phase_tested_pair_count = 0;
 
     for (std::uint64_t frame = 1;
          frame <= frame_count;
@@ -168,8 +180,20 @@ struct CollisionRun final {
             REQUIRE(collision_result);
             contact_count +=
                 collision_result.value().contact_count;
-            tested_pair_count +=
-                collision_result.value().tested_pair_count;
+            broad_phase_proxy_count +=
+                collision_result.value()
+                    .broad_phase_proxy_count;
+            possible_pair_count +=
+                collision_result.value().possible_pair_count;
+            x_overlap_pair_count +=
+                collision_result.value()
+                    .x_overlap_pair_count;
+            candidate_pair_count +=
+                collision_result.value()
+                    .candidate_pair_count;
+            narrow_phase_tested_pair_count +=
+                collision_result.value()
+                    .narrow_phase_tested_pair_count;
         }
     }
 
@@ -177,14 +201,38 @@ struct CollisionRun final {
         .states = states,
         .step_count = clock.total_step_count(),
         .contact_count = contact_count,
-        .tested_pair_count = tested_pair_count,
+        .broad_phase_proxy_count = broad_phase_proxy_count,
+        .possible_pair_count = possible_pair_count,
+        .x_overlap_pair_count = x_overlap_pair_count,
+        .candidate_pair_count = candidate_pair_count,
+        .narrow_phase_tested_pair_count =
+            narrow_phase_tested_pair_count,
     };
+}
+
+void require_collision_counts(
+    const shark::physics::SphereBodyCollisionStep& step,
+    const std::size_t proxy_count,
+    const std::size_t possible_pair_count,
+    const std::size_t x_overlap_pair_count,
+    const std::size_t candidate_pair_count,
+    const std::size_t narrow_phase_tested_pair_count,
+    const std::size_t contact_count)
+{
+    REQUIRE(step.broad_phase_proxy_count == proxy_count);
+    REQUIRE(step.possible_pair_count == possible_pair_count);
+    REQUIRE(step.x_overlap_pair_count == x_overlap_pair_count);
+    REQUIRE(step.candidate_pair_count == candidate_pair_count);
+    REQUIRE(
+        step.narrow_phase_tested_pair_count ==
+        narrow_phase_tested_pair_count);
+    REQUIRE(step.contact_count == contact_count);
 }
 
 } // namespace
 
 TEST_CASE(
-    "sphere body capacity and brute-force pair count are fixed",
+    "sphere body capacity publishes bounded broad-phase work",
     "[physics][sphere][body-collision][capacity][pairs]")
 {
     using namespace shark::physics;
@@ -216,11 +264,16 @@ TEST_CASE(
             body_count,
             test_settings);
         REQUIRE(result);
-        REQUIRE(
-            result.value().tested_pair_count ==
-            body_count * (body_count - (body_count > 0U ? 1U : 0U)) /
-                2U);
-        REQUIRE(result.value().contact_count == 0);
+        require_collision_counts(
+            result.value(),
+            body_count,
+            body_count *
+                (body_count - (body_count > 0U ? 1U : 0U)) /
+                2U,
+            0U,
+            0U,
+            0U,
+            0U);
         REQUIRE(states == before);
     }
 }
@@ -249,8 +302,14 @@ TEST_CASE(
         test_settings);
 
     REQUIRE(result);
-    REQUIRE(result.value().tested_pair_count == 1);
-    REQUIRE(result.value().contact_count == 0);
+    require_collision_counts(
+        result.value(),
+        2U,
+        1U,
+        0U,
+        0U,
+        0U,
+        0U);
     REQUIRE(states == before);
 }
 
@@ -271,8 +330,14 @@ TEST_CASE(
         test_settings);
 
     REQUIRE(result);
-    REQUIRE(result.value().tested_pair_count == 1);
-    REQUIRE(result.value().contact_count == 1);
+    require_collision_counts(
+        result.value(),
+        2U,
+        1U,
+        1U,
+        1U,
+        1U,
+        1U);
     const auto& contact = result.value().contacts[0];
     REQUIRE(contact.first_body_index == 0);
     REQUIRE(contact.second_body_index == 1);
@@ -291,6 +356,41 @@ TEST_CASE(
     REQUIRE(
         states[1].position.x - states[0].position.x ==
         Catch::Approx(1.7F).margin(0.000001F));
+}
+
+TEST_CASE(
+    "sphere narrow phase rejects a conservative AABB false positive",
+    "[physics][sphere][body-collision][broad-phase][false-positive]")
+{
+    using namespace shark::physics;
+
+    SphereBodyStates states{};
+    states[0] = {
+        .position = {0.0F, 0.0F, 0.0F},
+        .linear_velocity = {1.0F, 2.0F, 3.0F},
+    };
+    states[1] = {
+        .position = {1.5F, 1.5F, 0.0F},
+        .linear_velocity = {-4.0F, 5.0F, -6.0F},
+    };
+    const auto before = states;
+    const auto result = resolve_sphere_body_collisions(
+        states,
+        unit_colliders(),
+        unit_mass_properties(),
+        2U,
+        test_settings);
+
+    REQUIRE(result);
+    require_collision_counts(
+        result.value(),
+        2U,
+        1U,
+        1U,
+        1U,
+        1U,
+        0U);
+    REQUIRE(states == before);
 }
 
 TEST_CASE(
@@ -529,10 +629,14 @@ TEST_CASE(
         test_settings);
 
     REQUIRE(result);
-    REQUIRE(
-        result.value().tested_pair_count ==
-        sphere_pair_capacity);
-    REQUIRE(result.value().contact_count == 2);
+    require_collision_counts(
+        result.value(),
+        sphere_body_capacity,
+        sphere_pair_capacity,
+        2U,
+        2U,
+        2U,
+        2U);
     REQUIRE(
         result.value().contacts[0].first_body_index ==
         0);
@@ -706,6 +810,33 @@ TEST_CASE(
             core::ErrorCode::invalid_argument);
         REQUIRE(states == before);
     }
+
+    SECTION("conservative sphere bounds exceed finite float range")
+    {
+        auto huge_mass_result =
+            physics::make_solid_sphere_mass_properties(
+                1.0E-30F,
+                1.0E30F);
+        REQUIRE(huge_mass_result);
+        mass_properties[0] = huge_mass_result.value();
+        colliders[0].radius = mass_properties[0].radius;
+        physics::SphereBodyStates states{};
+        states[0].position.x =
+            std::numeric_limits<float>::max();
+        const auto before = states;
+        const auto result =
+            physics::resolve_sphere_body_collisions(
+                states,
+                colliders,
+                mass_properties,
+                1U,
+                test_settings);
+        REQUIRE_FALSE(result);
+        REQUIRE(
+            result.error().code() ==
+            core::ErrorCode::unavailable);
+        REQUIRE(states == before);
+    }
 }
 
 TEST_CASE(
@@ -722,18 +853,17 @@ TEST_CASE(
         run_collision_schedule(render_rates[0], 2);
     REQUIRE(baseline.step_count == 120);
     REQUIRE(baseline.contact_count == 1);
-    REQUIRE(baseline.tested_pair_count == 120);
+    REQUIRE(baseline.broad_phase_proxy_count == 240U);
+    REQUIRE(baseline.possible_pair_count == 120U);
+    REQUIRE(baseline.x_overlap_pair_count == 1U);
+    REQUIRE(baseline.candidate_pair_count == 1U);
+    REQUIRE(baseline.narrow_phase_tested_pair_count == 1U);
 
     for (const auto render_rate : render_rates) {
         CAPTURE(render_rate);
-        const auto run =
-            run_collision_schedule(render_rate, 2);
-        REQUIRE(run.step_count == baseline.step_count);
-        REQUIRE(run.contact_count == baseline.contact_count);
         REQUIRE(
-            run.tested_pair_count ==
-            baseline.tested_pair_count);
-        REQUIRE(run.states == baseline.states);
+            run_collision_schedule(render_rate, 2) ==
+            baseline);
     }
 }
 
@@ -779,6 +909,11 @@ TEST_CASE(
         terrain_contacts{};
     bool observed_airborne_pair_impulse = false;
     std::uint64_t pair_contact_count = 0;
+    std::uint64_t broad_phase_proxy_count = 0;
+    std::uint64_t possible_pair_count = 0;
+    std::uint64_t x_overlap_pair_count = 0;
+    std::uint64_t candidate_pair_count = 0;
+    std::uint64_t narrow_phase_tested_pair_count = 0;
     constexpr std::uint32_t tick_count = 180;
     for (std::uint32_t tick = 0;
          tick < tick_count;
@@ -809,14 +944,34 @@ TEST_CASE(
                         scenario.sphere_restitution,
                 });
         REQUIRE(collision_result);
+        const auto& collision_step = collision_result.value();
         pair_contact_count +=
-            collision_result.value().contact_count;
+            collision_step.contact_count;
+        broad_phase_proxy_count +=
+            collision_step.broad_phase_proxy_count;
+        possible_pair_count +=
+            collision_step.possible_pair_count;
+        x_overlap_pair_count +=
+            collision_step.x_overlap_pair_count;
+        candidate_pair_count +=
+            collision_step.candidate_pair_count;
+        narrow_phase_tested_pair_count +=
+            collision_step.narrow_phase_tested_pair_count;
+        REQUIRE(
+            collision_step.broad_phase_proxy_count ==
+            world::environment_lab_sphere_body_count);
+        REQUIRE(
+            collision_step.possible_pair_count ==
+            physics::sphere_pair_capacity);
+        REQUIRE(
+            collision_step.candidate_pair_count ==
+            collision_step.narrow_phase_tested_pair_count);
         for (std::size_t contact_index = 0;
              contact_index <
-                collision_result.value().contact_count;
+                collision_step.contact_count;
              ++contact_index) {
             const auto& contact =
-                collision_result.value().contacts[contact_index];
+                collision_step.contacts[contact_index];
             if (contact.first_body_index == 1 &&
                 contact.second_body_index == 2 &&
                 contact.normal_impulse_magnitude > 0.0F) {
@@ -843,7 +998,17 @@ TEST_CASE(
     }
 
     REQUIRE(observed_airborne_pair_impulse);
-    REQUIRE(pair_contact_count >= 1);
+    REQUIRE(pair_contact_count == 1U);
+    REQUIRE(
+        broad_phase_proxy_count ==
+        tick_count * world::environment_lab_sphere_body_count);
+    REQUIRE(
+        possible_pair_count ==
+        tick_count * physics::sphere_pair_capacity);
+    REQUIRE(x_overlap_pair_count >= candidate_pair_count);
+    REQUIRE(x_overlap_pair_count <= possible_pair_count);
+    REQUIRE(candidate_pair_count == 1U);
+    REQUIRE(narrow_phase_tested_pair_count == 1U);
     REQUIRE(terrain_contacts[0]);
     REQUIRE(math::is_finite(states[0].position));
     REQUIRE(math::is_finite(states[0].linear_velocity));

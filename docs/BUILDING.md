@@ -1,6 +1,6 @@
 # Building Shark
 
-- **Completed through:** `PHY-008`
+- **Completed through:** `PHY-009`
 - **Last verified:** July 22, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
@@ -646,7 +646,27 @@ assertions across 90 cases; both complete unit configurations pass `462,181`
 assertions across `255/255` cases. Strict Debug and Release builds pass. The
 unchanged Debug hardware presentation smoke passes 1,000 frames, records the
 existing 4,000 sphere draws, and reports zero D3D12 corruption/errors or live
-child objects. The next increment is `PHY-009`, collision broad phase.
+child objects.
+
+PHY-009 adds the allocation-free, shape-neutral fixed-X sweep-and-prune path.
+Its complete fixed capacities are 64 proxies and 2,016 candidates. The existing
+four-sphere adapter now submits stable slot IDs and conservative outward-rounded
+closed AABBs, then applies its unchanged exact narrow phase and shared solver in
+canonical order. Iterate with `[physics][broad-phase]` and
+`[physics][sphere][body-collision]` before both complete unit presets. Physics
+reports deterministic proxy/possible/X-overlap/candidate/narrow/contact work
+counts; it intentionally contains no wall-clock timer, so use an external CPU
+profiler when timing is required.
+
+The permanent broad-phase suite covers brute-force-oracle equivalence, full
+capacity, seeded/permuted fixtures, touching and axis ties, duplicate/reused IDs,
+invalid bounds, transactional failure, moving generations, and fixed-rate
+invariance. Both Debug and Release complete test runs pass `477,236` assertions
+across `267/267` cases. The 1,000-frame RTX 4070 Laptop GPU presentation smoke
+records exact structural totals `4000/6000/255/3/3/2` for proxies/possible/
+X-overlaps/candidates/narrow/contacts, retains the existing 4,000 sphere draws,
+and reports zero D3D12 corruption/errors and zero live child objects. The next
+increment is `PHY-010`, body islands and sleeping.
 
 ## Visual Studio
 

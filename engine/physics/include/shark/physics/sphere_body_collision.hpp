@@ -47,20 +47,26 @@ struct SphereBodyPairContact final {
 struct SphereBodyCollisionStep final {
     std::array<SphereBodyPairContact, sphere_pair_capacity> contacts{};
     std::size_t contact_count{};
-    std::size_t tested_pair_count{};
+    std::size_t broad_phase_proxy_count{};
+    std::size_t possible_pair_count{};
+    std::size_t x_overlap_pair_count{};
+    std::size_t candidate_pair_count{};
+    std::size_t narrow_phase_tested_pair_count{};
 
     [[nodiscard]] friend bool operator==(
         const SphereBodyCollisionStep&,
         const SphereBodyCollisionStep&) noexcept = default;
 };
 
-// Resolves the active prefix in stable lexicographic pair order using explicit
-// solid-sphere mass properties. Coincident centers use +X as a deterministic
-// normal. Every overlap is gathered before one shared iterative constraint
-// solve; result records retain the same stable pair order.
+// Resolves the active prefix through conservative sphere AABBs and a bounded
+// deterministic broad phase. Narrow-phase candidates, contacts, and solver
+// constraints retain stable lexicographic body-index order. Coincident centers
+// use +X as a deterministic normal. Every overlap is gathered before one shared
+// iterative constraint solve.
 //
-// This remains discrete brute force without continuous collision detection.
-// Validation and numerical failures leave the input states unchanged.
+// This remains discrete collision detection without continuous collision
+// detection. Validation and numerical failures leave the input states
+// unchanged.
 [[nodiscard]] core::Result<SphereBodyCollisionStep>
 resolve_sphere_body_collisions(
     SphereBodyStates& states,

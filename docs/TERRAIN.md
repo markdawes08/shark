@@ -1,6 +1,6 @@
 # Canonical Terrain-Tile Contract
 
-- **Completed through:** `PHY-008`
+- **Completed through:** `PHY-009`
 - **Last verified:** July 22, 2026
 
 T-008 composes the untouched T-007 rolling-height oracle with a bounded
@@ -1097,12 +1097,13 @@ solver, so material friction can exchange linear and angular velocity while
 the zero-penetration constraint preserves the same X/Z query ownership. The
 active queue remains centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).
 
-PHY-003 repeats that terrain step for four fixed-index bodies before testing
-the six possible sphere pairs in lexicographic order. Pair response remains
-CPU-only and does not read or mutate terrain, its visual LODs, or GPU
-resources. PHY-004 supplies orientation and angular velocity; PHY-007 uses both
-for contact-point velocity and world inverse inertia before the existing
-external-torque update.
+PHY-003 repeats that terrain step for four fixed-index bodies. PHY-009 now
+publishes their outward-rounded sphere AABBs to the shape-neutral, closed-bound
+fixed-X sweep-and-prune path before exact candidate-only sphere tests. Stable
+slot IDs preserve lexicographic response order. Pair response remains CPU-only
+and does not read or mutate terrain, its visual LODs, or GPU resources. PHY-004
+supplies orientation and angular velocity; PHY-007 uses both for contact-point
+velocity and world inverse inertia before the existing external-torque update.
 
 PHY-005 adds the bounded finite-segment closest-feature query for pure capsule
 contacts. PHY-006 adds only the bounded exact-triangle candidate query used by
@@ -1110,6 +1111,13 @@ pure oriented-box SAT; it does not add a physics acceleration structure or
 mutate canonical terrain. Those capsule and box queries remain response-free
 until a runtime body adapter needs them. PHY-008 exercises those exact box
 witnesses in a CPU-only persistent stack proof without changing Terrain or the
-runtime scene. The active queue is `PHY-009` collision broad phase and remains
-centralized in
-[ENGINE_PLAN.md](ENGINE_PLAN.md).
+runtime scene. PHY-009's broad phase is a separate Physics-owned boundary with
+64 proxy slots, full 2,016-pair capacity, stable body IDs, and deterministic
+proxy/possible/X-overlap/candidate/narrow/contact counters; it adds no spatial
+index to `HeightTileSurface`. Brute-force-oracle, seeded/permutation, touching,
+invalid/rollback, moving-generation, and fixed-rate checks contribute to the
+`477,236` assertions across `267/267` cases passed by both Debug and Release.
+The 1,000-frame RTX 4070 Laptop GPU smoke reports exact structural totals
+`4000/6000/255/3/3/2`, zero D3D12 corruption/errors, and zero live child
+objects. The active queue is `PHY-010` body islands and sleeping and remains
+centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).

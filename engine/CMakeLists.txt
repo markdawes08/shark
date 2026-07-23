@@ -24,6 +24,8 @@ add_library(SharkEngine STATIC
     core/src/engine_info.cpp
     core/src/logging.cpp
     core/src/math.cpp
+    fluids/include/shark/fluids/shallow_water_reference.hpp
+    fluids/src/shallow_water_reference.cpp
     physics/include/shark/physics/ballistic_body.hpp
     physics/include/shark/physics/body_island.hpp
     physics/include/shark/physics/broad_phase.hpp
@@ -94,6 +96,7 @@ target_include_directories(SharkEngine
     PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/assets/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/core/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/fluids/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/physics/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/platform/windows/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/render_graph/include"

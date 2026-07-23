@@ -2,9 +2,9 @@
 
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
-- **Last updated:** July 22, 2026
-- **Latest completed:** `PHY-010` - body islands and sleeping
-- **Next increment:** `W-002` - CPU shallow-water reference state
+- **Last updated:** July 23, 2026
+- **Latest completed:** `W-002` - CPU shallow-water reference state
+- **Next increment:** `W-003` - conservative wet-cell fluid advance
 
 ## 1. Project direction
 
@@ -812,7 +812,7 @@ M5.
 
 | ID | Level | Increment and acceptance gate | Suggested commit |
 |---|---:|---|---|
-| `W-002` | S | Add a tiny CPU depth/momentum grid, solid boundaries, and a well-balanced lake-at-rest test over uneven terrain | `feat(fluids): add shallow-water reference state` |
+| `W-002` | S | Complete: add an allocation-free double-precision `8 x 8` CPU oracle with separate canonical bed and conserved `h/hu/hv` state, an exact row-major prefix and positive-zero tail, finite/nonnegative/dry-state gates, cardinal reflective solid-wall ghosts, fully wet lake-at-rest construction over an exact canonical-terrain cell-average bed, and deterministic volume/momentum diagnostics; prove the hydrostatic fixture without claiming a time update, wet-front policy, GPU work, or W-001 coupling | `feat(fluids): add shallow-water reference state` |
 | `W-003` | S | Add conservative fluxes and CFL substeps on wet cells; dam-break behavior stays positive and the mass ledger closes | `feat(fluids): advance wet shallow water` |
 | `W-004` | S | Add stable dry/wet fronts and shoreline activation without negative depth or unexplained mass loss | `feat(fluids): add wet and dry boundaries` |
 | `W-005` | S | Port fixed-step batches to ping-pong compute resources; match CPU cases within tolerance and detect NaN/Inf/negative depth | `feat(fluids): add GPU shallow-water solver` |
@@ -967,15 +967,16 @@ online architecture is not implied.
 
 ## 14. Immediate next increment
 
-After PHY-010 is reviewed and committed by the owner, implement only `W-002`:
+After W-002 is reviewed and committed by the owner, implement only `W-003`:
 
-- add a tiny CPU reference grid storing water depth and horizontal momentum;
-- add solid boundary handling and a well-balanced lake-at-rest case over
-  uneven canonical terrain;
-- expose conservation and finite-state checks suitable for later solver
-  increments; and
-- stop before wet fluxes, shoreline activation, rain coupling, GPU compute,
-  or rendering from simulated water.
+- add a transactional finite-volume advance over W-002's strictly wet cells;
+- add conservative interface fluxes, well-balanced bed-source handling, and
+  CFL-limited substeps;
+- prove that the permanent uneven-bed lake remains at rest and that a sealed,
+  fully wet dam-break case remains finite, positive, and volume-conservative;
+  and
+- stop before dry-front activation, rain coupling, GPU compute, or rendering
+  from simulated water.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -1184,7 +1185,18 @@ cases; both complete configurations pass `479,736` assertions across
 retains 4,000 sphere draws, and reports zero D3D12 corruption/errors and zero
 live child objects.
 
-The active queue is `W-002`, the CPU shallow-water reference state. It adds no
+W-002 adds an allocation-free double-precision `8 x 8` CPU reference grid with
+separate canonical bed and conserved `h/hu/hv`, an exact row-major active
+prefix, finite/nonnegative/dry-state validation, reflective cardinal solid-wall
+ghosts, and deterministic water-volume and integrated-momentum diagnostics. Its
+permanent fully wet fixture derives exact area-average beds from uneven
+canonical LOD0 terrain cells and proves constant free surface plus exact-zero
+momentum. It deliberately has no advance operation, so W-003 owns the actual
+well-balanced update proof. Debug and Release focused runs each pass 498
+assertions across 12 cases; both complete CPU test configurations pass 480,234
+assertions across 292 cases.
+
+The active queue is `W-003`, the conservative wet-cell CPU advance. It adds no
 GPU fluid work. `R-001` through `R-004` remain deferred.
 
 ## 15. Primary technical references
@@ -1197,6 +1209,7 @@ GPU fluid work. `R-001` through `R-004` remain deferred.
 - [Microsoft Direct3D WARP package](https://www.nuget.org/packages/Microsoft.Direct3D.WARP)
 - [Microsoft DirectX Shader Compiler](https://github.com/microsoft/DirectXShaderCompiler)
 - [Microsoft DirectXTex](https://github.com/microsoft/DirectXTex)
+- [Audusse et al., hydrostatic reconstruction for well-balanced shallow water](https://publications.imp.fu-berlin.de/478/)
 - [DirectX Graphics Samples](https://github.com/microsoft/DirectX-Graphics-Samples)
 - [D3D12 feature support queries](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ne-d3d12-d3d12_feature)
 - [D3D12 enhanced barriers](https://learn.microsoft.com/en-us/windows-hardware/drivers/display/enhanced-barriers)

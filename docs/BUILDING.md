@@ -689,8 +689,25 @@ proxies/possible/X-overlaps/candidates/narrow/contacts, retains 4,000 sphere
 draws, and reports zero D3D12 corruption/errors and zero live child objects.
 The sandbox remains unchanged because its current terrain and sphere-pair
 adapters fuse contact generation with response and body 3 receives continuous
-torque. The next increment is `W-002`: a CPU depth/momentum grid with solid
-boundaries and a lake-at-rest proof over uneven terrain, without GPU fluid work.
+torque.
+
+W-002 is also CPU-only and adds no sandbox or D3D12 work. Iterate with:
+
+```powershell
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[fluids][shallow-water]"
+& .\out\build\windows-vs2026\bin\Release\SharkTests.exe "[fluids][shallow-water]"
+```
+
+The suite proves the fixed `8 x 8` reference capacity, canonical row-major
+state, finite/nonnegative/dry invariants, uneven-terrain lake-at-rest fixture,
+reflective solid-wall interfaces, and deterministic volume/momentum baselines.
+Debug and Release focused runs each pass 498 assertions across 12 cases; both
+complete CPU test configurations pass 480,234 assertions across 292 cases.
+No hardware or WARP smoke is required because no application, renderer, shader,
+resource, descriptor, draw, or D3D12 path changed.
+
+The next increment is `W-003`: conservative wet-cell fluxes, well-balanced
+bed-source handling, CFL substeps, and lake/dam-break conservation proofs.
 
 ## Visual Studio
 

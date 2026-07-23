@@ -1132,7 +1132,15 @@ the exact PHY-009 smoke totals above are unchanged. Focused Debug and Release
 tests each pass `2,500` assertions across 13 cases, while both complete
 configurations pass `479,736` assertions across `280/280` cases.
 
-The active queue is `W-002`. Its CPU depth/momentum reference grid will use
-uneven canonical terrain as the bed for solid-boundary and lake-at-rest tests,
-but it will not add GPU fluid work or mutate terrain ownership. The queue
-remains centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).
+W-002 derives its permanent fluid bed fixture from exact canonical LOD0 cell
+area averages. With the two equal-area triangles `(b00,b01,b11)` and
+`(b00,b11,b10)`, the derived bed is
+`(2*b00 + b01 + b10 + 2*b11) / 6`. The `8 x 8` double-precision reference grid
+never reads a render mesh or coarse LOD and never mutates terrain ownership.
+Its fully wet uneven-bed lake has constant free surface, exact-zero momentum,
+and reflective solid walls.
+
+The active queue is `W-003`. Its conservative CPU advance will consume the same
+derived reference bed and must preserve the W-002 hydrostatic fixture. It adds
+no GPU fluid work and remains centralized in
+[ENGINE_PLAN.md](ENGINE_PLAN.md).

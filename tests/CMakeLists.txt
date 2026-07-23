@@ -11,6 +11,7 @@ add_executable(SharkTests
     unit/assertion_tests.cpp
     unit/dds_cubemap_tests.cpp
     unit/environment_lighting_tests.cpp
+    unit/fluids_shallow_water_reference_tests.cpp
     unit/d3d12_device_contract_tests.cpp
     unit/d3d12_frame_resource_tests.cpp
     unit/d3d12_render_graph_executor_tests.cpp

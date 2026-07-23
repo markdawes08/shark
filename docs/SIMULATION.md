@@ -705,6 +705,30 @@ GPU presentation smoke reports `4000/6000/255/3/3/2`
 proxies/possible/X-overlaps/candidates/narrow/contacts, retains 4,000 sphere
 draws, and reports zero D3D12 corruption/errors and zero live child objects.
 
+## W-002 CPU shallow-water reference
+
+W-002 adds a platform-independent, allocation-free `8 x 8` double-precision
+reference grid under `shark::fluids`. It separates canonical bed elevation from
+the conserved water depth and X/Z depth-integrated momenta. Public state has one
+exact row-major active prefix, an exact positive-zero tail, and checked finite,
+nonnegative, dry-state, free-surface, velocity, volume, and flux-scale
+invariants.
+
+The permanent hydrostatic fixture derives each fluid bed from the exact
+area-average of the two canonical LOD0 terrain triangles. Its fully wet
+lake-at-rest state has constant `b + h` and exact-zero `hu/hv`. Cardinal
+interface queries return an unchanged adjacent cell or synthesize a reflective
+solid-wall ghost by negating only normal momentum. Diagnostics publish
+deterministic water volume, integrated momentum, wet/dry counts, depth extrema,
+free-surface extrema, and maximum per-cell momentum.
+
+This is a state and boundary proof, not a time solver. There is no flux,
+gravity/bed-source update, CFL timestep, positivity repair, or wet-front
+activation. The first real well-balanced advancement test belongs to W-003.
+The complete contract is recorded in [FLUIDS.md](FLUIDS.md). Debug and Release
+focused runs each pass 498 assertions across 12 cases; both complete CPU test
+configurations pass 480,234 assertions across 292 cases.
+
 ## Explicit non-goals
 
 PHY-010 adds no runtime capsule or box entity, runtime sleeping integration,
@@ -718,8 +742,8 @@ Environment Lab.
 The terrain adapter remains an intentional one-sample face response for the
 current one-meter-radius, four-meter-cell, slope-bounded Environment Lab
 heightfield. It is not closest-feature sphere/triangle collision and can still
-tunnel under sufficiently large discrete motion. The lake remains W-001
-presentation-only water, and `R-001` through `R-004` remain deferred. The active
-queue is `W-002`, a CPU depth/momentum reference grid with solid boundaries and
-a lake-at-rest proof over uneven terrain. It adds no GPU fluid work and is
-centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).
+tunnel under sufficiently large discrete motion. The visible lake remains
+W-001 presentation-only water, and `R-001` through `R-004` remain deferred.
+W-002 adds no sandbox or GPU fluid integration. The active queue is `W-003`, a
+conservative wet-cell CPU advance with the first actual well-balanced update
+proof, and is centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).

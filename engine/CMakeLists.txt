@@ -25,7 +25,9 @@ add_library(SharkEngine STATIC
     core/src/logging.cpp
     core/src/math.cpp
     fluids/include/shark/fluids/shallow_water_reference.hpp
+    fluids/include/shark/fluids/shallow_water_solver.hpp
     fluids/src/shallow_water_reference.cpp
+    fluids/src/shallow_water_solver.cpp
     physics/include/shark/physics/ballistic_body.hpp
     physics/include/shark/physics/body_island.hpp
     physics/include/shark/physics/broad_phase.hpp

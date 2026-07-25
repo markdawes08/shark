@@ -691,23 +691,25 @@ The sandbox remains unchanged because its current terrain and sphere-pair
 adapters fuse contact generation with response and body 3 receives continuous
 torque.
 
-W-002 is also CPU-only and adds no sandbox or D3D12 work. Iterate with:
+W-003 is also CPU-only and adds no sandbox or D3D12 work. Iterate with:
 
 ```powershell
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[fluids][shallow-water]"
 & .\out\build\windows-vs2026\bin\Release\SharkTests.exe "[fluids][shallow-water]"
 ```
 
-The suite proves the fixed `8 x 8` reference capacity, canonical row-major
-state, finite/nonnegative/dry invariants, uneven-terrain lake-at-rest fixture,
-reflective solid-wall interfaces, and deterministic volume/momentum baselines.
-Debug and Release focused runs each pass 498 assertions across 12 cases; both
-complete CPU test configurations pass 480,234 assertions across 292 cases.
-No hardware or WARP smoke is required because no application, renderer, shader,
-resource, descriptor, draw, or D3D12 path changed.
+The suite proves the fixed `8 x 8` reference contract plus transactional
+hydrostatic/Rusanov wet-cell advancement, CFL substeps, positive lake/dam-break
+states, deterministic two-dimensional behavior, enforced volume accounting,
+range handling, and rollback. Debug and Release W-003-focused runs each pass
+1,628 assertions across 16 cases; the combined W-002/W-003 filter passes 2,126
+assertions across 28 cases. Both complete CPU configurations pass 481,862
+assertions across 308 cases. No hardware or WARP smoke is required because no
+application, renderer, shader, resource, descriptor, draw, or D3D12 path
+changed.
 
-The next increment is `W-003`: conservative wet-cell fluxes, well-balanced
-bed-source handling, CFL substeps, and lake/dam-break conservation proofs.
+The next increment is `W-004`: stable dry/wet fronts and shoreline activation
+without negative depth or unexplained mass loss.
 
 ## Visual Studio
 

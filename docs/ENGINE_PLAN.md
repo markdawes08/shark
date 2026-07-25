@@ -2,9 +2,9 @@
 
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
-- **Last updated:** July 23, 2026
-- **Latest completed:** `W-002` - CPU shallow-water reference state
-- **Next increment:** `W-003` - conservative wet-cell fluid advance
+- **Last updated:** July 24, 2026
+- **Latest completed:** `W-003` - conservative wet-cell fluid advance
+- **Next increment:** `W-004` - wet/dry fronts and shoreline activation
 
 ## 1. Project direction
 
@@ -813,7 +813,7 @@ M5.
 | ID | Level | Increment and acceptance gate | Suggested commit |
 |---|---:|---|---|
 | `W-002` | S | Complete: add an allocation-free double-precision `8 x 8` CPU oracle with separate canonical bed and conserved `h/hu/hv` state, an exact row-major prefix and positive-zero tail, finite/nonnegative/dry-state gates, cardinal reflective solid-wall ghosts, fully wet lake-at-rest construction over an exact canonical-terrain cell-average bed, and deterministic volume/momentum diagnostics; prove the hydrostatic fixture without claiming a time update, wet-front policy, GPU work, or W-001 coupling | `feat(fluids): add shallow-water reference state` |
-| `W-003` | S | Add conservative fluxes and CFL substeps on wet cells; dam-break behavior stays positive and the mass ledger closes | `feat(fluids): advance wet shallow water` |
+| `W-003` | S | Complete: add a transactional, unsplit, first-order CPU finite-volume advance over the W-002 strictly wet state; share hydrostatically reconstructed Rusanov mass fluxes with side-specific bed-pressure corrections; recompute scale-safe X/Z signal rates for bounded `CFL <= 0.5` substeps that land on the exact requested interval; reject dry, nonpositive, nonfinite, range, ledger, and budget failures without clamps or caller mutation; publish an enforced scale/operation-aware volume ledger and diagnostic report; and prove non-unit analytic fluxes, uneven lake at rest, long sealed dam break, X/Z and full `8 x 8` two-dimensional determinism, range edges, and post-work rollback without GPU or W-001 integration | `feat(fluids): advance wet shallow water` |
 | `W-004` | S | Add stable dry/wet fronts and shoreline activation without negative depth or unexplained mass loss | `feat(fluids): add wet and dry boundaries` |
 | `W-005` | S | Port fixed-step batches to ping-pong compute resources; match CPU cases within tolerance and detect NaN/Inf/negative depth | `feat(fluids): add GPU shallow-water solver` |
 | `W-006` | S | Render `terrain height + water depth`; simulated surface normals and velocity drive visual detail/foam | `feat(water): render simulated surface water` |
@@ -864,9 +864,9 @@ this section competes with the coupled-environment critical path through M7.
 ### Deferred visual-weather track
 
 The owner deferred these effects on July 19, 2026. They remain approved but
-have no position on the active `W-002`
-path. Resuming one requires a small plan update; skipping them does not remove
-the numerical precipitation rate used by later hydrology.
+have no position on the active `W-004` path. Resuming one requires a small plan
+update; skipping them does not remove the numerical precipitation rate used by
+later hydrology.
 
 | ID | Level | Deferred increment and acceptance gate | Suggested commit |
 |---|---:|---|---|
@@ -967,16 +967,16 @@ online architecture is not implied.
 
 ## 14. Immediate next increment
 
-After W-002 is reviewed and committed by the owner, implement only `W-003`:
+After W-003 is reviewed and committed by the owner, implement only `W-004`:
 
-- add a transactional finite-volume advance over W-002's strictly wet cells;
-- add conservative interface fluxes, well-balanced bed-source handling, and
-  CFL-limited substeps;
-- prove that the permanent uneven-bed lake remains at rest and that a sealed,
-  fully wet dam-break case remains finite, positive, and volume-conservative;
-  and
-- stop before dry-front activation, rain coupling, GPU compute, or rendering
-  from simulated water.
+- define one explicit dry-depth threshold and the conservative activation and
+  deactivation policy around it;
+- allow dry cells and hydrostatically dry interfaces without division by dry
+  depth, negative water, hidden volume creation, or velocity clamps;
+- prove lake-at-rest shorelines, advancing wet fronts, retreating fronts, and
+  sealed-basin mass accounting against the existing W-003 ledger; and
+- stop before rain coupling, tiled runoff, GPU compute, or rendering from
+  simulated water.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -1196,8 +1196,16 @@ well-balanced update proof. Debug and Release focused runs each pass 498
 assertions across 12 cases; both complete CPU test configurations pass 480,234
 assertions across 292 cases.
 
-The active queue is `W-003`, the conservative wet-cell CPU advance. It adds no
-GPU fluid work. `R-001` through `R-004` remain deferred.
+W-003 adds the transactional wet-cell advance: hydrostatic reconstruction,
+shared Rusanov face fluxes, side-specific bed-pressure correction, bounded
+CFL substeps, strict positive-depth gates, and an enforced scale-aware volume
+ledger. The permanent suite proves the uneven lake at rest, sealed dam break,
+two-dimensional capacity and symmetry, range safety, and exact rollback.
+Debug and Release W-003-focused runs each pass 1,628 assertions across 16
+cases; both complete configurations pass 481,862 assertions across 308 cases.
+
+The active queue is `W-004`, stable wet/dry fronts and shoreline activation.
+It adds no GPU fluid work. `R-001` through `R-004` remain deferred.
 
 ## 15. Primary technical references
 

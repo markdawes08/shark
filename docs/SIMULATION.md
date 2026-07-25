@@ -722,12 +722,31 @@ solid-wall ghost by negating only normal momentum. Diagnostics publish
 deterministic water volume, integrated momentum, wet/dry counts, depth extrema,
 free-surface extrema, and maximum per-cell momentum.
 
-This is a state and boundary proof, not a time solver. There is no flux,
-gravity/bed-source update, CFL timestep, positivity repair, or wet-front
-activation. The first real well-balanced advancement test belongs to W-003.
-The complete contract is recorded in [FLUIDS.md](FLUIDS.md). Debug and Release
-focused runs each pass 498 assertions across 12 cases; both complete CPU test
-configurations pass 480,234 assertions across 292 cases.
+W-002 itself is a state and boundary proof, not a time solver. Its permanent
+contract remains the preflight boundary for the W-003 advance described below.
+
+## W-003 conservative wet-cell advance
+
+W-003 advances the W-002 `h/hu/hv` state with a transactional, unsplit,
+first-order finite-volume solver. Every face uses hydrostatic reconstruction,
+a shared Rusanov mass flux, and side-specific bed-pressure correction.
+Reflective outer ghosts keep the domain sealed.
+
+The solver recomputes an X/Z signal-rate sum for every accepted substep,
+enforces `CFL <= 0.5`, and reaches the complete requested interval within a
+bounded substep count. It advances scratch state only, rejects nonfinite or
+nonpositive results without a repair clamp, revalidates the W-002 record after
+every step, and commits only after final diagnostics succeed.
+
+The report exposes time/CFL extrema, initial/final/outward/cumulative transport
+volumes, a scale- and operation-aware enforced ledger tolerance, and final
+depth/momentum extrema. Permanent tests prove the uneven canonical-terrain lake
+at rest, a long sealed dam break, non-unit units, X/Z symmetry, full `8 x 8`
+two-dimensional capacity, range limits, deterministic clones, and exact
+rollback after candidate work. The complete numerical contract is recorded in
+[FLUIDS.md](FLUIDS.md). Debug and Release W-003-focused runs each pass 1,628
+assertions across 16 cases; both complete configurations pass 481,862
+assertions across 308 cases.
 
 ## Explicit non-goals
 
@@ -744,6 +763,6 @@ current one-meter-radius, four-meter-cell, slope-bounded Environment Lab
 heightfield. It is not closest-feature sphere/triangle collision and can still
 tunnel under sufficiently large discrete motion. The visible lake remains
 W-001 presentation-only water, and `R-001` through `R-004` remain deferred.
-W-002 adds no sandbox or GPU fluid integration. The active queue is `W-003`, a
-conservative wet-cell CPU advance with the first actual well-balanced update
-proof, and is centralized in [ENGINE_PLAN.md](ENGINE_PLAN.md).
+W-003 adds no sandbox or GPU fluid integration. The active queue is `W-004`,
+stable wet/dry-front and shoreline activation, and is centralized in
+[ENGINE_PLAN.md](ENGINE_PLAN.md).

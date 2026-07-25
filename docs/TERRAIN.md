@@ -1140,7 +1140,9 @@ never reads a render mesh or coarse LOD and never mutates terrain ownership.
 Its fully wet uneven-bed lake has constant free surface, exact-zero momentum,
 and reflective solid walls.
 
-The active queue is `W-003`. Its conservative CPU advance will consume the same
-derived reference bed and must preserve the W-002 hydrostatic fixture. It adds
-no GPU fluid work and remains centralized in
+W-003's conservative CPU advance consumes the same derived reference bed and
+preserves the W-002 hydrostatic fixture with hydrostatic reconstruction. It
+does not read a render mesh or coarse terrain LOD. The active queue is `W-004`,
+which adds stable wet/dry-front and shoreline activation without changing that
+terrain ownership, and remains centralized in
 [ENGINE_PLAN.md](ENGINE_PLAN.md).

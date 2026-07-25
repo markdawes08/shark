@@ -1,8 +1,8 @@
-# CPU Shallow-Water Reference
+# CPU Shallow-Water Reference Solver
 
-W-002 establishes Shark's first simulated-fluid state. It is a small,
-platform-independent numerical oracle; it does not replace W-001's visual lake
-or submit work to Direct3D 12.
+W-002 establishes Shark's first simulated-fluid state. W-003 adds its first
+real time advance. Together they form a small, platform-independent numerical
+oracle; they do not replace W-001's visual lake or submit work to Direct3D 12.
 
 ## State contract
 
@@ -25,9 +25,10 @@ oracle within documented tolerances.
 Construction rejects malformed dimensions, spans, origins, spacing, extents,
 bed values, depth, momentum, free-surface values, velocity, per-cell volume,
 pressure scale, integrated momentum, or advective flux scale. Depth cannot be
-negative. Exact dry state is representable only as `h = hu = hv = +0`; W-002
-does not activate or deactivate dry cells. Factory operations canonicalize
-signed zero and never mutate their input spans.
+negative. Exact dry state is representable only as `h = hu = hv = +0`.
+W-003 advances only strictly wet cells and rejects a dry input or reconstructed
+dry face; activation and deactivation remain W-004. Factory operations
+canonicalize signed zero and never mutate their input spans.
 
 ## Uneven terrain and lake at rest
 
@@ -48,9 +49,39 @@ momenta. Diagnostics then prove constant `b + h`, zero per-cell momentum, and
 repeatable volume over an uneven canonical terrain fixture.
 
 This establishes the hydrostatic state that a well-balanced solver must
-preserve. W-002 has no time update, numerical flux, or bed-slope source term, so
-it does not falsely claim that a scheme has advanced the fixture. That proof is
-the first acceptance gate in W-003.
+preserve. W-003 now advances that uneven-bed fixture without spurious flow
+within the documented floating-point tolerance.
+
+## Conservative wet-cell advance
+
+`advance_shallow_water_reference_grid` evolves the conserved state
+`U = (h, hu, hv)` with an unsplit, first-order finite-volume update. Every
+cardinal face is evaluated once, so its mass flux is shared by both adjacent
+cells.
+
+The interface scheme uses:
+
+- hydrostatic reconstruction against the higher of the two face beds;
+- a local Lax-Friedrichs/Rusanov flux for the homogeneous shallow-water
+  equations;
+- side-specific hydrostatic pressure corrections for the bed source; and
+- reflective solid-wall ghosts at the rectangular boundary.
+
+Those choices preserve a fully wet lake at rest over the canonical uneven
+terrain fixture. They are intentionally diffusive and small-scale; higher-order
+reconstruction and limiters are not part of this CPU oracle.
+
+Each substep recomputes the maximum X and Z signal rates after dividing by cell
+spacing. The sum is limited to `CFL <= 0.5` (`0.45` by default). The final
+substep lands on the exact requested interval, while an explicit budget prevents
+unbounded catch-up work.
+
+The operation is transactional. It advances a complete scratch grid, validates
+every substep, and replaces the caller's grid only after the requested interval
+and final diagnostics succeed. Nonfinite arithmetic, nonpositive depth,
+unsupported dry reconstruction, conservation failure, or budget exhaustion
+returns an error without clamping depth or velocity and without changing the
+input grid.
 
 ## Solid boundaries
 
@@ -64,7 +95,7 @@ synthesizes one reflective ghost:
 - exact zero remains positive zero.
 
 There is no stored ghost ring, diagonal corner query, open boundary, inflow,
-outflow, periodic boundary, or internal obstacle mask in W-002.
+outflow, periodic boundary, or internal obstacle mask through W-003.
 
 ## Diagnostics
 
@@ -79,12 +110,22 @@ row-major baselines:
   `m^4/s`; and
 - maximum absolute per-cell X/Z momentum.
 
-The volume is a conservation baseline, not yet a time ledger. W-003 will compare
-pre-step and post-step values after adding an actual conservative update.
+W-003 turns volume into an enforced ledger:
+
+```text
+residual = final volume - initial volume + net outward boundary volume
+```
+
+The report also records cumulative absolute face transport, substep extrema,
+maximum observed CFL, final depth/momentum extrema, and the maximum intermediate
+ledger residual. Success requires every residual to fit a published,
+scale- and operation-aware floating-point tolerance. Reflective fixtures have
+exactly zero outward boundary volume.
 
 ## Verification
 
-The permanent `[fluids][shallow-water]` suite covers:
+The permanent `[fluids][shallow-water]` suite covers the W-002 state contract
+and the W-003 advance, including:
 
 - `1 x 1` and exact `8 x 8` capacity;
 - row-major storage, representable cell centers, canonical signed-zero/tail
@@ -94,17 +135,24 @@ The permanent `[fluids][shallow-water]` suite covers:
 - the fully wet lake-at-rest fixture over uneven canonical terrain;
 - every perimeter face plus nonzero normal/tangent wall momentum;
 - one-cell-domain reflective behavior without negative zero; and
-- exact analytic volume and integrated-momentum baselines.
+- exact analytic volume and integrated-momentum baselines;
+- analytic non-unit-spacing Rusanov flux and reflective wall impulses;
+- well-balanced uneven-bed lake and sealed dam-break evolution;
+- X/Z transpose symmetry, tangential transport, and nonlinear `8 x 8`
+  capacity;
+- CFL partitioning and two-axis, reciprocal, and flux range edge cases;
+- positive depth, deterministic clones, report/diagnostic agreement, and
+  enforced volume accounting; and
+- invalid, dry, overflow, substep-budget, and post-work transactional rollback.
 
-Debug and Release focused runs each pass 498 assertions across 12 cases. Both
-complete CPU test configurations pass 480,234 assertions across 292 cases.
-No GPU smoke is required because W-002 changes no sandbox, renderer, shader,
+Debug and Release W-003-focused runs each pass 1,628 assertions across 16
+cases. The combined W-002/W-003 filter passes 2,126 assertions across 28 cases,
+and both complete CPU configurations pass 481,862 assertions across 308 cases.
+No GPU smoke is required because W-003 changes no sandbox, renderer, shader,
 resource, descriptor, draw, or D3D12 path.
 
 ## Next boundary
 
-W-003 may add only conservative wet-cell fluxes, well-balanced bed-source
-handling, CFL-limited substeps, positivity checks, a sealed dam-break fixture,
-and volume accounting across real updates. Wet/dry-front activation remains
-W-004; rain coupling, GPU compute, and simulated-water rendering remain later
-increments.
+W-004 may add only stable dry/wet fronts and shoreline activation while
+retaining nonnegative depth and the explicit volume ledger. Rain coupling, GPU
+compute, and simulated-water rendering remain later increments.

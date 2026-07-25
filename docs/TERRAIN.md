@@ -1142,7 +1142,9 @@ and reflective solid walls.
 
 W-003's conservative CPU advance consumes the same derived reference bed and
 preserves the W-002 hydrostatic fixture with hydrostatic reconstruction. It
-does not read a render mesh or coarse terrain LOD. The active queue is `W-004`,
-which adds stable wet/dry-front and shoreline activation without changing that
-terrain ownership, and remains centralized in
+does not read a render mesh or coarse terrain LOD. W-004 now permits exact-dry
+cells and retained films while preserving a partially wet uneven-bed
+lake-at-rest shoreline over that same simulation-owned bed. It does not snap
+water depth to the terrain or derive collision from a visual LOD. The active
+queue is `W-005`, the GPU shallow-water solver, and remains centralized in
 [ENGINE_PLAN.md](ENGINE_PLAN.md).

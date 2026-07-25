@@ -2,9 +2,9 @@
 
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
-- **Last updated:** July 24, 2026
-- **Latest completed:** `W-003` - conservative wet-cell fluid advance
-- **Next increment:** `W-004` - wet/dry fronts and shoreline activation
+- **Last updated:** July 25, 2026
+- **Latest completed:** `W-004` - wet/dry fronts and shoreline activation
+- **Next increment:** `W-005` - GPU shallow-water solver
 
 ## 1. Project direction
 
@@ -814,7 +814,7 @@ M5.
 |---|---:|---|---|
 | `W-002` | S | Complete: add an allocation-free double-precision `8 x 8` CPU oracle with separate canonical bed and conserved `h/hu/hv` state, an exact row-major prefix and positive-zero tail, finite/nonnegative/dry-state gates, cardinal reflective solid-wall ghosts, fully wet lake-at-rest construction over an exact canonical-terrain cell-average bed, and deterministic volume/momentum diagnostics; prove the hydrostatic fixture without claiming a time update, wet-front policy, GPU work, or W-001 coupling | `feat(fluids): add shallow-water reference state` |
 | `W-003` | S | Complete: add a transactional, unsplit, first-order CPU finite-volume advance over the W-002 strictly wet state; share hydrostatically reconstructed Rusanov mass fluxes with side-specific bed-pressure corrections; recompute scale-safe X/Z signal rates for bounded `CFL <= 0.5` substeps that land on the exact requested interval; reject dry, nonpositive, nonfinite, range, ledger, and budget failures without clamps or caller mutation; publish an enforced scale/operation-aware volume ledger and diagnostic report; and prove non-unit analytic fluxes, uneven lake at rest, long sealed dam break, X/Z and full `8 x 8` two-dimensional determinism, range edges, and post-work rollback without GPU or W-001 integration | `feat(fluids): advance wet shallow water` |
-| `W-004` | S | Add stable dry/wet fronts and shoreline activation without negative depth or unexplained mass loss | `feat(fluids): add wet and dry boundaries` |
+| `W-004` | S | Complete: define a binary-exact `2^-20`-meter dry-depth threshold and strict exact-dry/retained-film/active classes; retain every positive depth and its hydrostatic pressure while projecting only near-dry momentum to positive zero with an explicit integrated discard ledger; admit dry inputs and reconstructed dry faces through range-safe hydrostatic reconstruction; activate and deactivate through shared conservative fluxes without depth clamps; preserve transactional CFL and volume gates; and prove partially wet uneven lake-at-rest shorelines, analytic one- and two-dimensional fronts, analytic retreat, strict adjacent-value thresholds, mixed-front determinism, extreme dry no-op and rounded-zero-CFL ranges, non-unit momentum accounting, and post-projection rollback without GPU or W-001 integration | `feat(fluids): add wet and dry boundaries` |
 | `W-005` | S | Port fixed-step batches to ping-pong compute resources; match CPU cases within tolerance and detect NaN/Inf/negative depth | `feat(fluids): add GPU shallow-water solver` |
 | `W-006` | S | Render `terrain height + water depth`; simulated surface normals and velocity drive visual detail/foam | `feat(water): render simulated surface water` |
 
@@ -864,7 +864,7 @@ this section competes with the coupled-environment critical path through M7.
 ### Deferred visual-weather track
 
 The owner deferred these effects on July 19, 2026. They remain approved but
-have no position on the active `W-004` path. Resuming one requires a small plan
+have no position on the active `W-005` path. Resuming one requires a small plan
 update; skipping them does not remove the numerical precipitation rate used by
 later hydrology.
 
@@ -967,16 +967,19 @@ online architecture is not implied.
 
 ## 14. Immediate next increment
 
-After W-003 is reviewed and committed by the owner, implement only `W-004`:
+After W-004 is reviewed and committed by the owner, implement only `W-005`:
 
-- define one explicit dry-depth threshold and the conservative activation and
-  deactivation policy around it;
-- allow dry cells and hydrostatically dry interfaces without division by dry
-  depth, negative water, hidden volume creation, or velocity clamps;
-- prove lake-at-rest shorelines, advancing wet fronts, retreating fronts, and
-  sealed-basin mass accounting against the existing W-003 ledger; and
-- stop before rain coupling, tiled runoff, GPU compute, or rendering from
-  simulated water.
+- add D3D12-owned ping-pong depth/momentum resources behind the platform-neutral
+  fluid boundary and schedule fixed-step batches through declared graph access;
+- port the W-004 first-order hydrostatic/Rusanov update and wet/dry policy to a
+  pinned compute shader without making the renderer own simulation state;
+- compare small deterministic GPU cases with the double-precision CPU oracle
+  under documented tolerances and fail focused verification on NaN, Inf, or
+  negative depth;
+- prove resource transitions, dispatch bounds, deterministic input/output
+  staging, and fence-safe readback under the D3D12 debug layer; and
+- stop before simulated-water rendering, async compute, per-frame full
+  readback, rain coupling, tiled runoff, or buoyancy.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -1204,8 +1207,20 @@ two-dimensional capacity and symmetry, range safety, and exact rollback.
 Debug and Release W-003-focused runs each pass 1,628 assertions across 16
 cases; both complete configurations pass 481,862 assertions across 308 cases.
 
-The active queue is `W-004`, stable wet/dry fronts and shoreline activation.
-It adds no GPU fluid work. `R-001` through `R-004` remain deferred.
+W-004 extends that CPU oracle through stable wet/dry fronts. Its `2^-20`-meter
+threshold retains all positive water while classifying state as exact dry,
+film, or active; projects only near-dry momentum with an explicit ledger;
+permits dry hydrostatic reconstruction; and preserves transactional CFL and
+volume gates.
+Permanent tests prove partially wet lake-at-rest shorelines, advancing and
+retreating fronts, strict threshold behavior, two-dimensional determinism,
+range safety, and rollback after momentum projection. Debug and Release
+W-004-focused runs each pass 10,118 assertions across 13 cases; the combined
+fluid suite passes 12,679 assertions across 41 cases. Both complete CPU
+configurations pass 492,415 assertions across 321 cases.
+
+The active queue is `W-005`, the GPU shallow-water solver. `R-001` through
+`R-004` remain deferred.
 
 ## 15. Primary technical references
 
@@ -1218,6 +1233,8 @@ It adds no GPU fluid work. `R-001` through `R-004` remain deferred.
 - [Microsoft DirectX Shader Compiler](https://github.com/microsoft/DirectXShaderCompiler)
 - [Microsoft DirectXTex](https://github.com/microsoft/DirectXTex)
 - [Audusse et al., hydrostatic reconstruction for well-balanced shallow water](https://publications.imp.fu-berlin.de/478/)
+- [Bollermann et al., positivity-preserving shallow-water wet/dry fronts](https://arxiv.org/abs/1412.3580)
+- [Delestre et al., hydrostatic-reconstruction limitation at wet/dry transitions](https://arxiv.org/abs/1206.4986)
 - [DirectX Graphics Samples](https://github.com/microsoft/DirectX-Graphics-Samples)
 - [D3D12 feature support queries](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ne-d3d12-d3d12_feature)
 - [D3D12 enhanced barriers](https://learn.microsoft.com/en-us/windows-hardware/drivers/display/enhanced-barriers)

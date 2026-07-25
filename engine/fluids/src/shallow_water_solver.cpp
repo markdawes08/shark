@@ -52,6 +52,24 @@ struct ReconstructedState final {
     double wave_speed{};
 };
 
+struct SubstepResult final {
+    ShallowWaterReferenceGrid grid{};
+    double discarded_absolute_momentum_x{};
+    double discarded_absolute_momentum_z{};
+};
+
+struct WetDrySummary final {
+    std::size_t active_cell_count{};
+    std::size_t retained_film_cell_count{};
+    std::size_t exact_dry_cell_count{};
+    double retained_film_volume{};
+};
+
+struct ProjectedMomentum final {
+    double absolute_x{};
+    double absolute_z{};
+};
+
 [[nodiscard]] core::Error solver_error(
     const core::ErrorCode code,
     std::string message)
@@ -146,18 +164,36 @@ struct ReconstructedState final {
         std::isfinite(state.momentum_z);
 }
 
+[[nodiscard]] bool all_cells_exactly_dry(
+    const ShallowWaterReferenceGrid& grid) noexcept
+{
+    for (std::size_t index = 0;
+         index < grid.cell_count;
+         ++index) {
+        if (grid.states[index].water_depth != 0.0) {
+            return false;
+        }
+    }
+    return true;
+}
+
 [[nodiscard]] core::Result<ReconstructedState>
 reconstruct_state(
     const ShallowWaterCell& cell,
     const double interface_bed,
-    const double gravity)
+    const double gravity,
+    const double dry_depth_threshold)
 {
     const auto depth = cell.state.water_depth;
-    const auto free_surface =
-        cell.bed_elevation + depth;
+    // Subtract beds before adding depth so a small h survives on a very
+    // large, equal bed. A negative infinite step is an impassable face.
+    const auto bed_step =
+        cell.bed_elevation - interface_bed;
     const auto reconstructed_depth =
-        std::max(0.0, free_surface - interface_bed);
-    if (!std::isfinite(free_surface) ||
+        std::isinf(bed_step) && bed_step < 0.0
+        ? 0.0
+        : std::max(0.0, depth + bed_step);
+    if (std::isnan(bed_step) ||
         !std::isfinite(reconstructed_depth)) {
         return core::Result<ReconstructedState>::failure(
             solver_error(
@@ -165,18 +201,15 @@ reconstruct_state(
                 "Hydrostatic reconstruction exceeded finite double "
                 "range"));
     }
-    if (reconstructed_depth <= 0.0) {
-        return core::Result<ReconstructedState>::failure(
-            solver_error(
-                core::ErrorCode::unsupported,
-                "W-003 requires every hydrostatically reconstructed "
-                "interface state to remain strictly wet"));
-    }
 
     const auto velocity_x =
-        cell.state.momentum_x / depth;
+        depth > dry_depth_threshold
+        ? cell.state.momentum_x / depth
+        : 0.0;
     const auto velocity_z =
-        cell.state.momentum_z / depth;
+        depth > dry_depth_threshold
+        ? cell.state.momentum_z / depth
+        : 0.0;
     const auto momentum_x =
         reconstructed_depth * velocity_x;
     const auto momentum_z =
@@ -190,7 +223,7 @@ reconstruct_state(
         !std::isfinite(momentum_x) ||
         !std::isfinite(momentum_z) ||
         !std::isfinite(gravity_depth) ||
-        gravity_depth <= 0.0 ||
+        gravity_depth < 0.0 ||
         !std::isfinite(pressure)) {
         return core::Result<ReconstructedState>::failure(
             solver_error(
@@ -201,11 +234,12 @@ reconstruct_state(
 
     const auto wave_speed = std::sqrt(gravity_depth);
     if (!std::isfinite(wave_speed) ||
-        wave_speed <= 0.0) {
+        wave_speed < 0.0) {
         return core::Result<ReconstructedState>::failure(
             solver_error(
                 core::ErrorCode::invalid_state,
-                "Hydrostatic wave speed must be finite and positive"));
+                "Hydrostatic wave speed must be finite and "
+                "nonnegative"));
     }
     return core::Result<ReconstructedState>::success(
         ReconstructedState{
@@ -266,7 +300,8 @@ physical_flux(
     const ShallowWaterCell& negative_cell,
     const ShallowWaterCell& positive_cell,
     const FaceAxis axis,
-    const double gravity)
+    const double gravity,
+    const double dry_depth_threshold)
 {
     const auto interface_bed =
         std::max(
@@ -276,7 +311,8 @@ physical_flux(
         reconstruct_state(
             negative_cell,
             interface_bed,
-            gravity);
+            gravity,
+            dry_depth_threshold);
     if (!negative_result) {
         return core::Result<SideFlux>::failure(
             copy_error(negative_result.error()));
@@ -285,7 +321,8 @@ physical_flux(
         reconstruct_state(
             positive_cell,
             interface_bed,
-            gravity);
+            gravity,
+            dry_depth_threshold);
     if (!positive_result) {
         return core::Result<SideFlux>::failure(
             copy_error(positive_result.error()));
@@ -325,11 +362,12 @@ physical_flux(
             std::abs(positive_normal_velocity) +
                 positive.wave_speed);
     if (!std::isfinite(signal_speed) ||
-        signal_speed <= 0.0) {
+        signal_speed < 0.0) {
         return core::Result<SideFlux>::failure(
             solver_error(
                 core::ErrorCode::invalid_state,
-                "A Rusanov signal speed must be finite and positive"));
+                "A Rusanov signal speed must be finite and "
+                "nonnegative"));
     }
 
     const auto rusanov =
@@ -448,7 +486,8 @@ physical_flux(
 
 [[nodiscard]] core::Result<FluxField> build_flux_field(
     const ShallowWaterReferenceGrid& grid,
-    const double gravity)
+    const double gravity,
+    const double dry_depth_threshold)
 {
     FluxField field;
     for (std::uint32_t row = 0;
@@ -484,7 +523,8 @@ physical_flux(
                     negative,
                     positive,
                     FaceAxis::x,
-                    gravity);
+                    gravity,
+                    dry_depth_threshold);
             if (!flux_result) {
                 return core::Result<FluxField>::failure(
                     copy_error(flux_result.error()));
@@ -529,7 +569,8 @@ physical_flux(
                     negative,
                     positive,
                     FaceAxis::z,
-                    gravity);
+                    gravity,
+                    dry_depth_threshold);
             if (!flux_result) {
                 return core::Result<FluxField>::failure(
                     copy_error(flux_result.error()));
@@ -590,12 +631,12 @@ physical_flux(
                     north.signal_speed) /
                 grid.config.cell_spacing;
             const auto rate = x_rate + z_rate;
-            if (!std::isfinite(rate) || rate <= 0.0) {
+            if (!std::isfinite(rate) || rate < 0.0) {
                 return core::Result<double>::failure(
                     solver_error(
                         core::ErrorCode::invalid_state,
                         "A shallow-water CFL rate must be finite and "
-                        "positive"));
+                        "nonnegative"));
             }
             maximum_rate =
                 std::max(maximum_rate, rate);
@@ -604,22 +645,27 @@ physical_flux(
     return core::Result<double>::success(maximum_rate);
 }
 
-[[nodiscard]] core::Result<ShallowWaterReferenceGrid>
+[[nodiscard]] core::Result<SubstepResult>
 apply_substep(
     const ShallowWaterReferenceGrid& grid,
     const FluxField& field,
-    const double substep_seconds)
+    const double substep_seconds,
+    const double dry_depth_threshold)
 {
     auto next = grid;
+    auto discarded_absolute_momentum_x = 0.0;
+    auto discarded_absolute_momentum_z = 0.0;
+    const auto cell_area =
+        grid.config.cell_spacing *
+        grid.config.cell_spacing;
     const auto scale =
         substep_seconds / grid.config.cell_spacing;
     if (!std::isfinite(scale) || scale <= 0.0) {
-        return core::Result<
-            ShallowWaterReferenceGrid>::failure(
-                solver_error(
-                    core::ErrorCode::invalid_state,
-                    "A shallow-water substep scale must be finite and "
-                    "positive"));
+        return core::Result<SubstepResult>::failure(
+            solver_error(
+                core::ErrorCode::invalid_state,
+                "A shallow-water substep scale must be finite and "
+                "positive"));
     }
 
     for (std::uint32_t row = 0;
@@ -679,20 +725,45 @@ apply_substep(
                          (north.momentum_z -
                             south.momentum_z)),
             };
+            if (!finite_state(state) ||
+                state.water_depth < 0.0) {
+                return core::Result<SubstepResult>::failure(
+                    solver_error(
+                        core::ErrorCode::invalid_state,
+                        "A shallow-water substep became nonfinite or "
+                        "negative; no depth clamp was applied"));
+            }
             state.water_depth =
                 canonical_zero(state.water_depth);
             state.momentum_x =
                 canonical_zero(state.momentum_x);
             state.momentum_z =
                 canonical_zero(state.momentum_z);
-            if (!finite_state(state) ||
-                state.water_depth <= 0.0) {
-                return core::Result<
-                    ShallowWaterReferenceGrid>::failure(
-                        solver_error(
-                            core::ErrorCode::invalid_state,
-                            "A W-003 substep became nonfinite or "
-                            "nonpositive; no depth clamp was applied"));
+            if (state.water_depth <=
+                dry_depth_threshold) {
+                const auto discarded_x =
+                    std::abs(state.momentum_x) * cell_area;
+                const auto discarded_z =
+                    std::abs(state.momentum_z) * cell_area;
+                if (!std::isfinite(discarded_x) ||
+                    !std::isfinite(discarded_z) ||
+                    !std::isfinite(
+                        discarded_absolute_momentum_x +
+                        discarded_x) ||
+                    !std::isfinite(
+                        discarded_absolute_momentum_z +
+                        discarded_z)) {
+                    return core::Result<
+                        SubstepResult>::failure(
+                            solver_error(
+                                core::ErrorCode::invalid_state,
+                                "Near-dry momentum projection exceeded "
+                                "finite double range"));
+                }
+                discarded_absolute_momentum_x += discarded_x;
+                discarded_absolute_momentum_z += discarded_z;
+                state.momentum_x = 0.0;
+                state.momentum_z = 0.0;
             }
             next.states[index] = state;
         }
@@ -701,12 +772,17 @@ apply_substep(
     const auto validation =
         validate_shallow_water_reference_grid(next);
     if (!validation) {
-        return core::Result<
-            ShallowWaterReferenceGrid>::failure(
-                copy_error(validation.error()));
+        return core::Result<SubstepResult>::failure(
+            copy_error(validation.error()));
     }
-    return core::Result<
-        ShallowWaterReferenceGrid>::success(next);
+    return core::Result<SubstepResult>::success(
+        SubstepResult{
+            .grid = std::move(next),
+            .discarded_absolute_momentum_x =
+                discarded_absolute_momentum_x,
+            .discarded_absolute_momentum_z =
+                discarded_absolute_momentum_z,
+        });
 }
 
 [[nodiscard]] core::Result<double> outward_boundary_rate(
@@ -813,9 +889,90 @@ apply_substep(
         settings.courant_number > 0.0 &&
         settings.courant_number <=
             maximum_shallow_water_courant_number &&
+        std::isfinite(
+            settings.dry_depth_threshold_meters) &&
+        settings.dry_depth_threshold_meters > 0.0 &&
         settings.maximum_substep_count > 0U &&
         settings.maximum_substep_count <=
             maximum_shallow_water_substep_count;
+}
+
+[[nodiscard]] core::Result<WetDrySummary> wet_dry_summary(
+    const ShallowWaterReferenceGrid& grid,
+    const double dry_depth_threshold)
+{
+    WetDrySummary summary;
+    const auto cell_area =
+        grid.config.cell_spacing *
+        grid.config.cell_spacing;
+    for (std::size_t index = 0;
+         index < grid.cell_count;
+         ++index) {
+        const auto depth =
+            grid.states[index].water_depth;
+        if (depth == 0.0) {
+            ++summary.exact_dry_cell_count;
+        } else if (depth > dry_depth_threshold) {
+            ++summary.active_cell_count;
+        } else {
+            ++summary.retained_film_cell_count;
+            const auto volume = depth * cell_area;
+            if (!std::isfinite(volume) ||
+                !std::isfinite(
+                    summary.retained_film_volume +
+                    volume)) {
+                return core::Result<
+                    WetDrySummary>::failure(
+                        solver_error(
+                            core::ErrorCode::invalid_state,
+                            "Retained-film diagnostics exceeded finite "
+                            "double range"));
+            }
+            summary.retained_film_volume += volume;
+        }
+    }
+    return core::Result<WetDrySummary>::success(summary);
+}
+
+[[nodiscard]] core::Result<ProjectedMomentum>
+project_near_dry_momentum(
+    ShallowWaterReferenceGrid& grid,
+    const double dry_depth_threshold)
+{
+    ProjectedMomentum projected;
+    const auto cell_area =
+        grid.config.cell_spacing *
+        grid.config.cell_spacing;
+    for (std::size_t index = 0;
+         index < grid.cell_count;
+         ++index) {
+        auto& state = grid.states[index];
+        if (state.water_depth >
+            dry_depth_threshold) {
+            continue;
+        }
+        const auto absolute_x =
+            std::abs(state.momentum_x) * cell_area;
+        const auto absolute_z =
+            std::abs(state.momentum_z) * cell_area;
+        if (!std::isfinite(absolute_x) ||
+            !std::isfinite(absolute_z) ||
+            !std::isfinite(
+                projected.absolute_x + absolute_x) ||
+            !std::isfinite(
+                projected.absolute_z + absolute_z)) {
+            return core::Result<ProjectedMomentum>::failure(
+                solver_error(
+                    core::ErrorCode::invalid_state,
+                    "Initial near-dry momentum projection exceeded "
+                    "finite double range"));
+        }
+        projected.absolute_x += absolute_x;
+        projected.absolute_z += absolute_z;
+        state.momentum_x = 0.0;
+        state.momentum_z = 0.0;
+    }
+    return core::Result<ProjectedMomentum>::success(projected);
 }
 
 [[nodiscard]] double volume_balance_tolerance(
@@ -872,20 +1029,9 @@ advance_shallow_water_reference_grid(
                 solver_error(
                     core::ErrorCode::invalid_argument,
                     "A shallow-water advance requires positive finite "
-                    "time and gravity, 0 < CFL <= 0.5, and a nonzero "
-                    "substep budget no greater than 4096"));
-    }
-    for (std::size_t index = 0;
-         index < grid.cell_count;
-         ++index) {
-        if (grid.states[index].water_depth <= 0.0) {
-            return core::Result<
-                ShallowWaterAdvanceReport>::failure(
-                    solver_error(
-                        core::ErrorCode::unsupported,
-                        "W-003 advances only strictly wet cells; dry "
-                        "state activation remains W-004"));
-        }
+                    "time, gravity, and dry-depth threshold; "
+                    "0 < CFL <= 0.5; and a nonzero substep budget no "
+                    "greater than 4096"));
     }
 
     const auto initial_diagnostics =
@@ -895,8 +1041,26 @@ advance_shallow_water_reference_grid(
             ShallowWaterAdvanceReport>::failure(
                 copy_error(initial_diagnostics.error()));
     }
+    const auto initial_wet_dry =
+        wet_dry_summary(
+            grid,
+            settings.dry_depth_threshold_meters);
+    if (!initial_wet_dry) {
+        return core::Result<
+            ShallowWaterAdvanceReport>::failure(
+                copy_error(initial_wet_dry.error()));
+    }
 
     auto candidate = grid;
+    const auto initial_projection =
+        project_near_dry_momentum(
+            candidate,
+            settings.dry_depth_threshold_meters);
+    if (!initial_projection) {
+        return core::Result<
+            ShallowWaterAdvanceReport>::failure(
+                copy_error(initial_projection.error()));
+    }
     auto advanced_seconds = 0.0;
     auto net_outward_volume = 0.0;
     auto cumulative_absolute_face_volume = 0.0;
@@ -905,6 +1069,19 @@ advance_shallow_water_reference_grid(
         .requested_seconds = requested_seconds,
         .minimum_substep_seconds =
             std::numeric_limits<double>::infinity(),
+        .dry_depth_threshold_meters =
+            settings.dry_depth_threshold_meters,
+        .initial_active_cell_count =
+            initial_wet_dry.value().active_cell_count,
+        .initial_retained_film_cell_count =
+            initial_wet_dry.value().
+                retained_film_cell_count,
+        .initial_exact_dry_cell_count =
+            initial_wet_dry.value().exact_dry_cell_count,
+        .cumulative_discarded_absolute_momentum_x =
+            initial_projection.value().absolute_x,
+        .cumulative_discarded_absolute_momentum_z =
+            initial_projection.value().absolute_z,
         .initial_water_volume =
             initial_diagnostics.value().water_volume,
     };
@@ -923,7 +1100,8 @@ advance_shallow_water_reference_grid(
         const auto field_result =
             build_flux_field(
                 candidate,
-                settings.gravity_meters_per_second_squared);
+                settings.gravity_meters_per_second_squared,
+                settings.dry_depth_threshold_meters);
         if (!field_result) {
             return core::Result<
                 ShallowWaterAdvanceReport>::failure(
@@ -972,11 +1150,23 @@ advance_shallow_water_reference_grid(
                         "representable time progress"));
         }
 
+        // An exactly dry candidate has zero projected momentum and zero
+        // face flux. Preserve it directly: dt / dx can otherwise overflow
+        // or underflow even though there is no update to perform. A rounded
+        // zero CFL rate alone is not sufficient because signal / dx can
+        // underflow while a wet face still transports water.
+        const auto exact_dry_no_op =
+            cfl_rate == 0.0 &&
+            all_cells_exactly_dry(candidate);
         const auto next_result =
-            apply_substep(
+            exact_dry_no_op
+            ? core::Result<SubstepResult>::success(
+                SubstepResult{.grid = candidate})
+            : apply_substep(
                 candidate,
                 field,
-                substep_seconds);
+                substep_seconds,
+                settings.dry_depth_threshold_meters);
         if (!next_result) {
             return core::Result<
                 ShallowWaterAdvanceReport>::failure(
@@ -1008,7 +1198,17 @@ advance_shallow_water_reference_grid(
                 net_outward_volume + outward_volume) ||
             !std::isfinite(
                 cumulative_absolute_face_volume +
-                    absolute_face_volume)) {
+                    absolute_face_volume) ||
+            !std::isfinite(
+                report.
+                    cumulative_discarded_absolute_momentum_x +
+                next_result.value().
+                    discarded_absolute_momentum_x) ||
+            !std::isfinite(
+                report.
+                    cumulative_discarded_absolute_momentum_z +
+                next_result.value().
+                    discarded_absolute_momentum_z)) {
             return core::Result<
                 ShallowWaterAdvanceReport>::failure(
                     solver_error(
@@ -1017,10 +1217,32 @@ advance_shallow_water_reference_grid(
                         "finite double range"));
         }
 
-        candidate = next_result.value();
+        for (std::size_t index = 0;
+             index < candidate.cell_count;
+             ++index) {
+            const auto was_active =
+                candidate.states[index].water_depth >
+                settings.dry_depth_threshold_meters;
+            const auto is_active =
+                next_result.value().
+                    grid.states[index].water_depth >
+                settings.dry_depth_threshold_meters;
+            if (!was_active && is_active) {
+                ++report.activation_count;
+            } else if (was_active && !is_active) {
+                ++report.deactivation_count;
+            }
+        }
+        candidate = next_result.value().grid;
         net_outward_volume += outward_volume;
         cumulative_absolute_face_volume +=
             absolute_face_volume;
+        report.cumulative_discarded_absolute_momentum_x +=
+            next_result.value().
+                discarded_absolute_momentum_x;
+        report.cumulative_discarded_absolute_momentum_z +=
+            next_result.value().
+                discarded_absolute_momentum_z;
         advanced_seconds =
             final_substep
             ? requested_seconds
@@ -1090,7 +1312,24 @@ advance_shallow_water_reference_grid(
             ShallowWaterAdvanceReport>::failure(
                 copy_error(final_diagnostics.error()));
     }
+    const auto final_wet_dry =
+        wet_dry_summary(
+            candidate,
+            settings.dry_depth_threshold_meters);
+    if (!final_wet_dry) {
+        return core::Result<
+            ShallowWaterAdvanceReport>::failure(
+                copy_error(final_wet_dry.error()));
+    }
     report.advanced_seconds = requested_seconds;
+    report.final_active_cell_count =
+        final_wet_dry.value().active_cell_count;
+    report.final_retained_film_cell_count =
+        final_wet_dry.value().retained_film_cell_count;
+    report.final_exact_dry_cell_count =
+        final_wet_dry.value().exact_dry_cell_count;
+    report.final_retained_film_volume =
+        final_wet_dry.value().retained_film_volume;
     report.final_water_volume =
         final_diagnostics.value().water_volume;
     report.net_outward_boundary_volume =
@@ -1110,7 +1349,7 @@ advance_shallow_water_reference_grid(
         final_diagnostics.value().
             maximum_absolute_momentum_z;
     if (!std::isfinite(report.volume_balance_residual) ||
-        report.final_minimum_water_depth <= 0.0 ||
+        report.final_minimum_water_depth < 0.0 ||
         report.maximum_absolute_volume_balance_residual >
             report.volume_balance_tolerance) {
         return core::Result<

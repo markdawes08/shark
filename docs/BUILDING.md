@@ -691,25 +691,29 @@ The sandbox remains unchanged because its current terrain and sphere-pair
 adapters fuse contact generation with response and body 3 receives continuous
 torque.
 
-W-003 is also CPU-only and adds no sandbox or D3D12 work. Iterate with:
+W-004 is also CPU-only and adds no sandbox or D3D12 work. Iterate with:
 
 ```powershell
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[wet-dry]"
+& .\out\build\windows-vs2026\bin\Release\SharkTests.exe "[wet-dry]"
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[fluids][shallow-water]"
 & .\out\build\windows-vs2026\bin\Release\SharkTests.exe "[fluids][shallow-water]"
 ```
 
 The suite proves the fixed `8 x 8` reference contract plus transactional
-hydrostatic/Rusanov wet-cell advancement, CFL substeps, positive lake/dam-break
-states, deterministic two-dimensional behavior, enforced volume accounting,
-range handling, and rollback. Debug and Release W-003-focused runs each pass
-1,628 assertions across 16 cases; the combined W-002/W-003 filter passes 2,126
-assertions across 28 cases. Both complete CPU configurations pass 481,862
-assertions across 308 cases. No hardware or WARP smoke is required because no
-application, renderer, shader, resource, descriptor, draw, or D3D12 path
-changed.
+hydrostatic/Rusanov advancement, bounded CFL substeps, wet/dry-front
+activation, retained-film retreat, uneven lake-at-rest shorelines,
+deterministic two-dimensional behavior, enforced volume accounting, extreme
+range handling, and rollback. Debug and Release W-004-focused runs each pass
+10,118 assertions across 13 cases; the combined W-002/W-003/W-004 filter passes
+12,679 assertions across 41 cases. Both complete CPU configurations pass
+492,415 assertions across 321 cases. No hardware or WARP smoke is required
+because no application, renderer, shader, resource, descriptor, draw, or D3D12
+path changed.
 
-The next increment is `W-004`: stable dry/wet fronts and shoreline activation
-without negative depth or unexplained mass loss.
+The next increment is `W-005`: port fixed-step shallow-water batches to
+ping-pong D3D12 compute resources and match the CPU oracle within documented
+tolerances.
 
 ## Visual Studio
 

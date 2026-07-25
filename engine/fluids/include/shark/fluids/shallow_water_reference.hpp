@@ -148,7 +148,8 @@ make_shallow_water_reference_grid(
     std::span<const ShallowWaterConservedState> states);
 
 // Constructs a fully wet hydrostatic equilibrium with eta = b + h constant
-// and exact-zero momentum. Shorelines and wet/dry transitions remain W-004.
+// and exact-zero momentum. This factory deliberately remains a fully wet
+// fixture; wet/dry evolution belongs to the advance solver.
 [[nodiscard]] core::Result<ShallowWaterReferenceGrid>
 make_lake_at_rest_reference_grid(
     ShallowWaterGridConfig config,

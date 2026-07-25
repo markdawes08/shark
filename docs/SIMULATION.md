@@ -748,6 +748,32 @@ rollback after candidate work. The complete numerical contract is recorded in
 assertions across 16 cases; both complete configurations pass 481,862
 assertions across 308 cases.
 
+## W-004 wet/dry fronts and shoreline activation
+
+W-004 extends the same CPU solver across exact-dry cells and hydrostatically
+dry faces. One positive finite threshold classifies exact dry, retained film,
+and active state. The binary-exact default is `2^-20` meters. Depth is never
+snapped to zero: a film at or below the threshold retains its water and
+pressure state, but its velocity and momenta are projected to positive zero.
+Shared conservative mass flux can reactivate it only by moving its depth
+strictly above the threshold.
+
+Every accepted substep still uses the W-003 CFL and volume ledger. It rejects
+negative or nonfinite results instead of repairing depth, then publishes
+initial/final category counts, activation/deactivation events, retained-film
+volume, and the absolute integrated momentum removed by projection. The entire
+operation remains transactional, including initial projection and projections
+performed by substeps that precede a later budget failure.
+
+Permanent fixtures cover a partially wet uneven-bed lake at rest, analytic
+one- and two-dimensional advancing fronts, analytic retreat into retained
+film, X/Z symmetry, nonlinear mixed fronts, strict adjacent-value threshold
+behavior, extreme bed/time/spacing ranges, deterministic conservation, and
+rollback. The complete contract and current verification totals are recorded
+in [FLUIDS.md](FLUIDS.md) and [BUILDING.md](BUILDING.md). Debug and Release
+W-004-focused runs each pass 10,118 assertions across 13 cases; both complete
+CPU configurations pass 492,415 assertions across 321 cases.
+
 ## Explicit non-goals
 
 PHY-010 adds no runtime capsule or box entity, runtime sleeping integration,
@@ -763,6 +789,6 @@ current one-meter-radius, four-meter-cell, slope-bounded Environment Lab
 heightfield. It is not closest-feature sphere/triangle collision and can still
 tunnel under sufficiently large discrete motion. The visible lake remains
 W-001 presentation-only water, and `R-001` through `R-004` remain deferred.
-W-003 adds no sandbox or GPU fluid integration. The active queue is `W-004`,
-stable wet/dry-front and shoreline activation, and is centralized in
+W-004 adds no sandbox or GPU fluid integration. The active queue is `W-005`,
+the GPU shallow-water solver, and is centralized in
 [ENGINE_PLAN.md](ENGINE_PLAN.md).

@@ -1,8 +1,9 @@
 # CPU Shallow-Water Reference Solver
 
-W-002 establishes Shark's first simulated-fluid state. W-003 adds its first
-real time advance. Together they form a small, platform-independent numerical
-oracle; they do not replace W-001's visual lake or submit work to Direct3D 12.
+W-002 establishes Shark's first simulated-fluid state, W-003 adds its first
+real-time advance, and W-004 adds conservative wet/dry-front handling. Together
+they form a small, platform-independent numerical oracle; they do not replace
+W-001's visual lake or submit work to Direct3D 12.
 
 ## State contract
 
@@ -26,9 +27,23 @@ Construction rejects malformed dimensions, spans, origins, spacing, extents,
 bed values, depth, momentum, free-surface values, velocity, per-cell volume,
 pressure scale, integrated momentum, or advective flux scale. Depth cannot be
 negative. Exact dry state is representable only as `h = hu = hv = +0`.
-W-003 advances only strictly wet cells and rejects a dry input or reconstructed
-dry face; activation and deactivation remain W-004. Factory operations
-canonicalize signed zero and never mutate their input spans.
+Factory operations canonicalize signed zero and never mutate their input spans.
+
+W-004 classifies solver state with one positive finite dry-depth threshold
+`epsilon`:
+
+```text
+exact dry:       h == 0
+retained film:   0 < h <= epsilon
+active:          h > epsilon
+```
+
+The default is the binary-exact `epsilon = 2^-20` meters, approximately
+`0.953674` micrometers. Classification never deletes depth. A retained film
+keeps its complete water volume and participates in hydrostatic reconstruction
+and pressure, while its velocity and `hu/hv` are projected to exact positive
+zero. A shared face flux can raise it strictly above `epsilon` and reactivate
+it.
 
 ## Uneven terrain and lake at rest
 
@@ -52,7 +67,7 @@ This establishes the hydrostatic state that a well-balanced solver must
 preserve. W-003 now advances that uneven-bed fixture without spurious flow
 within the documented floating-point tolerance.
 
-## Conservative wet-cell advance
+## Conservative wet/dry advance
 
 `advance_shallow_water_reference_grid` evolves the conserved state
 `U = (h, hu, hv)` with an unsplit, first-order finite-volume update. Every
@@ -78,10 +93,23 @@ unbounded catch-up work.
 
 The operation is transactional. It advances a complete scratch grid, validates
 every substep, and replaces the caller's grid only after the requested interval
-and final diagnostics succeed. Nonfinite arithmetic, nonpositive depth,
-unsupported dry reconstruction, conservation failure, or budget exhaustion
-returns an error without clamping depth or velocity and without changing the
-input grid.
+and final diagnostics succeed. Nonfinite arithmetic, negative depth,
+conservation failure, or budget exhaustion returns an error without a depth
+clamp and without changing the input grid.
+
+Hydrostatically dry reconstructed faces are valid. Reconstruction subtracts the
+two bed elevations before adding depth, preserving small depth over a very
+large equal bed and treating a negative-infinite bed step (an unrepresentably
+large upward barrier) as a blocked zero-depth side. During reconstruction,
+division by depth occurs only for active cells. Near-dry momentum is projected
+after every accepted substep, and the absolute integrated amount removed on
+each axis is reported rather than hidden.
+
+An exactly dry domain has zero projected momentum and zero face flux. It can
+therefore complete one no-op substep even when `dt / dx` would overflow or
+underflow. A rounded zero CFL rate is not enough to take that path: a permanent
+range test proves that a wet face with a nonzero mass flux is still advanced
+when `signal / dx` underflows to zero.
 
 ## Solid boundaries
 
@@ -95,7 +123,7 @@ synthesizes one reflective ghost:
 - exact zero remains positive zero.
 
 There is no stored ghost ring, diagonal corner query, open boundary, inflow,
-outflow, periodic boundary, or internal obstacle mask through W-003.
+outflow, periodic boundary, or internal obstacle mask through W-004.
 
 ## Diagnostics
 
@@ -118,14 +146,21 @@ residual = final volume - initial volume + net outward boundary volume
 
 The report also records cumulative absolute face transport, substep extrema,
 maximum observed CFL, final depth/momentum extrema, and the maximum intermediate
-ledger residual. Success requires every residual to fit a published,
-scale- and operation-aware floating-point tolerance. Reflective fixtures have
-exactly zero outward boundary volume.
+ledger residual. W-004 adds the chosen threshold; initial/final active,
+retained-film, and exact-dry counts; cumulative activation/deactivation events;
+final retained-film volume; and cumulative absolute integrated momentum
+discarded by the near-dry projection. Transition counts are per accepted
+substep, not unique-cell counts.
+
+Success requires every volume residual to fit a published, scale- and
+operation-aware floating-point tolerance. Reflective fixtures have exactly
+zero outward boundary volume. Projected momentum is intentionally not claimed
+as conserved; the report measures that numerical policy separately.
 
 ## Verification
 
 The permanent `[fluids][shallow-water]` suite covers the W-002 state contract
-and the W-003 advance, including:
+and the W-003/W-004 advance, including:
 
 - `1 x 1` and exact `8 x 8` capacity;
 - row-major storage, representable cell centers, canonical signed-zero/tail
@@ -141,18 +176,26 @@ and the W-003 advance, including:
 - X/Z transpose symmetry, tangential transport, and nonlinear `8 x 8`
   capacity;
 - CFL partitioning and two-axis, reciprocal, and flux range edge cases;
-- positive depth, deterministic clones, report/diagnostic agreement, and
+- nonnegative depth, deterministic clones, report/diagnostic agreement, and
   enforced volume accounting; and
-- invalid, dry, overflow, substep-budget, and post-work transactional rollback.
+- exact-dry no-op range extremes and nonzero transport at a rounded-zero CFL
+  rate;
+- strict threshold classification at adjacent floating-point values;
+- initial and substep-generated momentum projection with non-unit cell area;
+- exact-dry activation, retained-film retreat, and two-dimensional wet-front
+  symmetry;
+- a partially wet uneven-bed lake-at-rest shoreline;
+- deterministic mixed-front evolution and sealed-domain mass accounting; and
+- invalid, overflow, substep-budget, and post-work transactional rollback.
 
-Debug and Release W-003-focused runs each pass 1,628 assertions across 16
-cases. The combined W-002/W-003 filter passes 2,126 assertions across 28 cases,
-and both complete CPU configurations pass 481,862 assertions across 308 cases.
-No GPU smoke is required because W-003 changes no sandbox, renderer, shader,
+Debug and Release W-004-focused runs each pass 10,118 assertions across 13
+cases. The combined fluid filter passes 12,679 assertions across 41 cases, and
+both complete CPU configurations pass 492,415 assertions across 321 cases. No
+GPU smoke is required because W-004 changes no sandbox, renderer, shader,
 resource, descriptor, draw, or D3D12 path.
 
 ## Next boundary
 
-W-004 may add only stable dry/wet fronts and shoreline activation while
-retaining nonnegative depth and the explicit volume ledger. Rain coupling, GPU
-compute, and simulated-water rendering remain later increments.
+W-005 may port fixed-step batches to D3D12 ping-pong compute resources and must
+match this CPU oracle within documented tolerances. Rain coupling and
+simulated-water rendering remain later increments.

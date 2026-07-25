@@ -13,6 +13,7 @@ add_executable(SharkTests
     unit/environment_lighting_tests.cpp
     unit/fluids_shallow_water_reference_tests.cpp
     unit/fluids_shallow_water_solver_tests.cpp
+    unit/fluids_shallow_water_wet_dry_tests.cpp
     unit/d3d12_device_contract_tests.cpp
     unit/d3d12_frame_resource_tests.cpp
     unit/d3d12_render_graph_executor_tests.cpp

@@ -100,6 +100,27 @@ void require_report_matches_grid(
     const shark::fluids::ShallowWaterAdvanceReport& report,
     const shark::fluids::ShallowWaterReferenceGrid& grid)
 {
+    std::size_t active_cell_count = 0U;
+    std::size_t retained_film_cell_count = 0U;
+    std::size_t exact_dry_cell_count = 0U;
+    auto retained_film_volume = 0.0;
+    const auto cell_area =
+        grid.config.cell_spacing *
+        grid.config.cell_spacing;
+    for (std::size_t index = 0;
+         index < grid.cell_count;
+         ++index) {
+        const auto depth = grid.states[index].water_depth;
+        if (depth == 0.0) {
+            ++exact_dry_cell_count;
+        } else if (
+            depth > report.dry_depth_threshold_meters) {
+            ++active_cell_count;
+        } else {
+            ++retained_film_cell_count;
+            retained_film_volume += depth * cell_area;
+        }
+    }
     const auto diagnostics =
         shark::fluids::
             inspect_shallow_water_reference_grid(grid);
@@ -107,6 +128,36 @@ void require_report_matches_grid(
     REQUIRE(report.cell_count == grid.cell_count);
     REQUIRE(report.cell_count ==
         diagnostics.value().cell_count);
+    REQUIRE(
+        report.initial_active_cell_count +
+            report.initial_retained_film_cell_count +
+            report.initial_exact_dry_cell_count ==
+        report.cell_count);
+    REQUIRE(report.final_active_cell_count ==
+        active_cell_count);
+    REQUIRE(report.final_retained_film_cell_count ==
+        retained_film_cell_count);
+    REQUIRE(report.final_exact_dry_cell_count ==
+        exact_dry_cell_count);
+    REQUIRE(
+        active_cell_count + retained_film_cell_count ==
+        diagnostics.value().wet_cell_count);
+    REQUIRE(exact_dry_cell_count ==
+        diagnostics.value().dry_cell_count);
+    REQUIRE(report.final_retained_film_volume ==
+        retained_film_volume);
+    REQUIRE(std::isfinite(
+        report.
+            cumulative_discarded_absolute_momentum_x));
+    REQUIRE(std::isfinite(
+        report.
+            cumulative_discarded_absolute_momentum_z));
+    REQUIRE(
+        report.cumulative_discarded_absolute_momentum_x >=
+        0.0);
+    REQUIRE(
+        report.cumulative_discarded_absolute_momentum_z >=
+        0.0);
     REQUIRE(report.advanced_seconds ==
         report.requested_seconds);
     REQUIRE(report.minimum_substep_seconds > 0.0);
@@ -837,6 +888,8 @@ TEST_CASE(
             grid,
             1.0E-156,
             fluids::ShallowWaterAdvanceSettings{
+                .dry_depth_threshold_meters =
+                    std::numeric_limits<double>::denorm_min(),
                 .maximum_substep_count = 1U,
             });
 
@@ -955,6 +1008,20 @@ TEST_CASE(
                 std::numeric_limits<double>::quiet_NaN(),
         },
         fluids::ShallowWaterAdvanceSettings{
+            .dry_depth_threshold_meters = 0.0,
+        },
+        fluids::ShallowWaterAdvanceSettings{
+            .dry_depth_threshold_meters = -1.0,
+        },
+        fluids::ShallowWaterAdvanceSettings{
+            .dry_depth_threshold_meters =
+                std::numeric_limits<double>::infinity(),
+        },
+        fluids::ShallowWaterAdvanceSettings{
+            .dry_depth_threshold_meters =
+                std::numeric_limits<double>::quiet_NaN(),
+        },
+        fluids::ShallowWaterAdvanceSettings{
             .maximum_substep_count = 0,
         },
         fluids::ShallowWaterAdvanceSettings{
@@ -988,8 +1055,8 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "dry state and dry reconstruction remain deferred to W-004",
-    "[fluids][shallow-water][advance][validation][dry][rollback]")
+    "an exact dry domain advances through the zero-rate path",
+    "[fluids][shallow-water][advance][dry][cfl]")
 {
     using namespace shark;
 
@@ -1000,36 +1067,21 @@ TEST_CASE(
         fluids::advance_shallow_water_reference_grid(
             dry,
             0.1);
-    REQUIRE_FALSE(dry_result);
-    REQUIRE(dry_result.error().code() ==
-        core::ErrorCode::unsupported);
+    REQUIRE(dry_result);
     REQUIRE(dry == dry_original);
-
-    constexpr std::array<double, 2> bed{0.0, 10.0};
-    constexpr std::array<
-        fluids::ShallowWaterConservedState,
-        2>
-        states{{
-            {1.0, 0.0, 0.0},
-            {1.0, 0.0, 0.0},
-        }};
-    auto blocked = make_grid(
-        fluids::ShallowWaterGridConfig{
-            .columns = 2,
-            .rows = 1,
-            .cell_spacing = 1.0,
-        },
-        bed,
-        states);
-    const auto blocked_original = blocked;
-    const auto blocked_result =
-        fluids::advance_shallow_water_reference_grid(
-            blocked,
-            0.1);
-    REQUIRE_FALSE(blocked_result);
-    REQUIRE(blocked_result.error().code() ==
-        core::ErrorCode::unsupported);
-    REQUIRE(blocked == blocked_original);
+    REQUIRE(dry_result.value().substep_count == 1U);
+    REQUIRE(
+        dry_result.value().
+            maximum_observed_courant_number == 0.0);
+    REQUIRE(
+        dry_result.value().
+            cumulative_absolute_face_volume == 0.0);
+    REQUIRE(dry_result.value().initial_exact_dry_cell_count ==
+        1U);
+    REQUIRE(dry_result.value().final_exact_dry_cell_count ==
+        1U);
+    require_closed_ledger(dry_result.value());
+    require_report_matches_grid(dry_result.value(), dry);
 }
 
 TEST_CASE(

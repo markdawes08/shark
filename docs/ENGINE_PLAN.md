@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 25, 2026
-- **Latest completed:** `CHR-001` - bounded player-capsule state
-- **Next increment:** `CAM-001` - third-person follow/orbit camera
+- **Latest completed:** `CAM-001` - third-person follow/orbit camera
+- **Next increment:** `CHR-002` - terrain grounding and gravity
 
 ## 1. Project direction
 
@@ -384,14 +384,15 @@ without changing canonical terrain.
 Poll input and platform events
   -> accumulate real elapsed time
   -> run zero or more fixed 60 Hz CPU ticks
-       1. sample one tick-owned player action command
+       1. sample one tick-owned player action plus orbit/zoom command
        2. update weather and authored scenario state
        3. evaluate canonical terrain and CPU water queries
-       4. advance the kinematic character, dynamic physics, and world state
+       4. advance the kinematic character, camera rig, dynamic physics,
+          and world state
        5. optionally consume completed fluid queries or queue fluid work,
           never wait
        6. publish the immutable CPU simulation snapshot
-  -> interpolate render snapshot
+  -> interpolate player/orbit render snapshots and terrain-clear the camera
   -> build render/compute graph
        1. optionally advance queued GPU fluid steps when W-005 resumes
        2. shadows/depth -> terrain/character/opaque -> sky -> water -> post/debug
@@ -846,7 +847,7 @@ coupling are outside this first playable path.
 | `ISL-001` | V | Complete: retain the Environment Lab and numerical fixtures while adding a separate Q8 island over the existing `241x241` topology; lock checksum `0x53DD2821AE9ACDEA`, one connected dry component, a dry spawn and continuously walkable loop, a fully submerged perimeter, and a dry/shallow/transition/swim transect; make it the no-argument sandbox scenario and extend the existing 20-DWORD, six-vertex water path with a validated outside-footprint support mode that adds no pass, texture, descriptor, resource, or simulated state | `feat(terrain): add playable island scenario` |
 | `WQ-001` | - | Complete: add a `Water -> Core/Terrain` CPU boundary with scenario-authored inside/outside warped-footprint support, equilibrium surface height, strict positive `1/256`-meter shoreline depth tolerance, optional horizontal flow, and explicit out-of-terrain/no-water/water results; sample only canonical LOD0 triangle bed height, return checked nonnegative depth, map the neutral support side to the unchanged renderer at the composition root, and prove invalid input, inclusive footprint boundaries, tolerance-adjacent terrain, Island Demo depth bands, terrain edges, and deterministic repeats without GPU access or character policy | `feat(water): add gameplay water queries` |
 | `CHR-001` | S | Complete: add one Core-only bounded upright player capsule, named keyboard/mouse action commands sampled once per emitted fixed tick, transactional previous/current snapshots, exact dry-spawn/reset behavior without interpolation smear, and a blue temporary proxy that reuses the existing material-sphere geometry and Terrain pass; prove invalid-state rollback plus exact command/snapshot transcripts across 30/60/120/144 Hz without adding a general entity system, locomotion, camera follow, terrain contact, or water policy | `feat(character): add player capsule state` |
-| `CAM-001` | V | Add an interpolated third-person follow/orbit camera, camera-relative movement basis, bounded pitch/distance, and a canonical-terrain obstruction probe without changing character authority | `feat(camera): add third-person follow camera` |
+| `CAM-001` | V | Complete: add an interpolated fixed-tick third-person follow/orbit rig with camera-relative horizontal basis, bounded pitch/distance, once-per-tick wheel zoom, and a canonical-LOD0 clearance probe that shortens only the presentation boom; retain the exact scripted smoke camera and expose the former free-fly controller through `F7` without changing character authority | `feat(camera): add third-person follow camera` |
 | `CHR-002` | S | Add gravity, canonical-terrain capsule grounding, walkable-slope classification, stable support, falling, and landing; prove fixed-rate invariance and transactional invalid-state handling before horizontal control | `feat(character): add terrain grounding` |
 | `CHR-003` | S | Add fixed-tick walk/run acceleration, braking, facing, and bounded slope traversal from camera-relative commands; the player follows the island route without penetration or render-rate dependence | `feat(character): add grounded locomotion` |
 | `CHR-004` | S | Add jump launch, airborne control, landing, and deterministic recovery to the dry spawn; exclude ledge grabs, ladders, wall climbing, and arbitrary obstacle stepping | `feat(character): add jumping and landing` |
@@ -885,7 +886,7 @@ physical source term.
 |---|---|
 | Core/build | Fresh configure, Debug/Release build, unit tests, warnings as errors |
 | D3D12 | Debug layer clean, focused GPU validation, DRED path, WARP smoke, named PIX passes |
-| Camera/cube | Basis and near/far math, elapsed-time input, aspect-changing resize, 24/36 geometry bounds, one static upload, one indexed draw/camera upload/depth clear per submission |
+| Camera/cube | Basis and near/far math, fixed-tick third-person orbit/zoom interpolation, bounded pitch/distance, canonical-terrain boom clearance, exact 30/60/120/144 Hz transcripts, diagnostic free-fly input, aspect-changing resize, and the retained 24/36 cube contract |
 | Sky/assets | Cubemap orientation, translation invariance, sRGB/linear correctness, missing-asset error |
 | Terrain | Flat/ramp samples, ray and finite-segment closest-feature hits, normals, cell/chunk boundary equality, LOD seam captures, resident-region index/memory budgets, deterministic natural-height metrics, and closed-basin/spawn assertions |
 | Island | One connected landmass, closed coastline, dry spawn, traversable route, graduated shallow shelf, bounded deep-water region, and deterministic fixture checksum |
@@ -1019,19 +1020,18 @@ members, and zone serialization wait until measured needs after the demo.
 
 ## 14. Immediate next increment
 
-With CHR-001 completed, implement only `CAM-001`:
+With CAM-001 completed, implement only `CHR-002`:
 
-- derive one presentation-only camera target from the interpolated player
-  snapshot without letting camera state become Character authority;
-- add third-person orbit/follow controls with bounded pitch and distance plus
-  a camera-relative horizontal movement basis for later locomotion;
-- query canonical terrain along the target-to-camera segment and shorten the
-  boom before terrain can obstruct the view;
-- preserve deterministic smoke behavior and the existing free-fly diagnostic
-  option; and
-- prove interpolation, orbit bounds, basis conventions, and obstruction
-  behavior, then stop before gravity, grounding, locomotion, jumping, wading,
-  swimming, target lock, or gamepad input.
+- add vertical velocity and standard gravity to the authoritative player
+  snapshot;
+- use the canonical LOD0 terrain surface to classify walkable support and keep
+  the upright capsule stably grounded without penetration;
+- publish explicit grounded, falling, and landing state while retaining
+  transactional fixed-tick updates and render interpolation;
+- prove flat and sloped support, edge ownership, falling/landing, invalid-state
+  rollback, and exact 30/60/120/144 Hz outcomes; and
+- stop before horizontal locomotion, jumping, wading, swimming, obstacle
+  stepping, target lock, gamepad input, or final avatar art.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -1318,7 +1318,22 @@ Debug and Release each pass 497,863 assertions across 351 cases. The
 5,000 unchanged graph-pass executions, zero D3D12 corruption/errors, and zero
 live child objects.
 
-The active queue is `CAM-001`, third-person follow/orbit camera.
+CAM-001 adds a World-owned fixed-tick orbit rig and derives presentation only
+from interpolated player/orbit snapshots. The Island Demo authors a
+`0.75`-meter target offset, `-1.2..0.35`-radian pitch, `2..16`-meter boom,
+`9`-meter initial boom, and `0.35`-meter canonical-terrain clearance. Right
+mouse drag and vertical wheel input are consumed once per emitted tick; `F7`
+temporarily selects the retained render-time free-fly diagnostic camera.
+Terrain obstruction can shorten the applied boom but never mutates the desired
+orbit or Character state. A pure sandbox presentation composer synchronizes
+player/orbit interpolation and canonical-terrain placement at one render
+alpha. The scripted presentation-smoke camera remains independent, while that
+composer and a neutral camera-rig trace still execute on the same tick numbers.
+Debug and Release each pass 503,002 assertions across 373 cases. The 1,000-frame
+RTX 4070 Debug presentation smoke retains its exact scripted visibility and GPU
+accounting with zero D3D12 corruption/errors and zero live child objects.
+
+The active queue is `CHR-002`, terrain grounding and gravity.
 `W-005`, `W-006`, `R-001` through `R-004`, and coupled hydrology remain
 approved but deferred from the Island Demo 0.1 critical path.
 

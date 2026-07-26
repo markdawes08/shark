@@ -1,6 +1,7 @@
 # Character Contract
 
 - **Completed through:** `CHR-001`
+- **Camera integration verified through:** `CAM-001`
 - **Last verified:** July 25, 2026
 
 CHR-001 establishes one deterministic, bounded player capsule for the Island
@@ -24,6 +25,7 @@ Platform events
   -> Character previous/current snapshots
   -> presentation-only interpolation
   -> renderer DebugCapsuleProxy
+  -> World third-person target (read-only sibling consumer)
 ```
 
 Character never reads platform key codes, a render mesh, D3D12 state, the
@@ -106,9 +108,11 @@ the existing material-sphere shader. An enabled proxy adds exactly one indexed
 draw per submitted frame and no graph pass, GPU resource, descriptor,
 allocation, upload, or timestamp interval.
 
-The ordinary sandbox camera starts at `(0, 4.890625, 122)` with pitch `-0.28`
-radians so the spawn proxy can be inspected. It remains an independently
-movable free-fly camera rather than a player-follow camera until `CAM-001`.
+CAM-001 now targets `0.75` meter above the interpolated player center through a
+separate World-owned orbit rig. Its canonical-terrain obstruction probe can
+shorten only the presentation boom; it cannot move the capsule or write either
+Character snapshot. `F7` retains the independently movable free-fly camera for
+diagnostics.
 
 ## Verification
 
@@ -120,6 +124,8 @@ Permanent tests cover:
 - held, pulse, look, repeat, lifecycle, and overflow-safe input sampling;
 - an exact 120-command/snapshot transcript across 30, 60, 120, and 144 Hz
   render partitions, including zero-tick and multi-tick render frames;
+- a separate exact 120-tick camera/input transcript across those same render
+  partitions, including mode-switch neutralization;
 - CPU/HLSL capsule deformation expectations, root-constant layout, renderer
   validation, and enabled/disabled accounting; and
 - one capsule draw and 1,584 capsule indices per submitted smoke frame while
@@ -131,8 +137,10 @@ capsule draws, 5,000 unchanged graph-pass executions, zero D3D12
 corruption/errors, and zero live D3D12 child objects.
 
 Launch `out\build\windows-vs2026\bin\Debug\SharkSandbox.exe` to inspect the
-capsule. `R` resets it; the other authored character commands are visible only
-to the fixed-tick contract until locomotion is implemented.
+capsule through the default third-person camera. Press `F5`, then use
+right-mouse drag and the wheel to orbit/zoom; `F7` toggles free-fly. `R` resets
+the capsule; the other authored character commands remain fixed-tick contract
+data until locomotion is implemented.
 
-The next increment is `CAM-001`: an interpolated third-person follow/orbit
-camera with bounded orbit controls and a canonical-terrain obstruction probe.
+The next increment is `CHR-002`: gravity, canonical-terrain grounding,
+walkable-slope classification, falling, and landing.

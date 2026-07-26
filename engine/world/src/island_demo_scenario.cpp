@@ -106,12 +106,28 @@ inline constexpr character::PlayerCapsuleShape
     };
 inline constexpr float island_demo_player_minimum_center_y = -32.0F;
 inline constexpr float island_demo_player_maximum_center_y = 64.0F;
-inline constexpr float island_demo_spawn_camera_height = 4.0F;
-inline constexpr float island_demo_spawn_camera_distance = 10.0F;
+inline constexpr ThirdPersonCameraConfig island_demo_player_camera{
+    .target_height_offset =
+        default_third_person_target_height_offset,
+    .minimum_pitch_radians =
+        default_third_person_minimum_pitch,
+    .maximum_pitch_radians =
+        default_third_person_maximum_pitch,
+    .initial_yaw_radians = 0.0F,
+    .initial_pitch_radians =
+        default_third_person_initial_pitch,
+    .minimum_boom_distance =
+        default_third_person_minimum_boom_distance,
+    .maximum_boom_distance =
+        default_third_person_maximum_boom_distance,
+    .initial_boom_distance =
+        default_third_person_initial_boom_distance,
+    .obstruction_clearance =
+        default_third_person_obstruction_clearance,
+};
 inline constexpr float island_demo_primary_body_height = 12.0F;
 inline constexpr float island_demo_pair_body_height = 20.0F;
 inline constexpr float island_demo_isolated_body_height = 14.0F;
-inline constexpr float island_demo_spawn_pitch = -0.28F;
 inline constexpr float island_demo_far_plane = 1'500.0F;
 inline constexpr float minimum_spawn_clearance = 2.0F;
 inline constexpr float minimum_route_clearance = 0.5F;
@@ -301,6 +317,33 @@ core::Result<IslandDemoScenario> make_island_demo_scenario()
                 "canonical dry spawn"));
     }
 
+    PerspectiveLens player_camera_lens;
+    player_camera_lens.far_plane = island_demo_far_plane;
+    const auto camera_rig_result =
+        create_third_person_camera_rig(island_demo_player_camera);
+    if (!camera_rig_result) {
+        return core::Result<IslandDemoScenario>::failure(
+            camera_rig_result.error());
+    }
+    const auto camera_placement_result =
+        build_third_person_camera(
+            island_demo_player_camera,
+            camera_rig_result.value().current.state,
+            player_result.value().current.state.center_position,
+            player_camera_lens,
+            surface);
+    if (!camera_placement_result ||
+        camera_placement_result.value().terrain_obstructed ||
+        camera_placement_result.value().desired_boom_distance !=
+            island_demo_player_camera.initial_boom_distance ||
+        camera_placement_result.value().applied_boom_distance !=
+            island_demo_player_camera.initial_boom_distance) {
+        return core::Result<IslandDemoScenario>::failure(
+            scenario_error(
+                "Island Demo player camera does not have an "
+                "unobstructed canonical-terrain spawn view"));
+    }
+
     auto route_result = validate_route(surface);
     if (!route_result) {
         return core::Result<IslandDemoScenario>::failure(
@@ -451,16 +494,6 @@ core::Result<IslandDemoScenario> make_island_demo_scenario()
             },
         }};
 
-    Camera spawn_camera;
-    spawn_camera.transform.position = {
-        spawn_ground.x,
-        spawn_ground.y + island_demo_spawn_camera_height,
-        spawn_ground.z + island_demo_spawn_camera_distance,
-    };
-    spawn_camera.transform.pitch_radians =
-        island_demo_spawn_pitch;
-    spawn_camera.lens.far_plane = island_demo_far_plane;
-
     return core::Result<IslandDemoScenario>::success(
         IslandDemoScenario{
             .terrain = std::move(shaped_terrain),
@@ -494,7 +527,8 @@ core::Result<IslandDemoScenario> make_island_demo_scenario()
                 island_demo_sphere_body_mass,
             .sphere_restitution =
                 island_demo_sphere_restitution,
-            .spawn_camera = spawn_camera,
+            .player_camera = island_demo_player_camera,
+            .player_camera_lens = player_camera_lens,
         });
 }
 

@@ -5,7 +5,7 @@
 #include <shark/terrain/height_tile.hpp>
 #include <shark/terrain/island.hpp>
 #include <shark/water/gameplay_water.hpp>
-#include <shark/world/camera.hpp>
+#include <shark/world/third_person_camera.hpp>
 
 #include <array>
 #include <cstddef>
@@ -78,7 +78,8 @@ struct IslandDemoScenario final {
     float sphere_body_radius{};
     float sphere_body_mass{};
     float sphere_restitution{};
-    Camera spawn_camera;
+    ThirdPersonCameraConfig player_camera;
+    PerspectiveLens player_camera_lens;
 };
 
 // Builds the default playable-island fixture without changing the retained

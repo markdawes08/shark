@@ -1,7 +1,7 @@
 # Camera, Reversed-Z Depth, Cube, and Skybox Contract
 
 - **Camera/cube capability completed through:** `G-005`
-- **Renderer integration verified through:** `CHR-001`
+- **Renderer integration verified through:** `CAM-001`
 - **Last verified:** July 25, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
@@ -88,26 +88,51 @@ vertical field of view, a `0.1 m` near plane, and a `100 m` far plane. The cube
 occupies `[-1, 1]` on each world axis; the elevated, downward-pitched default
 pose frames it with the terrain tile.
 
-## Free-fly camera controls
+## Third-person and diagnostic free-fly controls
 
-The sandbox composition root owns the camera and the small controller that
-interprets the existing platform event records:
+CAM-001 makes third-person the ordinary sandbox camera. The World-owned rig
+advances once per emitted fixed tick, while rendering follows the interpolated
+player center and interpolated orbit without changing either authoritative
+snapshot:
 
-| Input | Camera action |
+| Input | Third-person action |
+|---|---|
+| Hold right mouse and drag | Orbit yaw and pitch |
+| Vertical mouse wheel | Shorten/lengthen the desired boom |
+| `F7` | Toggle the retained diagnostic free-fly camera |
+
+Pitch is bounded to `-1.2..0.35` radians and desired boom distance to
+`2..16` meters. The initial orbit is yaw `0`, pitch `-0.25`, and distance
+`9` meters. The camera targets `0.75` meter above the interpolated capsule
+center. A canonical LOD0 target-to-camera clearance query may shorten the
+applied boom to keep terrain out of the view, but it never changes desired
+distance, player state, terrain, or simulation state.
+
+The sandbox starts paused, so third-person orbit and wheel input remain pending
+until `F5` resumes the fixed clock or `F6` emits one tick:
+
+| Input | Simulation action |
+|---|---|
+| `F5` | Toggle the fixed 60 Hz body simulation between paused and running |
+| `F6` | Advance exactly one fixed tick while paused |
+
+A single `F7` press clears pending input on both sides of the mode switch.
+While free-fly is active, the sandbox still consumes fixed-tick player/orbit
+input but applies a neutral command so input cannot leak back into
+third-person mode. Free-fly retains the G-005 bindings:
+
+| Input | Diagnostic free-fly action |
 |---|---|
 | `W` / `S` | Move forward / backward along the full camera forward axis |
 | `A` / `D` | Strafe left / right |
 | `Q` or `Control` / `E` or `Space` | Move down / up along world `Y` |
 | Hold `Shift` | Increase translation speed while held |
 | Hold right mouse and drag | Change yaw and pitch |
-| `F4` | Toggle terrain chunk bounds and query-marker diagnostics |
 
-`F5` and `F6` are separate simulation controls owned by the sandbox:
-
-| Input | Simulation action |
-|---|---|
-| `F5` | Toggle the fixed 60 Hz body simulation between paused and running |
-| `F6` | Advance exactly one fixed tick while paused |
+Whenever pause/resume, minimize/restore, or dropped-event recovery discards the
+clock's partial elapsed-time phase, World collapses the orbit's presentation
+history to its current state. This preserves tick ordering while preventing a
+one-frame interpolation snap back toward an obsolete orbit.
 
 Mouse coordinates remain absolute client coordinates at the platform boundary.
 The right-button press coordinates establish the drag baseline, so movement
@@ -120,14 +145,15 @@ button ends that action.
 T-006 historically scaled the default translation speed to `32 m/s` with the
 existing `4x` Shift multiplier; T-008 retains it. Mouse sensitivity remains
 `0.0025` radians per pixel.
-Movement is scaled by elapsed render time and clamps one update to at most
+Free-fly movement is scaled by elapsed render time and clamps one update to at most
 `0.1 s`, preventing a long minimize or debugger stall from producing a large
 camera jump. `F4` diagnostics are off at startup. `WindowFocusChangedEvent`
 drives the controller's focus hook;
-focus loss, minimize, close request, and final close clear held input. This is
-an interactive render-time camera proof; it remains independent of PHY-001's
-fixed 60 Hz simulation clock. The controller owns only the documented camera
-bindings, while the sandbox consumes `F5`/`F6` as simulation policy. The
+focus loss, minimize, close request, and final close clear held input. The
+free-fly controller remains an interactive render-time diagnostic independent
+of PHY-001's fixed clock; the third-person rig uses that clock. The controller
+owns only the documented free-fly bindings, while the sandbox consumes
+`F5`/`F6`/`F7` as composition policy. The
 platform layer continues to publish raw window and input events without
 acquiring camera or gameplay policy. If the bounded platform queue reports any
 dropped event, the composition root also clears held controller state so a
@@ -253,11 +279,12 @@ with GPU-based validation. Hardware and normal WARP change from `1280x720` to
 `960x600`; focused GPU validation alone uses `640x360 -> 480x300`. Both
 sequences intentionally change aspect from `16:9` to `1.6`, and each applies
 `1.25` radians of scripted yaw at three quarters.
-The CHR-001 interactive preview camera starts at the scenario-owned
-`(0,4.890625,122)` position with pitch `-0.28` radians and a 1,500-meter far
-plane, looking toward the blue capsule at the dry spawn. It remains a free-fly
-camera until CAM-001. Presentation smoke deliberately retains the
-separate deterministic `(0,28,112)` start with pitch `-0.25`. Its initial and
+The CAM-001 interactive camera starts from the scenario-owned third-person
+orbit: it targets `(0,2.640625,112)`, starts approximately at
+`(0,4.8673,120.7202)`, uses pitch `-0.25` radians and a 1,500-meter far plane,
+and has an unobstructed nine-meter boom behind the blue capsule. Presentation
+smoke deliberately retains the separate deterministic `(0,28,112)` start with
+pitch `-0.25`. Its initial and
 resized views expose 93 terrain chunks at a `0/93`
 LOD0/coarse split. The turned overview exposes 72 at `1/71` from three quarters
 through seven eighths. For the final eighth, presentation smoke alone moves to
@@ -266,6 +293,12 @@ turned phase keeps both
 terrain index ranges live without replacing the scenario-owned interactive start.
 Hardware and normal WARP minimize/restore at halfway; focused validation
 intentionally skips that already-covered interval.
+
+CAM-001's complete Debug and Release suites each pass 503,002 assertions across
+373 cases. The 1,000-frame Debug RTX 4070 smoke retains the scripted camera,
+exact visibility schedule, 5,000 graph passes, zero D3D12 corruption/errors,
+and zero live child objects while also executing the synchronized
+player/orbit/terrain presentation composer and neutral fixed-tick rig trace.
 
 The permanent accounting contract requires:
 
@@ -383,10 +416,11 @@ cube geometry, sky motion, depth, input, or the deterministic smoke schedule.
 cube contracts. `PHY-004` retains canonical terrain support and the CPU-only
 four-sphere pair pass while adding independently interpolated orientations;
 CHR-001 adds one bounded player authority and maps its interpolated snapshot to
-the blue proxy without changing camera authority; see
-[the Character contract](CHARACTER.md). CAM-001 is the next increment and will
-replace the static preview with an interpolated third-person follow/orbit
-camera. See
+the blue proxy. CAM-001 now derives a terrain-cleared camera from that
+interpolated player snapshot and its own interpolated fixed-tick orbit without
+changing Character authority; see
+[the Character contract](CHARACTER.md). `CHR-002` is next and will add gravity
+and canonical-terrain grounding. See
 [the simulation contract](SIMULATION.md). This component page
 no longer duplicates the rolling project
 queue; [ENGINE_PLAN.md](ENGINE_PLAN.md) is the roadmap source of truth. Rain

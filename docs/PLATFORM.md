@@ -3,7 +3,7 @@
 - **Increment:** `F-004` host contract; DPI policy completed by `G-002`;
   focus event and first camera consumer added by `G-005`; renderer consumer
   boundary verified by `REN-001`; simulation-control consumer added by
-  `PHY-001`
+  `PHY-001`; fixed-tick orbit/zoom consumers integrated by `CAM-001`
 - **Last verified:** July 19, 2026
 
 F-004 establishes the Windows host boundary used by later graphics and
@@ -97,6 +97,13 @@ dropped event, so a lost release or focus record cannot latch motion. It also
 forwards `WindowFocusChangedEvent` to the controller so focus loss clears held
 keys and mouse-drag state. None of that camera policy belongs to `Application`.
 
+CAM-001 adds two more narrow sandbox consumers without changing Platform:
+`PlayerCommandSource` turns right-button drag into bounded fixed-tick orbit
+deltas and `CameraDistanceInputSource` turns vertical-wheel records into one
+bounded boom delta per emitted tick. Focus loss, minimization, closure, dropped
+events, and `F7` mode changes clear pending values. The platform still owns
+only raw events and does not know about third-person or free-fly modes.
+
 PHY-001 adds a second narrow consumer at the composition root. Non-repeat
 `F5` key presses toggle the fixed-step simulation between paused and running;
 `F6` requests one tick while paused. `Application` still emits only an ordinary
@@ -140,9 +147,11 @@ records remain visible at Info severity in both configurations.
 For manual platform acceptance, drag an edge and confirm resize records,
 minimize and restore the window, press and release a key, move/click/scroll the
 mouse, switch focus away and back, then close by both Alt+F4 and the title-bar
-button in separate runs. For the G-005 consumer check, confirm `WASD`, `Q`/`E`,
-`Shift`, and right-button drag drive the camera without changing the raw event
-records; `Space` and `Control` may also be used as up/down aliases. Focus loss
+button in separate runs. Press `F5`, then confirm right-button drag and the
+vertical wheel drive the default third-person orbit/zoom without changing raw
+event records. Press `F7`, then confirm `WASD`, `Q`/`E`, `Shift`, and
+right-button drag drive free-fly; `Space` and `Control` remain up/down aliases.
+Focus loss
 must stop a held movement or drag rather than leaving it latched. Each run must
 stay responsive while idle and exit without an orphaned window.
 
@@ -165,9 +174,10 @@ exact physical client sizing.
 
 The platform layer owns no DXGI, Direct3D 12, WARP, swap-chain, or renderer
 objects. Graphics consumes only its opaque native handle, physical client
-extent, and raw events. The small G-005 free-fly controller is sandbox policy,
-not a platform input abstraction. PHY-001's fixed clock and `F5`/`F6` bindings
-also live above the platform boundary. A reusable gameplay input/action system,
+extent, and raw events. The G-005 free-fly controller and CAM-001 orbit/zoom
+consumers are sandbox policy, not platform input abstractions. PHY-001's fixed
+clock and `F5`/`F6` bindings plus CAM-001's `F7` mode switch also live above
+the platform boundary. A reusable gameplay input/action system,
 raw mouse/cursor-lock mode, multi-window support, fullscreen policy, and editor
 behavior remain deferred.
 

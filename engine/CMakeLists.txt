@@ -97,9 +97,11 @@ add_library(SharkEngine STATIC
     world/include/shark/world/camera.hpp
     world/include/shark/world/environment_lab_scenario.hpp
     world/include/shark/world/island_demo_scenario.hpp
+    world/include/shark/world/third_person_camera.hpp
     world/src/camera.cpp
     world/src/environment_lab_scenario.cpp
     world/src/island_demo_scenario.cpp
+    world/src/third_person_camera.cpp
 )
 
 target_include_directories(SharkEngine

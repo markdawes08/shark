@@ -18,9 +18,12 @@
 #include <shark/water/gameplay_water.hpp>
 #include <shark/world/camera.hpp>
 #include <shark/world/island_demo_scenario.hpp>
+#include <shark/world/third_person_camera.hpp>
 
+#include "camera_distance_input_source.hpp"
 #include "camera_controller.hpp"
 #include "options.hpp"
+#include "player_camera_frame.hpp"
 #include "player_command_source.hpp"
 
 #include <cube.pixel.hpp>
@@ -1590,18 +1593,11 @@ void log_platform_event(const shark::platform::Event& event)
               "terrain chunk/support-normal diagnostics; F5 "
               "resumes/pauses the "
               "fixed 60 Hz sphere simulation and F6 advances one "
-              "tick while paused; player actions are sampled per tick "
-              "and R resets the blue capsule proxy");
+              "tick while paused; F7 toggles third-person/free-fly; "
+              "RMB orbits and the wheel zooms the fixed-tick "
+              "third-person camera; player actions are sampled per "
+              "tick and R resets the blue capsule proxy");
 
-    world::Camera camera;
-    if (smoke_mode) {
-        camera.transform.position = {0.0F, 28.0F, 112.0F};
-        camera.transform.pitch_radians = -0.25F;
-        camera.lens.far_plane = 1'500.0F;
-    }
-    else {
-        camera = island_scenario.spawn_camera;
-    }
     auto simulation_clock_result =
         simulation::FixedStepClock::create(
             simulation::FixedStepClockConfig{
@@ -1622,6 +1618,38 @@ void log_platform_event(const shark::platform::Event& event)
     }
     auto player_simulation =
         std::move(player_simulation_result).value();
+    auto player_camera_rig_result =
+        world::create_third_person_camera_rig(
+            island_scenario.player_camera);
+    if (!player_camera_rig_result) {
+        return core::Result<void>::failure(
+            std::move(player_camera_rig_result).error());
+    }
+    auto player_camera_rig =
+        std::move(player_camera_rig_result).value();
+    const auto initial_player_camera_orbit =
+        player_camera_rig.current.state;
+    world::Camera camera;
+    if (smoke_mode) {
+        camera.transform.position = {0.0F, 28.0F, 112.0F};
+        camera.transform.pitch_radians = -0.25F;
+        camera.lens.far_plane = 1'500.0F;
+    }
+    else {
+        auto player_camera_frame_result =
+            sandbox::build_player_camera_frame(
+            player_simulation,
+            player_camera_rig,
+            1.0F,
+            island_scenario.player_camera_lens,
+            terrain_surface);
+        if (!player_camera_frame_result) {
+            return core::Result<void>::failure(
+                std::move(player_camera_frame_result).error());
+        }
+        camera = player_camera_frame_result.value()
+            .camera_placement.camera;
+    }
     static_assert(
         character::maximum_player_capsule_radius <=
         renderer::maximum_debug_capsule_radius);
@@ -1699,6 +1727,9 @@ void log_platform_event(const shark::platform::Event& event)
             .sprint_multiplier = 4.0F,
         }};
     sandbox::PlayerCommandSource player_command_source;
+    sandbox::CameraDistanceInputSource
+        camera_distance_input_source;
+    bool free_fly_camera_enabled = false;
     auto terrain_mode = renderer::TerrainRenderMode::solid;
     auto terrain_material_view =
         renderer::TerrainMaterialView::shaded;
@@ -1706,11 +1737,20 @@ void log_platform_event(const shark::platform::Event& event)
         renderer::EnvironmentLightingMode::image_based;
     auto terrain_diagnostics_enabled = false;
     auto previous_frame_time = std::chrono::steady_clock::now();
-    const auto reset_simulation_time_baseline = [&] {
-        simulation_clock.discard_accumulated_time();
-        previous_sphere_bodies = current_sphere_bodies;
-        previous_frame_time = std::chrono::steady_clock::now();
-    };
+    const auto reset_simulation_time_baseline =
+        [&]() -> core::Result<void> {
+            auto camera_result =
+                world::collapse_third_person_camera_interpolation(
+                    player_camera_rig);
+            if (!camera_result) {
+                return core::Result<void>::failure(
+                    std::move(camera_result).error());
+            }
+            simulation_clock.discard_accumulated_time();
+            previous_sphere_bodies = current_sphere_bodies;
+            previous_frame_time = std::chrono::steady_clock::now();
+            return core::Result<void>::success();
+        };
     const auto visual_start_time = previous_frame_time;
     const auto smoke_deadline =
         std::chrono::steady_clock::now() + smoke_deadline_duration;
@@ -1815,7 +1855,12 @@ void log_platform_event(const shark::platform::Event& event)
                     !key->repeated) {
                     simulation_clock.set_paused(
                         !simulation_clock.paused());
-                    reset_simulation_time_baseline();
+                    auto reset_result =
+                        reset_simulation_time_baseline();
+                    if (!reset_result) {
+                        return core::Result<void>::failure(
+                            std::move(reset_result).error());
+                    }
                     core::log_message(
                         core::LogLevel::info,
                         "physics",
@@ -1842,8 +1887,27 @@ void log_platform_event(const shark::platform::Event& event)
                             "Queued one fixed simulation tick");
                     }
                 }
+                if (key != nullptr &&
+                    key->virtual_key == VK_F7 &&
+                    key->action == platform::KeyAction::pressed &&
+                    !key->repeated) {
+                    free_fly_camera_enabled =
+                        !free_fly_camera_enabled;
+                    camera_controller.reset();
+                    player_command_source.reset();
+                    camera_distance_input_source.reset();
+                    core::log_message(
+                        core::LogLevel::info,
+                        "camera",
+                        free_fly_camera_enabled
+                            ? "Camera mode: free-fly (WASD, RMB, "
+                              "Shift)"
+                            : "Camera mode: third-person (RMB orbit, "
+                              "wheel zoom; F5/F6 advance input)");
+                }
             }
             player_command_source.handle_event(event);
+            camera_distance_input_source.handle_event(event);
             camera_controller.handle_event(event);
             log_platform_event(event);
             if (const auto* const resized =
@@ -1881,7 +1945,13 @@ void log_platform_event(const shark::platform::Event& event)
         if (dropped_events != 0) {
             camera_controller.reset();
             player_command_source.reset();
-            reset_simulation_time_baseline();
+            camera_distance_input_source.reset();
+            auto reset_result =
+                reset_simulation_time_baseline();
+            if (!reset_result) {
+                return core::Result<void>::failure(
+                    std::move(reset_result).error());
+            }
         }
         application.clear_events();
         if (smoke_mode && dropped_events != 0) {
@@ -1994,7 +2064,12 @@ void log_platform_event(const shark::platform::Event& event)
             }
 
             if (application.minimized()) {
-                reset_simulation_time_baseline();
+                auto reset_result =
+                    reset_simulation_time_baseline();
+                if (!reset_result) {
+                    return core::Result<void>::failure(
+                        std::move(reset_result).error());
+                }
                 if (minimize_requested && !restore_requested) {
                     observed_minimized_iteration = true;
                     if (renderer_instance.stats() != stats_when_minimized) {
@@ -2055,7 +2130,12 @@ void log_platform_event(const shark::platform::Event& event)
                 return core::Result<void>::failure(
                     std::move(wait_result).error());
             }
-            reset_simulation_time_baseline();
+            auto reset_result =
+                reset_simulation_time_baseline();
+            if (!reset_result) {
+                return core::Result<void>::failure(
+                    std::move(reset_result).error());
+            }
             continue;
         }
 
@@ -2072,10 +2152,11 @@ void log_platform_event(const shark::platform::Event& event)
                 60.0F
             : std::chrono::duration<float>(
                 frame_time - visual_start_time).count();
-        if (!smoke_mode) {
+        if (!smoke_mode && free_fly_camera_enabled) {
             camera_controller.update(camera, elapsed_seconds);
         }
-        else if (!smoke_camera_pose_changed &&
+        else if (smoke_mode &&
+                 !smoke_camera_pose_changed &&
                  renderer_instance.stats().presented_frames >=
                      change_camera_after_frames) {
             world::advance_camera(
@@ -2086,7 +2167,8 @@ void log_platform_event(const shark::platform::Event& event)
                 1.0F);
             smoke_camera_pose_changed = true;
         }
-        else if (!smoke_near_pose_changed &&
+        else if (smoke_mode &&
+                 !smoke_near_pose_changed &&
                  renderer_instance.stats().presented_frames >=
                      change_to_near_pose_after_frames) {
             camera.transform.position =
@@ -2141,16 +2223,44 @@ void log_platform_event(const shark::platform::Event& event)
         for (std::uint32_t step = 0;
              step < simulation_frame.step_count;
              ++step) {
-            const auto player_command =
+            const auto fixed_tick = first_fixed_tick + step;
+            const auto sampled_player_command =
                 player_command_source.sample_fixed_tick();
+            const auto sampled_boom_delta =
+                camera_distance_input_source.sample_fixed_tick();
+            const auto player_command =
+                free_fly_camera_enabled
+                ? character::PlayerActionCommand{}
+                : sampled_player_command;
             auto player_step_result =
                 character::advance_player_capsule(
                     player_simulation,
                     player_command,
-                    first_fixed_tick + step);
+                    fixed_tick);
             if (!player_step_result) {
                 return core::Result<void>::failure(
                     std::move(player_step_result).error());
+            }
+            const world::ThirdPersonOrbitDelta camera_delta =
+                free_fly_camera_enabled
+                ? world::ThirdPersonOrbitDelta{}
+                : world::ThirdPersonOrbitDelta{
+                    .yaw_radians =
+                        sampled_player_command
+                            .look_yaw_delta_radians,
+                    .pitch_radians =
+                        sampled_player_command
+                            .look_pitch_delta_radians,
+                    .boom_distance = sampled_boom_delta,
+                };
+            auto camera_step_result =
+                world::advance_third_person_camera_rig(
+                    player_camera_rig,
+                    camera_delta,
+                    fixed_tick);
+            if (!camera_step_result) {
+                return core::Result<void>::failure(
+                    std::move(camera_step_result).error());
             }
             previous_sphere_bodies = current_sphere_bodies;
             for (std::size_t body_index = 0;
@@ -2232,16 +2342,25 @@ void log_platform_event(const shark::platform::Event& event)
                  math::is_unit(
                     current_sphere_bodies[3].orientation));
         }
-        auto interpolated_player_result =
-            character::interpolate_player_capsule(
+        auto player_camera_frame_result =
+            sandbox::build_player_camera_frame(
                 player_simulation,
-                simulation_frame.interpolation_alpha);
-        if (!interpolated_player_result) {
+                player_camera_rig,
+                simulation_frame.interpolation_alpha,
+                island_scenario.player_camera_lens,
+                terrain_surface);
+        if (!player_camera_frame_result) {
             return core::Result<void>::failure(
-                std::move(interpolated_player_result).error());
+                std::move(player_camera_frame_result).error());
         }
-        const auto interpolated_player =
-            interpolated_player_result.value();
+        const auto& player_camera_frame =
+            player_camera_frame_result.value();
+        const auto& interpolated_player =
+            player_camera_frame.interpolated_player;
+        if (!smoke_mode && !free_fly_camera_enabled) {
+            camera =
+                player_camera_frame.camera_placement.camera;
+        }
         const auto player_half_yaw =
             interpolated_player.facing_yaw_radians * 0.5F;
         const math::Quaternion player_proxy_orientation{
@@ -2377,6 +2496,24 @@ void log_platform_event(const shark::platform::Event& event)
                 renderer_smoke_error(
                     "The presentation smoke player snapshots diverged "
                     "from deterministic spawn state"));
+        }
+        if (!world::is_valid(player_camera_rig) ||
+            player_camera_rig.current.fixed_tick !=
+                simulation_clock.total_step_count() ||
+            player_camera_rig.previous.fixed_tick + 1U !=
+                player_camera_rig.current.fixed_tick ||
+            player_camera_rig.previous.state !=
+                initial_player_camera_orbit ||
+            player_camera_rig.current.state !=
+                initial_player_camera_orbit ||
+            player_camera_rig.previous.consumed_delta !=
+                world::ThirdPersonOrbitDelta{} ||
+            player_camera_rig.current.consumed_delta !=
+                world::ThirdPersonOrbitDelta{}) {
+            return core::Result<void>::failure(
+                renderer_smoke_error(
+                    "The presentation smoke third-person camera rig "
+                    "diverged from its neutral fixed-tick trace"));
         }
         const auto primary_terrain_normal_velocity =
             current_terrain_contacts[0].has_value()

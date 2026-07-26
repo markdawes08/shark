@@ -1,6 +1,7 @@
 # Fixed-Step Rigid-Body and Contact Contract
 
 - **Completed through:** `PHY-010`
+- **Character/camera integration verified through:** `CAM-001`
 - **Last verified:** July 22, 2026
 
 PHY-001 established Shark's fixed-clock ballistic path. PHY-002 gives that one
@@ -41,9 +42,10 @@ The boundaries are intentionally narrow:
   box mass properties, the fixed-capacity broad phase, deterministic body
   islands, the stable-ID sleep registry, contact records, and interpolation;
 - `World` publishes four deterministic scenario-owned body spawns, initial
-  linear/angular states, equal mass, and external torques beside the lake;
+  linear/angular states, equal mass, and external torques beside the lake, plus
+  the Island Demo's bounded third-person camera configuration and lens;
 - the sandbox composition root sequences input, fixed ticks, immutable
-  previous/current snapshots, and render interpolation; and
+  previous/current player/camera snapshots, and render interpolation; and
 - `Renderer` receives only an active count and four interpolated sphere
   positions/orientations.
 
@@ -73,6 +75,13 @@ startup and supplies one fixed-step ceiling duration per frame.
 
 A single-step request is consumed once. It does not resume the clock or carry
 render-frame elapsed time into the simulation.
+
+CAM-001 advances its orbit snapshot on the same emitted tick number as
+Character and dynamic Physics. Right-mouse orbit and wheel zoom are consumed
+only at that boundary. Rendering interpolates the orbit and player separately,
+then builds a terrain-cleared presentation camera. The existing smoke camera
+remains scripted and independent; its otherwise unused rig advances with
+neutral deltas as a synchronization invariant.
 
 ## Sphere body snapshots
 
@@ -797,8 +806,10 @@ adds a stateless CPU water query over authored support plus the canonical
 triangle-interpolated bed; it changes no fixed-step state or ordering. CHR-001
 adds a separate bounded player capsule whose commands and previous/current
 snapshots advance on the same emitted fixed-tick numbers as dynamic Physics;
-it neither enters the rigid-body arrays nor changes their solver order. The
-active queue is `CAM-001`, a presentation-only third-person camera. W-005
+it neither enters the rigid-body arrays nor changes their solver order.
+CAM-001 adds a separate presentation-only orbit rig on those same fixed ticks;
+it does not enter the rigid-body arrays or mutate Character. The active queue
+is `CHR-002`, player gravity and canonical-terrain grounding. W-005
 remains an approved deferred fluid specialization; the queue is centralized in
 [ENGINE_PLAN.md](ENGINE_PLAN.md), and the query contract is in
 [WATER.md](WATER.md). The player contract is in

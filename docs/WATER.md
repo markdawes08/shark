@@ -86,7 +86,8 @@ coupling, or renderer change. A later simulated-water adapter may provide the
 same query information without changing character policy.
 
 CHR-001 now places one bounded capsule at the proven dry spawn but does not
-query water during fixed-tick advancement or own immersion policy. The active
-queue is `CAM-001`, a presentation-only third-person camera. The authoritative
+query water during fixed-tick advancement or own immersion policy. CAM-001
+changes only its presentation camera. The active queue is `CHR-002`, player
+gravity and canonical-terrain grounding. The authoritative
 increment order remains in [ENGINE_PLAN.md](ENGINE_PLAN.md), and the player
 contract is in [CHARACTER.md](CHARACTER.md).

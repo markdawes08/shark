@@ -116,11 +116,12 @@ visible indexed terrain chunks, matching magenta chunk bounds, four material
 spheres, one blue player capsule, cyan terrain-query marker, cube, skybox,
 visual water, and final tone mapping, verifies
 camera/depth/HDR/resource/graph lifecycles, and exits. The default interactive
-path keeps the device alive while the free-fly camera, IBL-lit terrain and
-query-normal pin, four material spheres, blue player capsule, textured cube,
-HDR sky, and visual lake run
+path keeps the device alive while the third-person player camera, IBL-lit
+terrain and query-normal pin, four material spheres, blue player capsule,
+textured cube, HDR sky, and visual lake run
 as `Terrain`, `TexturedCube`, `Skybox`, `Water`, and `ToneMap` passes. `F3`
-retains the procedural-daylight fallback. The startup DDS cubemap remains an
+retains the procedural-daylight fallback, and `F7` selects the retained
+diagnostic free-fly camera. The startup DDS cubemap remains an
 asset/upload proof and is not imported, bound, or sampled per frame.
 
 ## Required and optional capabilities

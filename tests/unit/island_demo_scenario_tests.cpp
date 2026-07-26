@@ -4,6 +4,7 @@
 #include <shark/water/gameplay_water.hpp>
 #include <shark/world/camera.hpp>
 #include <shark/world/island_demo_scenario.hpp>
+#include <shark/world/third_person_camera.hpp>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -52,6 +53,13 @@ TEST_CASE(
     REQUIRE(first.spawn_ground_position ==
         second.spawn_ground_position);
     REQUIRE(first.player_capsule == second.player_capsule);
+    REQUIRE(first.player_camera == second.player_camera);
+    REQUIRE(first.player_camera_lens.vertical_fov_radians ==
+        second.player_camera_lens.vertical_fov_radians);
+    REQUIRE(first.player_camera_lens.near_plane ==
+        second.player_camera_lens.near_plane);
+    REQUIRE(first.player_camera_lens.far_plane ==
+        second.player_camera_lens.far_plane);
     REQUIRE(first.traversal_loop == second.traversal_loop);
     REQUIRE(first.shore_entry_samples ==
         second.shore_entry_samples);
@@ -136,14 +144,44 @@ TEST_CASE(
     REQUIRE(spawn_water);
     REQUIRE(spawn_water.value().disposition ==
         water::GameplayWaterDisposition::no_water);
-    REQUIRE(first.spawn_camera.transform.position ==
+    REQUIRE(first.player_camera ==
+        world::ThirdPersonCameraConfig{});
+    REQUIRE(first.player_camera_lens.vertical_fov_radians ==
+        math::pi / 3.0F);
+    REQUIRE(first.player_camera_lens.near_plane == 0.1F);
+    REQUIRE(first.player_camera_lens.far_plane == 1'500.0F);
+    const auto camera_rig_result =
+        world::create_third_person_camera_rig(
+            first.player_camera);
+    REQUIRE(camera_rig_result);
+    const auto camera_placement_result =
+        world::build_third_person_camera(
+            first.player_camera,
+            camera_rig_result.value().current.state,
+            player.current.state.center_position,
+            first.player_camera_lens,
+            surface);
+    REQUIRE(camera_placement_result);
+    const auto& camera_placement =
+        camera_placement_result.value();
+    REQUIRE_FALSE(camera_placement.terrain_obstructed);
+    REQUIRE(camera_placement.desired_boom_distance ==
+        first.player_camera.initial_boom_distance);
+    REQUIRE(camera_placement.applied_boom_distance ==
+        first.player_camera.initial_boom_distance);
+    REQUIRE(camera_placement.target_position ==
         math::Float3{
-            first.spawn_ground_position.x,
-            first.spawn_ground_position.y + 4.0F,
-            first.spawn_ground_position.z + 10.0F,
+            player.current.state.center_position.x,
+            player.current.state.center_position.y +
+                first.player_camera.target_height_offset,
+            player.current.state.center_position.z,
         });
-    REQUIRE(first.spawn_camera.transform.pitch_radians == -0.28F);
-    REQUIRE(first.spawn_camera.lens.far_plane == 1'500.0F);
+    REQUIRE(camera_placement.camera.lens.vertical_fov_radians ==
+        first.player_camera_lens.vertical_fov_radians);
+    REQUIRE(camera_placement.camera.lens.near_plane ==
+        first.player_camera_lens.near_plane);
+    REQUIRE(camera_placement.camera.lens.far_plane ==
+        first.player_camera_lens.far_plane);
 
     const auto coarse_result =
         terrain::build_boundary_preserving_coarse_chunk_layout(
@@ -353,15 +391,34 @@ TEST_CASE(
                 sphere.z) < 1.0);
     }
 
+    const auto surface_result =
+        terrain::HeightTileSurface::create(scenario.terrain);
+    REQUIRE(surface_result);
+    const auto camera_rig_result =
+        world::create_third_person_camera_rig(
+            scenario.player_camera);
+    REQUIRE(camera_rig_result);
+    const auto camera_placement_result =
+        world::build_third_person_camera(
+            scenario.player_camera,
+            camera_rig_result.value().current.state,
+            scenario.player_capsule.spawn_center_position,
+            scenario.player_camera_lens,
+            surface_result.value());
+    REQUIRE(camera_placement_result);
+    REQUIRE_FALSE(
+        camera_placement_result.value().terrain_obstructed);
+    const auto& camera_placement =
+        camera_placement_result.value();
     const auto camera_basis =
-        world::camera_basis(scenario.spawn_camera.transform);
+        world::camera_basis(camera_placement.camera.transform);
     const math::Float3 toward_center{
         scenario.island.footprint.center_x -
-            scenario.spawn_camera.transform.position.x,
+            camera_placement.camera.transform.position.x,
         scenario.water.gameplay_body.surface_height -
-            scenario.spawn_camera.transform.position.y,
+            camera_placement.camera.transform.position.y,
         scenario.island.footprint.center_z -
-            scenario.spawn_camera.transform.position.z,
+            camera_placement.camera.transform.position.z,
     };
     const auto forward_dot =
         camera_basis.forward.x * toward_center.x +

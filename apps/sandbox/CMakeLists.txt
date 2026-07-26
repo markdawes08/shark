@@ -13,11 +13,15 @@ add_executable(SharkSandbox
     "${SHARK_TONE_MAP_PIXEL_HEADER}"
     "${SHARK_TONE_MAP_VERTEX_HEADER}"
     agility_sdk_exports.cpp
+    camera_distance_input_source.cpp
+    camera_distance_input_source.hpp
     camera_controller.cpp
     camera_controller.hpp
     main.cpp
     options.cpp
     options.hpp
+    player_camera_frame.cpp
+    player_camera_frame.hpp
     player_command_source.cpp
     player_command_source.hpp
 )

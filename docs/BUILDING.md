@@ -1,6 +1,6 @@
 # Building Shark
 
-- **Completed through:** `CHR-001`
+- **Completed through:** `CAM-001`
 - **Last verified:** July 25, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
@@ -134,19 +134,24 @@ simulation tick while paused, or press `F5` to resume/pause continuous
 fixed-step motion. Bodies 1 and 2 collide while airborne, while primary body 0
 settles on canonical LOD0 terrain. Isolated body 3 receives a constant torque;
 its small brown local-axis cap makes the normalized rotation visible. Use
-`W`/`S` along the
-camera forward axis, `A`/`D` to strafe, `Q`/`E` to move down/up, hold `Shift`
-to move faster, and hold the right mouse button while dragging to look around.
-`Control` and `Space` are down/up aliases. Resize or minimize/restore the
-window to exercise the projection, swap-chain, depth, frame-local graph
-imports, and fence-delayed timing reuse, then close the title bar or press
-Alt+F4 to exit cleanly.
+The default camera follows the blue capsule from a nine-meter third-person
+boom. Because the sandbox starts paused, press `F5` to run continuously or use
+`F6` to advance input one fixed tick at a time. Hold right mouse and drag to
+orbit; use the vertical wheel to zoom within the authored bounds. Press `F7`
+for the retained diagnostic free-fly camera: `W`/`S` move along its forward
+axis, `A`/`D` strafe, `Q`/`E` move down/up, `Shift` increases speed, and
+right-mouse drag looks around (`Control`/`Space` remain down/up aliases).
+Pressing `F7` again returns to the interpolated player-follow camera. Resize or
+minimize/restore the window to exercise the projection, swap-chain,
+frame-local graph imports, and fence-delayed timing reuse, then close the title
+bar or press Alt+F4 to exit cleanly.
 
 The same events also feed the fixed-tick player-command boundary: WASD and
 Shift are held movement/run actions, Space is a one-shot jump action, left
 mouse is primary action, right-mouse drag supplies bounded look deltas, and
-`R` resets the capsule. CHR-001 records all of them, but only reset changes the
-player pose until later character increments.
+`R` resets the capsule. CAM-001 maps those look deltas to the fixed-tick orbit
+and consumes wheel zoom at the same boundary. CHR-001 records the player
+command, but only reset changes player pose until later character increments.
 
 ## Shader build contract
 
@@ -186,8 +191,9 @@ height tile must show tiled ground and rock materials blended by slope and
 height, mapped surface detail, and direct-sun plus environment response. The
 four glossy neutral material spheres must reflect the same environment used by
 the terrain, and the blue capsule must be visible at the dry spawn. The
-interactive camera starts at the Island Demo's scenario-owned preview position
-`(0,4.890625,122)` with pitch `-0.28`, looking toward the capsule. The
+interactive camera starts from the Island Demo's scenario-owned nine-meter
+third-person orbit, approximately `(0,4.8673,120.7202)` with pitch `-0.25`,
+looking toward the capsule. The
 surface must surround the one island footprint, meet the terrain naturally at
 its depth-tested shoreline, transmit and tint the underlying seabed, reflect
 the active environment more strongly at grazing angles, and show subtle
@@ -787,14 +793,42 @@ Laptop GPU records 5,000 unchanged graph-pass executions, 1,000 separately
 counted capsule draws, zero D3D12 corruption/errors, and zero live D3D12 child
 objects.
 
-Launch `SharkSandbox.exe` to inspect the blue capsule at the dry spawn. `R`
-resets it. WASD, Shift, Space, left mouse, and right-mouse look already produce
-bounded fixed-tick commands, but only reset changes pose until locomotion
-increments arrive. See [CHARACTER.md](CHARACTER.md).
+CAM-001 focused verification is:
 
-The next increment is `CAM-001`: add the interpolated third-person
-follow/orbit camera and canonical-terrain obstruction probe. W-005 remains an
-approved deferred fluid specialization.
+```powershell
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[world][third-person-camera]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[sandbox][camera-distance-input]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[world][third-person-camera][pipeline]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[sandbox][player-camera-frame]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[world][scenario][island-demo]"
+```
+
+The pure rig passes 3,972 assertions across 12 cases, wheel translation passes
+34 across five, the clock/input/rig transcript passes 3,349 across three, the
+player/orbit/terrain presentation composer passes 1,064 across four, and the
+Island Demo scenario passes 86 across three. The transcript and composed final
+frame are exact across 30/60/120/144 Hz and prove that free-fly input is
+consumed and neutralized rather than leaking when third-person resumes. A
+separate initially-paused trace proves pending orbit/zoom is consumed exactly
+once by `F6` single-step or the first fixed tick after `F5`.
+
+The complete Debug and Release suites each pass 503,002 assertions across 373
+cases. The 1,000-frame Debug RTX 4070 presentation smoke executes the pure
+player/orbit/terrain composer every frame while retaining the scripted smoke
+camera and exact `93 -> 72 -> 61` visibility schedule. It records 5,000 graph
+passes, 1,000 capsule draws, zero D3D12 corruption/errors, and zero live D3D12
+child objects.
+
+Launch `SharkSandbox.exe` to inspect the blue capsule through the default
+third-person camera. Press `F5`, then use right-mouse drag and the wheel to
+exercise orbit/zoom; `F6` can advance either input one tick while paused.
+`F7` toggles the diagnostic free-fly camera. `R` resets the capsule on the next
+tick. WASD, Shift, Space, and left mouse already produce bounded fixed-tick
+commands, but only reset changes player pose until locomotion increments
+arrive. See [CHARACTER.md](CHARACTER.md).
+
+The next increment is `CHR-002`: add player gravity and canonical-terrain
+grounding. W-005 remains an approved deferred fluid specialization.
 
 ## Visual Studio
 

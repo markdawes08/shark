@@ -3,12 +3,17 @@ include(Catch)
 
 add_executable(SharkTests
     "${PROJECT_SOURCE_DIR}/cmake/Shark.Windows.manifest"
+    ../apps/sandbox/camera_distance_input_source.cpp
+    ../apps/sandbox/camera_distance_input_source.hpp
     ../apps/sandbox/camera_controller.cpp
     ../apps/sandbox/camera_controller.hpp
     ../apps/sandbox/options.cpp
+    ../apps/sandbox/player_camera_frame.cpp
+    ../apps/sandbox/player_camera_frame.hpp
     ../apps/sandbox/player_command_source.cpp
     ../apps/sandbox/player_command_source.hpp
     unit/camera_controller_tests.cpp
+    unit/camera_distance_input_source_tests.cpp
     unit/camera_tests.cpp
     unit/character_player_capsule_tests.cpp
     unit/character_player_pipeline_tests.cpp
@@ -16,6 +21,9 @@ add_executable(SharkTests
     unit/dds_cubemap_tests.cpp
     unit/environment_lighting_tests.cpp
     unit/island_demo_scenario_tests.cpp
+    unit/player_camera_frame_tests.cpp
+    unit/third_person_camera_tests.cpp
+    unit/third_person_camera_pipeline_tests.cpp
     unit/fluids_shallow_water_reference_tests.cpp
     unit/fluids_shallow_water_solver_tests.cpp
     unit/fluids_shallow_water_wet_dry_tests.cpp

@@ -104,6 +104,15 @@ inline constexpr character::PlayerCapsuleShape
         .radius = 0.5F,
         .vertical_half_segment = 0.5F,
     };
+inline constexpr character::PlayerGroundingSettings
+    island_demo_player_grounding{
+        .gravity_magnitude =
+            character::default_player_gravity_magnitude,
+        .minimum_walkable_normal_y =
+            character::default_player_minimum_walkable_normal_y,
+        .snap_distance =
+            character::default_player_ground_snap_distance,
+    };
 inline constexpr float island_demo_player_minimum_center_y = -32.0F;
 inline constexpr float island_demo_player_maximum_center_y = 64.0F;
 inline constexpr ThirdPersonCameraConfig island_demo_player_camera{
@@ -265,9 +274,28 @@ core::Result<IslandDemoScenario> make_island_demo_scenario()
                 "Island Demo spawn is not dry above the waterline"));
     }
 
-    const auto player_vertical_extent =
-        island_demo_player_capsule_shape.radius +
-        island_demo_player_capsule_shape.vertical_half_segment;
+    const auto spawn_support_result =
+        character::query_player_terrain_support(
+            island_demo_player_capsule_shape,
+            island_demo_player_grounding,
+            surface,
+            spawn_ground.x,
+            spawn_ground.z);
+    if (!spawn_support_result) {
+        return core::Result<IslandDemoScenario>::failure(
+            spawn_support_result.error());
+    }
+    if (!spawn_support_result.value().has_value() ||
+        !spawn_support_result.value()->walkable ||
+        spawn_support_result.value()->surface.position !=
+            spawn_ground) {
+        return core::Result<IslandDemoScenario>::failure(
+            scenario_error(
+                "Island Demo spawn does not provide exact walkable "
+                "canonical support"));
+    }
+    const auto& spawn_support =
+        *spawn_support_result.value();
     const character::PlayerCapsuleConfig player_capsule{
         .shape = island_demo_player_capsule_shape,
         .center_bounds = {
@@ -288,13 +316,16 @@ core::Result<IslandDemoScenario> make_island_demo_scenario()
         },
         .spawn_center_position = {
             spawn_ground.x,
-            spawn_ground.y + player_vertical_extent,
+            spawn_support.center_position_y,
             spawn_ground.z,
         },
         .spawn_facing_yaw_radians = 0.0F,
+        .grounding = island_demo_player_grounding,
     };
     const auto player_result =
-        character::create_player_capsule(player_capsule);
+        character::create_player_capsule(
+            player_capsule,
+            surface);
     if (!player_result) {
         return core::Result<IslandDemoScenario>::failure(
             player_result.error());
@@ -308,9 +339,15 @@ core::Result<IslandDemoScenario> make_island_demo_scenario()
     if (!spawn_water_result ||
         spawn_water_result.value().disposition !=
             water::GameplayWaterDisposition::no_water ||
-        player_result.value().current.state.center_position.y -
-                player_vertical_extent !=
-            spawn_ground.y) {
+        player_result.value().current.state.center_position !=
+            player_capsule.spawn_center_position ||
+        player_result.value().current.vertical.velocity_y != 0.0F ||
+        std::signbit(
+            player_result.value().current.vertical.velocity_y) ||
+        player_result.value().current.vertical.phase !=
+            character::PlayerGroundPhase::grounded ||
+        player_result.value().current.vertical.support_normal !=
+            spawn_support.surface.normal) {
         return core::Result<IslandDemoScenario>::failure(
             scenario_error(
                 "Island Demo player capsule is not resting at its "

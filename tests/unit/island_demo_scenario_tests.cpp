@@ -112,22 +112,61 @@ TEST_CASE(
             .radius = 0.5F,
             .vertical_half_segment = 0.5F,
         });
+    REQUIRE(first.player_capsule.grounding ==
+        character::PlayerGroundingSettings{
+            .gravity_magnitude =
+                character::default_player_gravity_magnitude,
+            .minimum_walkable_normal_y =
+                character::default_player_minimum_walkable_normal_y,
+            .snap_distance =
+                character::default_player_ground_snap_distance,
+        });
+    const auto spawn_support_result =
+        character::query_player_terrain_support(
+            first.player_capsule.shape,
+            first.player_capsule.grounding,
+            surface,
+            first.spawn_ground_position.x,
+            first.spawn_ground_position.z);
+    REQUIRE(spawn_support_result);
+    REQUIRE(spawn_support_result.value());
+    const auto& spawn_support =
+        *spawn_support_result.value();
+    REQUIRE(spawn_support.walkable);
+    REQUIRE(spawn_support.surface == *spawn_sample);
+    REQUIRE(spawn_support.surface.normal.y >=
+        first.player_capsule.grounding
+            .minimum_walkable_normal_y);
+    REQUIRE(spawn_support.center_position_y ==
+        static_cast<float>(
+            static_cast<double>(spawn_sample->position.y) +
+            static_cast<double>(
+                first.player_capsule.shape
+                    .vertical_half_segment) +
+            static_cast<double>(
+                first.player_capsule.shape.radius) /
+                static_cast<double>(
+                    spawn_sample->normal.y)));
     const auto player_result =
-        character::create_player_capsule(first.player_capsule);
+        character::create_player_capsule(
+            first.player_capsule,
+            surface);
     REQUIRE(player_result);
     const auto& player = player_result.value();
     REQUIRE(player.previous == player.current);
     REQUIRE(player.current.state.center_position ==
         math::Float3{
             first.spawn_ground_position.x,
-            first.spawn_ground_position.y + 1.0F,
+            spawn_support.center_position_y,
             first.spawn_ground_position.z,
         });
-    REQUIRE(
-        player.current.state.center_position.y -
-            first.player_capsule.shape.radius -
-            first.player_capsule.shape.vertical_half_segment ==
-        first.spawn_ground_position.y);
+    REQUIRE(player.current.vertical.velocity_y == 0.0F);
+    REQUIRE_FALSE(std::signbit(
+        player.current.vertical.velocity_y));
+    REQUIRE(player.current.vertical.phase ==
+        character::PlayerGroundPhase::grounded);
+    REQUIRE(player.current.vertical.support_normal ==
+        spawn_support.surface.normal);
     REQUIRE(first.player_capsule.center_bounds.minimum.x ==
         surface.bounds().minimum.x + 0.5F);
     REQUIRE(first.player_capsule.center_bounds.minimum.z ==

@@ -2,9 +2,9 @@
 
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
-- **Last updated:** July 25, 2026
-- **Latest completed:** `CAM-001` - third-person follow/orbit camera
-- **Next increment:** `CHR-002` - terrain grounding and gravity
+- **Last updated:** July 26, 2026
+- **Latest completed:** `CHR-002` - terrain grounding and gravity
+- **Next increment:** `CHR-003` - grounded locomotion
 
 ## 1. Project direction
 
@@ -848,7 +848,7 @@ coupling are outside this first playable path.
 | `WQ-001` | - | Complete: add a `Water -> Core/Terrain` CPU boundary with scenario-authored inside/outside warped-footprint support, equilibrium surface height, strict positive `1/256`-meter shoreline depth tolerance, optional horizontal flow, and explicit out-of-terrain/no-water/water results; sample only canonical LOD0 triangle bed height, return checked nonnegative depth, map the neutral support side to the unchanged renderer at the composition root, and prove invalid input, inclusive footprint boundaries, tolerance-adjacent terrain, Island Demo depth bands, terrain edges, and deterministic repeats without GPU access or character policy | `feat(water): add gameplay water queries` |
 | `CHR-001` | S | Complete: add one Core-only bounded upright player capsule, named keyboard/mouse action commands sampled once per emitted fixed tick, transactional previous/current snapshots, exact dry-spawn/reset behavior without interpolation smear, and a blue temporary proxy that reuses the existing material-sphere geometry and Terrain pass; prove invalid-state rollback plus exact command/snapshot transcripts across 30/60/120/144 Hz without adding a general entity system, locomotion, camera follow, terrain contact, or water policy | `feat(character): add player capsule state` |
 | `CAM-001` | V | Complete: add an interpolated fixed-tick third-person follow/orbit rig with camera-relative horizontal basis, bounded pitch/distance, once-per-tick wheel zoom, and a canonical-LOD0 clearance probe that shortens only the presentation boom; retain the exact scripted smoke camera and expose the former free-fly controller through `F7` without changing character authority | `feat(camera): add third-person follow camera` |
-| `CHR-002` | S | Add gravity, canonical-terrain capsule grounding, walkable-slope classification, stable support, falling, and landing; prove fixed-rate invariance and transactional invalid-state handling before horizontal control | `feat(character): add terrain grounding` |
+| `CHR-002` | S | Complete: add standard gravity, exact canonical-face support with slope-correct upright-capsule clearance, inclusive walkable-slope classification, stable grounded and steep-contact states, falling, one-tick landing, terrain-aware spawn/reset, and lifecycle interpolation collapse; prove edge ownership, rollback, camera follow, and exact 30/60/120/144 Hz transcripts without horizontal control | `feat(character): add terrain grounding` |
 | `CHR-003` | S | Add fixed-tick walk/run acceleration, braking, facing, and bounded slope traversal from camera-relative commands; the player follows the island route without penetration or render-rate dependence | `feat(character): add grounded locomotion` |
 | `CHR-004` | S | Add jump launch, airborne control, landing, and deterministic recovery to the dry spawn; exclude ledge grabs, ladders, wall climbing, and arbitrary obstacle stepping | `feat(character): add jumping and landing` |
 | `CHR-005` | S | Add dry-to-wading transitions from WQ-001, immersion hysteresis, depth-scaled movement, and reliable shore exit without changing water volume | `feat(character): add shallow-water wading` |
@@ -1020,18 +1020,18 @@ members, and zone serialization wait until measured needs after the demo.
 
 ## 14. Immediate next increment
 
-With CAM-001 completed, implement only `CHR-002`:
+With CHR-002 completed, implement only `CHR-003`:
 
-- add vertical velocity and standard gravity to the authoritative player
-  snapshot;
-- use the canonical LOD0 terrain surface to classify walkable support and keep
-  the upright capsule stably grounded without penetration;
-- publish explicit grounded, falling, and landing state while retaining
-  transactional fixed-tick updates and render interpolation;
-- prove flat and sloped support, edge ownership, falling/landing, invalid-state
-  rollback, and exact 30/60/120/144 Hz outcomes; and
-- stop before horizontal locomotion, jumping, wading, swimming, obstacle
-  stepping, target lock, gamepad input, or final avatar art.
+- add fixed-tick horizontal velocity with separate walk/run targets,
+  acceleration, and braking;
+- derive horizontal intent from the third-person camera's fixed-tick movement
+  frame while preserving deterministic command sampling;
+- turn the capsule toward meaningful movement and traverse only bounded
+  walkable canonical terrain without penetration;
+- prove route traversal, slope rejection, stop/reversal behavior, reset, and
+  exact 30/60/120/144 Hz outcomes; and
+- stop before jumping, wading, swimming, obstacle stepping, arbitrary props,
+  target lock, gamepad input, animation, or final avatar art.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -1304,9 +1304,10 @@ corruption/errors, and zero live child objects.
 
 CHR-001 adds one bounded Core-only player capsule, one sandbox-owned platform
 event translator, previous/current fixed-tick snapshots, deterministic
-dry-spawn/reset behavior, and a blue presentation proxy. The Island Demo
-authors a `0.5`-meter radius and `0.5`-meter vertical half segment at center
-`(0, 1.890625, 112)`, exactly one meter above canonical dry ground. The proxy
+dry-spawn/reset behavior, and a blue presentation proxy. CHR-002 now derives
+the Island Demo's `0.5`-meter radius and `0.5`-meter vertical-half-segment
+capsule center from its sloped canonical face, producing approximately
+`(0, 1.8923082, 112)` without penetration. The proxy
 reuses the existing material-sphere geometry and Terrain pass, adding one
 1,584-index draw per submitted frame without a pass, resource, descriptor,
 allocation, upload, or timestamp. Exact 120-tick command/snapshot transcripts
@@ -1333,7 +1334,18 @@ Debug and Release each pass 503,002 assertions across 373 cases. The 1,000-frame
 RTX 4070 Debug presentation smoke retains its exact scripted visibility and GPU
 accounting with zero D3D12 corruption/errors and zero live child objects.
 
-The active queue is `CHR-002`, terrain grounding and gravity.
+CHR-002 adds standard gravity and a Terrain-backed, one-X/Z-sample kinematic
+capsule controller. Plane-correct support height prevents penetration of the
+selected canonical LOD0 face; walkable, falling, one-tick landing, grounded,
+and non-walkable steep-contact states remain explicit. The Island spawn is
+derived from that support query, time-baseline resets collapse player and
+camera presentation history together, and the renderer/GPU contract is
+unchanged. Debug and Release each pass 506,735 assertions across 378 cases.
+The 1,000-frame RTX 4070 Debug presentation smoke records 1,000 grounded player
+ticks, 1,000 capsule draws, 5,000 unchanged graph passes, zero D3D12
+corruption/errors, and zero live child objects.
+
+The active queue is `CHR-003`, grounded locomotion.
 `W-005`, `W-006`, `R-001` through `R-004`, and coupled hydrology remain
 approved but deferred from the Island Demo 0.1 critical path.
 

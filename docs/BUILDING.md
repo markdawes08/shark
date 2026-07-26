@@ -1,7 +1,7 @@
 # Building Shark
 
-- **Completed through:** `CAM-001`
-- **Last verified:** July 25, 2026
+- **Completed through:** `CHR-002`
+- **Last verified:** July 26, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
 14.50 LTS toolset, CMake 4.2 or newer, and Windows SDK 10.0.26100 exactly.
@@ -150,8 +150,9 @@ The same events also feed the fixed-tick player-command boundary: WASD and
 Shift are held movement/run actions, Space is a one-shot jump action, left
 mouse is primary action, right-mouse drag supplies bounded look deltas, and
 `R` resets the capsule. CAM-001 maps those look deltas to the fixed-tick orbit
-and consumes wheel zoom at the same boundary. CHR-001 records the player
-command, but only reset changes player pose until later character increments.
+and consumes wheel zoom at the same boundary. CHR-002 records the player
+command and always advances vertical gravity/grounding; among those action
+fields only reset changes pose until grounded locomotion.
 
 ## Shader build contract
 
@@ -192,7 +193,7 @@ height, mapped surface detail, and direct-sun plus environment response. The
 four glossy neutral material spheres must reflect the same environment used by
 the terrain, and the blue capsule must be visible at the dry spawn. The
 interactive camera starts from the Island Demo's scenario-owned nine-meter
-third-person orbit, approximately `(0,4.8673,120.7202)` with pitch `-0.25`,
+third-person orbit, approximately `(0,4.8689,120.7202)` with pitch `-0.25`,
 looking toward the capsule. The
 surface must surround the one island footprint, meet the terrain naturally at
 its depth-tested shoreline, transmit and tint the underlying seabed, reflect
@@ -819,16 +820,39 @@ camera and exact `93 -> 72 -> 61` visibility schedule. It records 5,000 graph
 passes, 1,000 capsule draws, zero D3D12 corruption/errors, and zero live D3D12
 child objects.
 
+CHR-002 focused verification is:
+
+```powershell
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[character][player-capsule]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[character][player-capsule][pipeline]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[sandbox][player-camera-frame]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[world][scenario][island-demo]"
+& .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe --present-smoke
+```
+
+These checks cover stable flat and sloped support, steep classification,
+semi-implicit falling and one-tick landing, edge ownership, reset/collapse,
+transactional invalid input, vertical camera following, scenario-derived dry
+spawn, and exact 30/60/120/144 Hz transcripts. The hardware smoke additionally
+requires every emitted player tick to remain grounded at the canonical Island
+spawn while all GPU accounting remains unchanged.
+
+The complete Debug and Release suites each pass 506,735 assertions across 378
+cases. The 1,000-frame Debug RTX 4070 presentation smoke records
+`player-grounded-ticks=1000`, 1,000 capsule draws, 5,000 graph passes, zero
+D3D12 corruption/errors, and zero live D3D12 child objects.
+
 Launch `SharkSandbox.exe` to inspect the blue capsule through the default
 third-person camera. Press `F5`, then use right-mouse drag and the wheel to
 exercise orbit/zoom; `F6` can advance either input one tick while paused.
 `F7` toggles the diagnostic free-fly camera. `R` resets the capsule on the next
-tick. WASD, Shift, Space, and left mouse already produce bounded fixed-tick
-commands, but only reset changes player pose until locomotion increments
-arrive. See [CHARACTER.md](CHARACTER.md).
+tick. Gravity and terrain grounding always advance with Character; WASD,
+Shift, Space, and left mouse already produce bounded fixed-tick commands, but
+horizontal movement and jumping remain deferred. See
+[CHARACTER.md](CHARACTER.md).
 
-The next increment is `CHR-002`: add player gravity and canonical-terrain
-grounding. W-005 remains an approved deferred fluid specialization.
+The next increment is `CHR-003`: add deterministic grounded locomotion. W-005
+remains an approved deferred fluid specialization.
 
 ## Visual Studio
 

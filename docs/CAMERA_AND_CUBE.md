@@ -2,7 +2,8 @@
 
 - **Camera/cube capability completed through:** `G-005`
 - **Renderer integration verified through:** `CAM-001`
-- **Last verified:** July 25, 2026
+- **Character integration verified through:** `CHR-002`
+- **Last verified:** July 26, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
 engine-owned free-fly camera drives a resource-bound cube pipeline, a finite
@@ -279,10 +280,10 @@ with GPU-based validation. Hardware and normal WARP change from `1280x720` to
 `960x600`; focused GPU validation alone uses `640x360 -> 480x300`. Both
 sequences intentionally change aspect from `16:9` to `1.6`, and each applies
 `1.25` radians of scripted yaw at three quarters.
-The CAM-001 interactive camera starts from the scenario-owned third-person
-orbit: it targets `(0,2.640625,112)`, starts approximately at
-`(0,4.8673,120.7202)`, uses pitch `-0.25` radians and a 1,500-meter far plane,
-and has an unobstructed nine-meter boom behind the blue capsule. Presentation
+The interactive camera starts from the scenario-owned third-person orbit: its
+CHR-002 slope-correct player target is approximately `(0,2.6423082,112)`, it
+starts near `(0,4.8689,120.7202)`, uses pitch `-0.25` radians and a 1,500-meter
+far plane, and has an unobstructed nine-meter boom behind the blue capsule. Presentation
 smoke deliberately retains the separate deterministic `(0,28,112)` start with
 pitch `-0.25`. Its initial and
 resized views expose 93 terrain chunks at a `0/93`
@@ -418,9 +419,11 @@ four-sphere pair pass while adding independently interpolated orientations;
 CHR-001 adds one bounded player authority and maps its interpolated snapshot to
 the blue proxy. CAM-001 now derives a terrain-cleared camera from that
 interpolated player snapshot and its own interpolated fixed-tick orbit without
-changing Character authority; see
-[the Character contract](CHARACTER.md). `CHR-002` is next and will add gravity
-and canonical-terrain grounding. See
+changing Character authority. CHR-002 adds fixed-tick vertical player motion,
+so the same interpolation alpha now moves the capsule and third-person target
+together while the camera's terrain-clearance probe remains presentation-only.
+Time-baseline resets collapse both interpolation intervals before resuming.
+See [the Character contract](CHARACTER.md) and
 [the simulation contract](SIMULATION.md). This component page
 no longer duplicates the rolling project
 queue; [ENGINE_PLAN.md](ENGINE_PLAN.md) is the roadmap source of truth. Rain

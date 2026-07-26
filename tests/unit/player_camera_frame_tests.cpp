@@ -40,10 +40,12 @@ struct IslandCameraFixture final {
 
 [[nodiscard]] shark::character::PlayerCapsuleSimulation
 make_player(
-    const shark::world::IslandDemoScenario& scenario)
+    const shark::world::IslandDemoScenario& scenario,
+    const shark::terrain::HeightTileSurface& surface)
 {
     auto result = shark::character::create_player_capsule(
-        scenario.player_capsule);
+        scenario.player_capsule,
+        surface);
     REQUIRE(result);
     return std::move(result).value();
 }
@@ -72,7 +74,9 @@ run_partition(
         });
     REQUIRE(clock_result);
     auto clock = std::move(clock_result).value();
-    auto player = make_player(fixture.scenario);
+    auto player = make_player(
+        fixture.scenario,
+        fixture.surface);
     auto camera_rig = make_camera_rig(fixture.scenario);
 
     auto previous_timestamp = std::chrono::nanoseconds{0};
@@ -97,6 +101,8 @@ run_partition(
             REQUIRE(character::advance_player_capsule(
                 player,
                 {},
+                fixture.surface,
+                clock.fixed_delta_seconds(),
                 fixed_tick));
             REQUIRE(world::advance_third_person_camera_rig(
                 camera_rig,
@@ -139,15 +145,17 @@ TEST_CASE(
     using namespace shark;
 
     const auto fixture = make_island_fixture();
-    auto player = make_player(fixture.scenario);
+    auto player = make_player(
+        fixture.scenario,
+        fixture.surface);
     auto camera_rig = make_camera_rig(fixture.scenario);
 
-    player.current = player.previous;
-    player.current.fixed_tick = 1U;
-    player.current.state.center_position.x += 4.0F;
-    player.current.state.center_position.z -= 2.0F;
-    player.current.state.facing_yaw_radians = 0.5F;
-    REQUIRE(character::is_valid(player));
+    REQUIRE(character::advance_player_capsule(
+        player,
+        {},
+        fixture.surface,
+        1.0F / 60.0F,
+        1U));
     REQUIRE(world::advance_third_person_camera_rig(
         camera_rig,
         world::ThirdPersonOrbitDelta{
@@ -222,17 +230,85 @@ TEST_CASE(
 }
 
 TEST_CASE(
+    "player camera frame follows interpolated vertical falling motion",
+    "[sandbox][player-camera-frame][character][falling]")
+{
+    using namespace shark;
+
+    const auto fixture = make_island_fixture();
+    auto airborne_config = fixture.scenario.player_capsule;
+    airborne_config.spawn_center_position.y += 2.0F;
+    auto player_result = character::create_player_capsule(
+        airborne_config,
+        fixture.surface);
+    REQUIRE(player_result);
+    auto player = std::move(player_result).value();
+    REQUIRE(player.current.vertical.phase ==
+        character::PlayerGroundPhase::falling);
+
+    auto camera_rig = make_camera_rig(fixture.scenario);
+    REQUIRE(character::advance_player_capsule(
+        player,
+        {},
+        fixture.surface,
+        1.0F / 60.0F,
+        1U));
+    REQUIRE(world::advance_third_person_camera_rig(
+        camera_rig,
+        {},
+        1U));
+    REQUIRE(player.current.vertical.phase ==
+        character::PlayerGroundPhase::falling);
+    REQUIRE(player.current.vertical.velocity_y < 0.0F);
+    REQUIRE(player.current.state.center_position.y <
+        player.previous.state.center_position.y);
+
+    constexpr auto alpha = 0.5F;
+    const auto expected_player =
+        character::interpolate_player_capsule(
+            player,
+            alpha);
+    REQUIRE(expected_player);
+    const auto frame = sandbox::build_player_camera_frame(
+        player,
+        camera_rig,
+        alpha,
+        fixture.scenario.player_camera_lens,
+        fixture.surface);
+    REQUIRE(frame);
+    REQUIRE(frame.value().interpolated_player ==
+        expected_player.value());
+    REQUIRE(frame.value().camera_placement.target_position ==
+        math::Float3{
+            expected_player.value().center_position.x,
+            expected_player.value().center_position.y +
+                camera_rig.config.target_height_offset,
+            expected_player.value().center_position.z,
+        });
+    REQUIRE(
+        frame.value().interpolated_player.center_position.y >
+        player.current.state.center_position.y);
+    REQUIRE(
+        frame.value().interpolated_player.center_position.y <
+        player.previous.state.center_position.y);
+}
+
+TEST_CASE(
     "player camera frame applies canonical terrain obstruction",
     "[sandbox][player-camera-frame][terrain]")
 {
     using namespace shark;
 
     const auto fixture = make_island_fixture();
-    auto player = make_player(fixture.scenario);
+    auto player = make_player(
+        fixture.scenario,
+        fixture.surface);
     auto camera_rig = make_camera_rig(fixture.scenario);
     REQUIRE(character::advance_player_capsule(
         player,
         {},
+        fixture.surface,
+        1.0F / 60.0F,
         1U));
     REQUIRE(world::advance_third_person_camera_rig(
         camera_rig,
@@ -277,7 +353,9 @@ TEST_CASE(
     using namespace shark;
 
     const auto fixture = make_island_fixture();
-    const auto player = make_player(fixture.scenario);
+    const auto player = make_player(
+        fixture.scenario,
+        fixture.surface);
     const auto camera_rig = make_camera_rig(fixture.scenario);
     const auto player_before = player;
     const auto rig_before = camera_rig;

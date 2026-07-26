@@ -1,8 +1,9 @@
 # Fixed-Step Rigid-Body and Contact Contract
 
 - **Completed through:** `PHY-010`
-- **Character/camera integration verified through:** `CAM-001`
-- **Last verified:** July 22, 2026
+- **Character integration verified through:** `CHR-002`
+- **Camera integration verified through:** `CAM-001`
+- **Last verified:** July 26, 2026
 
 PHY-001 established Shark's fixed-clock ballistic path. PHY-002 gives that one
 sphere a one-meter collider and deterministic canonical-terrain support.
@@ -807,10 +808,19 @@ triangle-interpolated bed; it changes no fixed-step state or ordering. CHR-001
 adds a separate bounded player capsule whose commands and previous/current
 snapshots advance on the same emitted fixed-tick numbers as dynamic Physics;
 it neither enters the rigid-body arrays nor changes their solver order.
-CAM-001 adds a separate presentation-only orbit rig on those same fixed ticks;
-it does not enter the rigid-body arrays or mutate Character. The active queue
-is `CHR-002`, player gravity and canonical-terrain grounding. W-005
-remains an approved deferred fluid specialization; the queue is centralized in
+CAM-001 adds a separate presentation-only orbit rig on those same fixed ticks
+and never mutates Character.
+
+CHR-002 now advances the player first on every emitted tick with standard
+gravity and one canonical LOD0 support sample, then advances the orbit rig on
+that same tick, followed by the unchanged dynamic-sphere path. Semi-implicit
+vertical integration, terrain crossing, landing, stable support, reset, and
+all failures are transactional. Character remains kinematic and separate from
+dynamic Physics. A time-baseline discontinuity collapses player and camera
+presentation history before accumulated time is discarded.
+
+The active queue is `CHR-003`, grounded locomotion. W-005 remains an approved
+deferred fluid specialization; the queue is centralized in
 [ENGINE_PLAN.md](ENGINE_PLAN.md), and the query contract is in
 [WATER.md](WATER.md). The player contract is in
 [CHARACTER.md](CHARACTER.md).

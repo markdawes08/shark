@@ -3,6 +3,7 @@
 #include <shark/character/player_capsule.hpp>
 #include <shark/platform/events.hpp>
 #include <shark/simulation/fixed_step_clock.hpp>
+#include <shark/terrain/height_tile.hpp>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -14,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -168,7 +170,8 @@ void apply_tick_input_transitions(
 }
 
 [[nodiscard]] shark::character::PlayerCapsuleSimulation
-make_player_simulation()
+make_player_simulation(
+    const shark::terrain::HeightTileSurface& surface)
 {
     auto result = shark::character::create_player_capsule({
         .shape = {
@@ -179,8 +182,22 @@ make_player_simulation()
             .minimum = {-32.0F, -8.0F, -32.0F},
             .maximum = {32.0F, 32.0F, 32.0F},
         },
-        .spawn_center_position = {2.0F, 3.0F, -4.0F},
+        .spawn_center_position = {0.0F, 3.0F, 0.0F},
         .spawn_facing_yaw_radians = 0.25F,
+    }, surface);
+    REQUIRE(result);
+    return std::move(result).value();
+}
+
+[[nodiscard]] shark::terrain::HeightTileSurface
+make_flat_surface()
+{
+    auto result = shark::terrain::HeightTileSurface::create({
+        .sample_columns = 3U,
+        .sample_rows = 3U,
+        .sample_spacing = 1.0F,
+        .origin = {-1.0F, 0.0F, -1.0F},
+        .height_offsets = std::vector<float>(9U, 0.0F),
     });
     REQUIRE(result);
     return std::move(result).value();
@@ -197,7 +214,8 @@ make_player_simulation()
         });
     REQUIRE(clock_result);
     auto clock = std::move(clock_result).value();
-    auto player = make_player_simulation();
+    const auto surface = make_flat_surface();
+    auto player = make_player_simulation(surface);
     sandbox::PlayerCommandSource command_source{
         sandbox::PlayerCommandSourceConfig{
             .mouse_sensitivity = 0.01F,
@@ -238,6 +256,8 @@ make_player_simulation()
             REQUIRE(character::advance_player_capsule(
                 player,
                 command,
+                surface,
+                clock.fixed_delta_seconds(),
                 run.emitted_ticks));
             REQUIRE(player.current.consumed_command ==
                 command);
@@ -333,6 +353,39 @@ TEST_CASE(
         baseline.transcript[61]
             .command.look_pitch_delta_radians == 0.0F);
 
+    std::array<std::uint64_t, 2> landing_ticks{};
+    std::size_t landing_count = 0U;
+    for (std::size_t entry_index = 0U;
+         entry_index < baseline.transcript.size();
+         ++entry_index) {
+        const auto& snapshot =
+            baseline.transcript[entry_index].current;
+        if (snapshot.vertical.phase ==
+            shark::character::PlayerGroundPhase::landing) {
+            REQUIRE(landing_count < landing_ticks.size());
+            landing_ticks[landing_count] =
+                static_cast<std::uint64_t>(entry_index) + 1U;
+            ++landing_count;
+            REQUIRE(snapshot.vertical.velocity_y == 0.0F);
+            REQUIRE(snapshot.vertical.support_normal ==
+                shark::math::Float3{0.0F, 1.0F, 0.0F});
+            REQUIRE(snapshot.state.center_position.y == 1.0F);
+        }
+    }
+    REQUIRE(landing_count == landing_ticks.size());
+    REQUIRE(landing_ticks[0] == 38U);
+    REQUIRE(landing_ticks[1] == 113U);
+    REQUIRE(
+        baseline.transcript[
+            static_cast<std::size_t>(landing_ticks[0])]
+            .current.vertical.phase ==
+        shark::character::PlayerGroundPhase::grounded);
+    REQUIRE(
+        baseline.transcript[
+            static_cast<std::size_t>(landing_ticks[1])]
+            .current.vertical.phase ==
+        shark::character::PlayerGroundPhase::grounded);
+
     const auto& reset_tick = baseline.transcript[74];
     REQUIRE(reset_tick.command.reset_pressed);
     REQUIRE(reset_tick.previous.fixed_tick == 74U);
@@ -341,6 +394,12 @@ TEST_CASE(
     REQUIRE(reset_tick.current.reset_generation == 1U);
     REQUIRE(reset_tick.previous.state ==
         reset_tick.current.state);
+    REQUIRE(reset_tick.previous.vertical ==
+        reset_tick.current.vertical);
+    REQUIRE(reset_tick.current.vertical.phase ==
+        shark::character::PlayerGroundPhase::falling);
+    REQUIRE(reset_tick.current.vertical.velocity_y == 0.0F);
+    REQUIRE(reset_tick.current.state.center_position.y == 3.0F);
     REQUIRE_FALSE(
         baseline.transcript[75].command.reset_pressed);
 

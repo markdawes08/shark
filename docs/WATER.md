@@ -1,7 +1,8 @@
 # Gameplay Water Query Contract
 
 - **Completed through:** `WQ-001`
-- **Last verified:** July 25, 2026
+- **Character integration observed through:** `CHR-002`
+- **Last verified:** July 26, 2026
 
 WQ-001 adds a small platform- and renderer-independent `shark::water` boundary
 for character-facing calm-water queries. It depends only on Core and Terrain.
@@ -85,9 +86,10 @@ state, buoyancy, water displacement, dynamic waves, GPU readback, fluid
 coupling, or renderer change. A later simulated-water adapter may provide the
 same query information without changing character policy.
 
-CHR-001 now places one bounded capsule at the proven dry spawn but does not
+CHR-002 grounds one bounded capsule at the proven dry spawn but still does not
 query water during fixed-tick advancement or own immersion policy. CAM-001
-changes only its presentation camera. The active queue is `CHR-002`, player
-gravity and canonical-terrain grounding. The authoritative
-increment order remains in [ENGINE_PLAN.md](ENGINE_PLAN.md), and the player
-contract is in [CHARACTER.md](CHARACTER.md).
+changes only its presentation camera. The active queue is `CHR-003`, grounded
+locomotion; WQ-001 first enters Character policy at `CHR-005` for wading. The
+authoritative increment order remains in
+[ENGINE_PLAN.md](ENGINE_PLAN.md), and the player contract is in
+[CHARACTER.md](CHARACTER.md).

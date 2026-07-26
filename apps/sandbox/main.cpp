@@ -1595,8 +1595,9 @@ void log_platform_event(const shark::platform::Event& event)
               "fixed 60 Hz sphere simulation and F6 advances one "
               "tick while paused; F7 toggles third-person/free-fly; "
               "RMB orbits and the wheel zooms the fixed-tick "
-              "third-person camera; player actions are sampled per "
-              "tick and R resets the blue capsule proxy");
+              "third-person camera; standard gravity and canonical "
+              "terrain grounding advance per tick, and R resets the "
+              "blue capsule proxy");
 
     auto simulation_clock_result =
         simulation::FixedStepClock::create(
@@ -1611,7 +1612,8 @@ void log_platform_event(const shark::platform::Event& event)
         std::move(simulation_clock_result).value();
     auto player_simulation_result =
         character::create_player_capsule(
-            island_scenario.player_capsule);
+            island_scenario.player_capsule,
+            terrain_surface);
     if (!player_simulation_result) {
         return core::Result<void>::failure(
             std::move(player_simulation_result).error());
@@ -1720,6 +1722,7 @@ void log_platform_event(const shark::platform::Event& event)
     std::uint64_t broad_phase_candidate_pair_count = 0;
     std::uint64_t narrow_phase_tested_pair_count = 0;
     std::uint64_t sphere_pair_contact_count = 0;
+    std::uint64_t player_grounded_tick_count = 0;
     const renderer::DaylightSettings daylight{};
     sandbox::CameraController camera_controller{
         sandbox::CameraControllerConfig{
@@ -1739,6 +1742,13 @@ void log_platform_event(const shark::platform::Event& event)
     auto previous_frame_time = std::chrono::steady_clock::now();
     const auto reset_simulation_time_baseline =
         [&]() -> core::Result<void> {
+            auto player_result =
+                character::collapse_player_capsule_interpolation(
+                    player_simulation);
+            if (!player_result) {
+                return core::Result<void>::failure(
+                    std::move(player_result).error());
+            }
             auto camera_result =
                 world::collapse_third_person_camera_interpolation(
                     player_camera_rig);
@@ -2236,11 +2246,17 @@ void log_platform_event(const shark::platform::Event& event)
                 character::advance_player_capsule(
                     player_simulation,
                     player_command,
+                    terrain_surface,
+                    simulation_clock.fixed_delta_seconds(),
                     fixed_tick);
             if (!player_step_result) {
                 return core::Result<void>::failure(
                     std::move(player_step_result).error());
             }
+            player_grounded_tick_count +=
+                static_cast<std::uint64_t>(
+                    player_simulation.current.vertical.phase ==
+                    character::PlayerGroundPhase::grounded);
             const world::ThirdPersonOrbitDelta camera_delta =
                 free_fly_camera_enabled
                 ? world::ThirdPersonOrbitDelta{}
@@ -2484,6 +2500,22 @@ void log_platform_event(const shark::platform::Event& event)
 
     if (smoke_mode) {
         const auto& stats = renderer_instance.stats();
+        const auto player_support_result =
+            character::query_player_terrain_support(
+                player_simulation.config.shape,
+                player_simulation.config.grounding,
+                terrain_surface,
+                player_simulation.current.state.center_position.x,
+                player_simulation.current.state.center_position.z);
+        if (!player_support_result ||
+            !player_support_result.value().has_value()) {
+            return core::Result<void>::failure(
+                renderer_smoke_error(
+                    "The presentation smoke player lost its canonical "
+                    "terrain support"));
+        }
+        const auto& player_support =
+            *player_support_result.value();
         if (!character::is_valid(player_simulation) ||
             player_simulation.current.fixed_tick !=
                 simulation_clock.total_step_count() ||
@@ -2491,11 +2523,23 @@ void log_platform_event(const shark::platform::Event& event)
                 player_simulation.config.spawn_center_position ||
             player_simulation.current.state.facing_yaw_radians !=
                 player_simulation.config.spawn_facing_yaw_radians ||
-            player_simulation.current.reset_generation != 0U) {
+            player_simulation.current.reset_generation != 0U ||
+            player_simulation.current.vertical.phase !=
+                character::PlayerGroundPhase::grounded ||
+            player_simulation.current.vertical.velocity_y != 0.0F ||
+            std::signbit(
+                player_simulation.current.vertical.velocity_y) ||
+            player_simulation.current.vertical.support_normal !=
+                player_support.surface.normal ||
+            !player_support.walkable ||
+            player_simulation.current.state.center_position.y !=
+                player_support.center_position_y ||
+            player_grounded_tick_count !=
+                simulation_clock.total_step_count()) {
             return core::Result<void>::failure(
                 renderer_smoke_error(
                     "The presentation smoke player snapshots diverged "
-                    "from deterministic spawn state"));
+                    "from stable canonical grounded spawn state"));
         }
         if (!world::is_valid(player_camera_rig) ||
             player_camera_rig.current.fixed_tick !=
@@ -2974,6 +3018,9 @@ void log_platform_event(const shark::platform::Event& event)
             narrow_phase_tested_pair_count));
         summary.push_back('/');
         summary.append(std::to_string(sphere_pair_contact_count));
+        summary.append(", player-grounded-ticks=");
+        summary.append(std::to_string(
+            player_grounded_tick_count));
         summary.append(", resizes=");
         summary.append(std::to_string(stats.resize_count));
         summary.append(", context-reuses=");

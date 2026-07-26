@@ -1,5 +1,6 @@
 #include <shark/character/player_capsule.hpp>
 #include <shark/simulation/fixed_step_clock.hpp>
+#include <shark/terrain/height_tile.hpp>
 
 #include <shark/core/error.hpp>
 
@@ -17,7 +18,55 @@
 
 namespace {
 
-[[nodiscard]] shark::character::PlayerCapsuleConfig test_config()
+constexpr float comparison_margin = 0.00001F;
+
+[[nodiscard]] shark::terrain::HeightTile make_plane_tile(
+    const float slope_x = 0.0F)
+{
+    std::vector<float> heights;
+    heights.reserve(25U);
+    for (std::uint32_t z = 0U; z < 5U; ++z) {
+        static_cast<void>(z);
+        for (std::uint32_t x = 0U; x < 5U; ++x) {
+            heights.push_back(
+                slope_x *
+                (static_cast<float>(x) - 2.0F));
+        }
+    }
+    return {
+        .sample_columns = 5U,
+        .sample_rows = 5U,
+        .sample_spacing = 1.0F,
+        .origin = {-2.0F, 0.0F, -2.0F},
+        .height_offsets = std::move(heights),
+    };
+}
+
+[[nodiscard]] shark::terrain::HeightTile make_twisted_tile()
+{
+    return {
+        .sample_columns = 2U,
+        .sample_rows = 2U,
+        .sample_spacing = 1.0F,
+        .origin = {},
+        .height_offsets = {
+            0.0F, 0.0F,
+            0.0F, 1.0F,
+        },
+    };
+}
+
+[[nodiscard]] shark::terrain::HeightTileSurface make_surface(
+    shark::terrain::HeightTile tile = make_plane_tile())
+{
+    auto result =
+        shark::terrain::HeightTileSurface::create(std::move(tile));
+    REQUIRE(result);
+    return std::move(result).value();
+}
+
+[[nodiscard]] shark::character::PlayerCapsuleConfig test_config(
+    const shark::math::Float3 spawn = {0.0F, 1.0F, 0.0F})
 {
     return {
         .shape = {
@@ -28,16 +77,20 @@ namespace {
             .minimum = {-16.0F, -8.0F, -16.0F},
             .maximum = {16.0F, 24.0F, 16.0F},
         },
-        .spawn_center_position = {1.0F, 3.0F, -2.0F},
+        .spawn_center_position = spawn,
         .spawn_facing_yaw_radians = 0.0F,
     };
 }
 
 [[nodiscard]] shark::character::PlayerCapsuleSimulation
-make_simulation()
+make_simulation(
+    const shark::terrain::HeightTileSurface& surface,
+    shark::character::PlayerCapsuleConfig config = test_config())
 {
     auto result =
-        shark::character::create_player_capsule(test_config());
+        shark::character::create_player_capsule(
+            config,
+            surface);
     REQUIRE(result);
     return std::move(result).value();
 }
@@ -47,30 +100,35 @@ make_simulation()
     return value == 0.0F && !std::signbit(value);
 }
 
-[[nodiscard]] float& component(
-    shark::math::Float3& value,
-    const std::size_t axis) noexcept
+void require_float3(
+    const shark::math::Float3 actual,
+    const shark::math::Float3 expected,
+    const float margin = comparison_margin)
 {
-    if (axis == 0U) {
-        return value.x;
-    }
-    if (axis == 1U) {
-        return value.y;
-    }
-    return value.z;
+    REQUIRE(actual.x == Catch::Approx(expected.x).margin(margin));
+    REQUIRE(actual.y == Catch::Approx(expected.y).margin(margin));
+    REQUIRE(actual.z == Catch::Approx(expected.z).margin(margin));
 }
 
-[[nodiscard]] float component_value(
-    const shark::math::Float3 value,
-    const std::size_t axis) noexcept
+[[nodiscard]] shark::character::PlayerActionCommand
+scripted_command(const std::uint64_t fixed_tick)
 {
-    if (axis == 0U) {
-        return value.x;
-    }
-    if (axis == 1U) {
-        return value.y;
-    }
-    return value.z;
+    return {
+        .move_forward_held =
+            fixed_tick >= 5U && fixed_tick < 40U,
+        .move_backward_held =
+            fixed_tick >= 90U && fixed_tick < 105U,
+        .move_left_held = fixed_tick % 7U == 0U,
+        .move_right_held = fixed_tick % 11U == 0U,
+        .run_held = fixed_tick % 3U == 0U,
+        .jump_pressed = fixed_tick == 23U,
+        .primary_action_pressed = fixed_tick == 61U,
+        .reset_pressed = fixed_tick == 75U,
+        .look_yaw_delta_radians =
+            fixed_tick % 5U == 0U ? 0.125F : 0.0F,
+        .look_pitch_delta_radians =
+            fixed_tick % 13U == 0U ? -0.0625F : 0.0F,
+    };
 }
 
 struct ScheduleRun final {
@@ -82,40 +140,21 @@ struct ScheduleRun final {
         const ScheduleRun&) = default;
 };
 
-[[nodiscard]] shark::character::PlayerActionCommand
-scripted_command(const std::uint64_t fixed_tick)
-{
-    return {
-        .move_forward_held = fixed_tick >= 5U &&
-            fixed_tick < 40U,
-        .move_backward_held = fixed_tick >= 70U &&
-            fixed_tick < 88U,
-        .move_left_held = (fixed_tick % 7U) == 0U,
-        .move_right_held = (fixed_tick % 11U) == 0U,
-        .run_held = (fixed_tick % 3U) == 0U,
-        .jump_pressed = fixed_tick == 23U,
-        .primary_action_pressed = fixed_tick == 61U,
-        .reset_pressed =
-            fixed_tick == 47U || fixed_tick == 91U,
-        .look_yaw_delta_radians =
-            (fixed_tick % 5U) == 0U ? 0.125F : 0.0F,
-        .look_pitch_delta_radians =
-            (fixed_tick % 13U) == 0U ? -0.0625F : 0.0F,
-    };
-}
-
 [[nodiscard]] ScheduleRun run_schedule(
     const std::uint32_t render_rate_hz)
 {
     using namespace shark;
 
+    const auto surface = make_surface();
+    auto player = make_simulation(
+        surface,
+        test_config({0.0F, 5.0F, 0.0F}));
     auto clock_result = simulation::FixedStepClock::create(
         simulation::FixedStepClockConfig{
             .initially_paused = false,
         });
     REQUIRE(clock_result);
     auto clock = std::move(clock_result).value();
-    auto player = make_simulation();
     std::vector<character::PlayerCapsuleSnapshot> trace;
     trace.reserve(120U);
 
@@ -143,6 +182,8 @@ scripted_command(const std::uint64_t fixed_tick)
             REQUIRE(character::advance_player_capsule(
                 player,
                 scripted_command(fixed_tick),
+                surface,
+                clock.fixed_delta_seconds(),
                 fixed_tick));
             trace.push_back(player.current);
         }
@@ -159,388 +200,493 @@ scripted_command(const std::uint64_t fixed_tick)
 } // namespace
 
 TEST_CASE(
-    "player capsule creation publishes one canonical bounded spawn",
-    "[character][player-capsule][create][spawn]")
+    "player creation classifies and canonicalizes terrain spawn",
+    "[character][player-capsule][create][grounding]")
 {
     using namespace shark;
 
-    auto config = test_config();
-    config.spawn_center_position.x = -0.0F;
-    config.spawn_facing_yaw_radians = -0.0F;
-
+    const auto surface = make_surface();
+    auto config = test_config({0.0F, 1.02F, 0.0F});
+    config.spawn_facing_yaw_radians = 5.0F * math::pi;
     const auto first =
-        character::create_player_capsule(config);
+        character::create_player_capsule(config, surface);
     const auto second =
-        character::create_player_capsule(config);
+        character::create_player_capsule(config, surface);
     REQUIRE(first);
     REQUIRE(second);
     REQUIRE(first.value() == second.value());
     const auto& player = first.value();
 
     REQUIRE(character::is_valid(player));
-    REQUIRE(player.config.shape.radius == 0.5F);
-    REQUIRE(player.config.shape.vertical_half_segment == 0.5F);
-    REQUIRE(positive_zero(
-        player.config.spawn_center_position.x));
-    REQUIRE(positive_zero(
-        player.config.spawn_facing_yaw_radians));
     REQUIRE(player.previous == player.current);
-    REQUIRE(player.current.state.center_position ==
-        player.config.spawn_center_position);
+    REQUIRE(player.config.spawn_center_position.y == 1.0F);
+    REQUIRE(player.current.state.center_position.y == 1.0F);
     REQUIRE(player.current.state.facing_yaw_radians ==
-        player.config.spawn_facing_yaw_radians);
+        Catch::Approx(-math::pi).margin(0.000001F));
+    REQUIRE(player.current.vertical.phase ==
+        character::PlayerGroundPhase::grounded);
+    REQUIRE(positive_zero(player.current.vertical.velocity_y));
+    require_float3(
+        player.current.vertical.support_normal,
+        {0.0F, 1.0F, 0.0F});
     REQUIRE(player.current.fixed_tick == 0U);
     REQUIRE(player.current.reset_generation == 0U);
-    REQUIRE(player.current.consumed_command ==
-        character::PlayerActionCommand{});
 
-    config = test_config();
-    config.spawn_facing_yaw_radians = 5.0F * math::pi;
-    const auto wrapped =
-        character::create_player_capsule(config);
-    REQUIRE(wrapped);
-    REQUIRE(wrapped.value().current.state.facing_yaw_radians ==
-        Catch::Approx(-math::pi).margin(0.000001F));
+    const auto airborne = character::create_player_capsule(
+        test_config({0.0F, 2.0F, 0.0F}),
+        surface);
+    REQUIRE(airborne);
+    REQUIRE(airborne.value().current.vertical.phase ==
+        character::PlayerGroundPhase::falling);
+    REQUIRE(positive_zero(
+        airborne.value().current.vertical.velocity_y));
+    REQUIRE(airborne.value().current.vertical.support_normal ==
+        math::Float3{});
+
+    REQUIRE_FALSE(character::create_player_capsule(
+        test_config({0.0F, 0.98F, 0.0F}),
+        surface));
+
+    auto outside = test_config({4.0F, 3.0F, 0.0F});
+    const auto missed =
+        character::create_player_capsule(outside, surface);
+    REQUIRE(missed);
+    REQUIRE(missed.value().current.vertical.phase ==
+        character::PlayerGroundPhase::falling);
 }
 
 TEST_CASE(
-    "player capsule configuration rejects malformed bounded state",
+    "player configuration rejects malformed grounding and shape",
     "[character][player-capsule][create][validation]")
 {
     using namespace shark;
 
+    const auto surface = make_surface();
     constexpr auto nan =
         std::numeric_limits<float>::quiet_NaN();
     constexpr auto infinity =
         std::numeric_limits<float>::infinity();
 
-    SECTION("shape")
-    {
-        const std::array invalid_shapes{
-            character::PlayerCapsuleShape{
-                .radius = 0.0F,
-                .vertical_half_segment = 0.5F,
-            },
-            character::PlayerCapsuleShape{
-                .radius = -1.0F,
-                .vertical_half_segment = 0.5F,
-            },
-            character::PlayerCapsuleShape{
-                .radius = nan,
-                .vertical_half_segment = 0.5F,
-            },
-            character::PlayerCapsuleShape{
-                .radius = infinity,
-                .vertical_half_segment = 0.5F,
-            },
-            character::PlayerCapsuleShape{
-                .radius = std::nextafter(
-                    character::maximum_player_capsule_radius,
-                    infinity),
-                .vertical_half_segment = 0.5F,
-            },
-            character::PlayerCapsuleShape{
-                .radius = 0.5F,
-                .vertical_half_segment = 0.0F,
-            },
-            character::PlayerCapsuleShape{
-                .radius = 0.5F,
-                .vertical_half_segment = -0.001F,
-            },
-            character::PlayerCapsuleShape{
-                .radius = 0.5F,
-                .vertical_half_segment = nan,
-            },
-            character::PlayerCapsuleShape{
-                .radius = 0.5F,
-                .vertical_half_segment = std::nextafter(
-                    character::
-                        maximum_player_capsule_vertical_half_segment,
-                    infinity),
-            },
+    auto require_invalid =
+        [&surface](const character::PlayerCapsuleConfig config) {
+            const auto result =
+                character::create_player_capsule(
+                    config,
+                    surface);
+            REQUIRE_FALSE(result);
+            REQUIRE(result.error().code() ==
+                core::ErrorCode::invalid_argument);
         };
-        for (const auto shape : invalid_shapes) {
-            auto config = test_config();
-            config.shape = shape;
-            const auto result =
-                character::create_player_capsule(config);
-            REQUIRE_FALSE(result);
-            REQUIRE(result.error().category() ==
-                core::ErrorCategory::simulation);
-            REQUIRE(result.error().code() ==
-                core::ErrorCode::invalid_argument);
-        }
 
-        auto maximum = test_config();
-        maximum.shape.radius =
-            character::maximum_player_capsule_radius;
-        maximum.shape.vertical_half_segment =
-            character::
-                maximum_player_capsule_vertical_half_segment;
-        REQUIRE(character::create_player_capsule(maximum));
-
-        auto adjacent_positive = test_config();
-        adjacent_positive.shape.radius =
-            std::numeric_limits<float>::denorm_min();
-        adjacent_positive.shape.vertical_half_segment =
-            std::numeric_limits<float>::denorm_min();
-        REQUIRE(character::create_player_capsule(
-            adjacent_positive));
-    }
-
-    SECTION("bounds")
-    {
-        for (std::size_t axis = 0U; axis < 3U; ++axis) {
-            auto config = test_config();
-            component(
-                config.center_bounds.minimum,
-                axis) = 2.0F;
-            component(
-                config.center_bounds.maximum,
-                axis) = 1.0F;
-            const auto result =
-                character::create_player_capsule(config);
-            REQUIRE_FALSE(result);
-            REQUIRE(result.error().code() ==
-                core::ErrorCode::invalid_argument);
-        }
-
-        auto nonfinite = test_config();
-        nonfinite.center_bounds.minimum.y = -infinity;
-        REQUIRE_FALSE(
-            character::create_player_capsule(nonfinite));
-    }
-
-    SECTION("spawn")
-    {
-        for (std::size_t axis = 0U; axis < 3U; ++axis) {
-            auto below = test_config();
-            component(
-                below.spawn_center_position,
-                axis) = std::nextafter(
-                component_value(
-                    below.center_bounds.minimum,
-                    axis),
-                -infinity);
-            const auto below_result =
-                character::create_player_capsule(below);
-            REQUIRE_FALSE(below_result);
-            REQUIRE(below_result.error().code() ==
-                core::ErrorCode::invalid_argument);
-
-            auto above = test_config();
-            component(
-                above.spawn_center_position,
-                axis) = std::nextafter(
-                component_value(
-                    above.center_bounds.maximum,
-                    axis),
-                infinity);
-            REQUIRE_FALSE(
-                character::create_player_capsule(above));
-        }
-
-        auto invalid_position = test_config();
-        invalid_position.spawn_center_position.z = nan;
-        REQUIRE_FALSE(character::create_player_capsule(
-            invalid_position));
-
-        for (const auto yaw : {nan, infinity, -infinity}) {
-            auto config = test_config();
-            config.spawn_facing_yaw_radians = yaw;
-            REQUIRE_FALSE(
-                character::create_player_capsule(config));
-        }
-    }
-
-    SECTION("inclusive bounds")
-    {
-        auto minimum = test_config();
-        minimum.spawn_center_position =
-            minimum.center_bounds.minimum;
-        const auto minimum_result =
-            character::create_player_capsule(minimum);
-        REQUIRE(minimum_result);
-
-        auto maximum = test_config();
-        maximum.spawn_center_position =
-            maximum.center_bounds.maximum;
-        const auto maximum_result =
-            character::create_player_capsule(maximum);
-        REQUIRE(maximum_result);
-    }
-}
-
-TEST_CASE(
-    "player action commands are semantic bounded tick samples",
-    "[character][player-capsule][command][validation]")
-{
-    using namespace shark;
-
-    character::PlayerActionCommand command{
-        .move_forward_held = true,
-        .move_backward_held = true,
-        .move_left_held = true,
-        .move_right_held = true,
-        .run_held = true,
-        .jump_pressed = true,
-        .primary_action_pressed = true,
-        .look_yaw_delta_radians =
-            character::maximum_player_look_delta_radians,
-        .look_pitch_delta_radians =
-            -character::maximum_player_look_delta_radians,
-    };
-    REQUIRE(character::is_valid(command));
-
-    auto player = make_simulation();
-    REQUIRE(character::advance_player_capsule(
-        player,
-        command,
-        1U));
-    REQUIRE(player.current.consumed_command == command);
-    const character::PlayerCapsuleState spawn{
-        .center_position =
-            player.config.spawn_center_position,
-        .facing_yaw_radians =
-            player.config.spawn_facing_yaw_radians,
-    };
-    REQUIRE(player.current.state == spawn);
-
-    const auto before = player;
-    constexpr auto infinity =
-        std::numeric_limits<float>::infinity();
-    const std::array<std::pair<float, float>, 4> invalid_look{{
-        std::pair{
-            std::nextafter(
-                character::maximum_player_look_delta_radians,
-                infinity),
-            0.0F,
-        },
-        std::pair{
-            0.0F,
-            std::nextafter(
-                -character::maximum_player_look_delta_radians,
-                -infinity),
-        },
-        std::pair{
-            std::numeric_limits<float>::quiet_NaN(),
-            0.0F,
-        },
-        std::pair{0.0F, infinity},
-    }};
-    for (const auto [yaw, pitch] : invalid_look) {
-        auto invalid = command;
-        invalid.look_yaw_delta_radians = yaw;
-        invalid.look_pitch_delta_radians = pitch;
-        REQUIRE_FALSE(character::is_valid(invalid));
-        const auto result =
-            character::advance_player_capsule(
-                player,
-                invalid,
-                2U);
-        REQUIRE_FALSE(result);
-        REQUIRE(result.error().code() ==
-            core::ErrorCode::invalid_argument);
-        REQUIRE(player == before);
-    }
-
-    command = {};
-    command.look_yaw_delta_radians = -0.0F;
-    command.look_pitch_delta_radians = -0.0F;
-    REQUIRE(character::advance_player_capsule(
-        player,
-        command,
-        2U));
-    REQUIRE(positive_zero(
-        player.current.consumed_command
-            .look_yaw_delta_radians));
-    REQUIRE(positive_zero(
-        player.current.consumed_command
-            .look_pitch_delta_radians));
-}
-
-TEST_CASE(
-    "player capsule ticks publish ordered snapshots transactionally",
-    "[character][player-capsule][tick][snapshot][rollback]")
-{
-    using namespace shark;
-
-    auto player = make_simulation();
-    const auto initial = player.current;
-    const character::PlayerActionCommand first_command{
-        .move_forward_held = true,
-        .run_held = true,
-    };
-    REQUIRE(character::advance_player_capsule(
-        player,
-        first_command,
-        1U));
-    REQUIRE(player.previous == initial);
-    REQUIRE(player.current.fixed_tick == 1U);
-    REQUIRE(player.current.reset_generation == 0U);
-    REQUIRE(player.current.state == initial.state);
-    REQUIRE(player.current.consumed_command == first_command);
-
-    const auto after_first = player.current;
-    const character::PlayerActionCommand second_command{
-        .move_right_held = true,
-        .jump_pressed = true,
-    };
-    REQUIRE(character::advance_player_capsule(
-        player,
-        second_command,
-        2U));
-    REQUIRE(player.previous == after_first);
-    REQUIRE(player.current.fixed_tick == 2U);
-    REQUIRE(player.current.state == after_first.state);
-    REQUIRE(player.current.consumed_command == second_command);
-    REQUIRE(character::is_valid(player));
-
-    for (const auto invalid_tick :
-         std::array<std::uint64_t, 3>{0U, 2U, 4U}) {
-        const auto before = player;
-        const auto result =
-            character::advance_player_capsule(
-                player,
-                {},
-                invalid_tick);
-        REQUIRE_FALSE(result);
-        REQUIRE(result.error().code() ==
-            core::ErrorCode::invalid_argument);
-        REQUIRE(player == before);
-    }
-
-    player.current.state.center_position.x =
+    auto config = test_config();
+    config.shape.radius = 0.0F;
+    require_invalid(config);
+    config = test_config();
+    config.shape.vertical_half_segment =
         std::nextafter(
-            player.config.center_bounds.maximum.x,
-            std::numeric_limits<float>::infinity());
-    const auto malformed = player;
-    const auto malformed_result =
-        character::advance_player_capsule(
+            character::
+                maximum_player_capsule_vertical_half_segment,
+            infinity);
+    require_invalid(config);
+    config = test_config();
+    config.center_bounds.maximum.x =
+        config.center_bounds.minimum.x - 1.0F;
+    require_invalid(config);
+    config = test_config();
+    config.spawn_center_position.x =
+        config.center_bounds.maximum.x + 1.0F;
+    require_invalid(config);
+    config = test_config();
+    config.spawn_facing_yaw_radians = nan;
+    require_invalid(config);
+
+    const std::array invalid_gravity{
+        0.0F,
+        -1.0F,
+        nan,
+        infinity,
+        std::nextafter(
+            character::maximum_player_gravity_magnitude,
+            infinity),
+    };
+    for (const auto value : invalid_gravity) {
+        config = test_config();
+        config.grounding.gravity_magnitude = value;
+        require_invalid(config);
+    }
+    const std::array invalid_normal_y{
+        0.0F,
+        -0.1F,
+        nan,
+        std::nextafter(1.0F, infinity),
+    };
+    for (const auto value : invalid_normal_y) {
+        config = test_config();
+        config.grounding.minimum_walkable_normal_y =
+            value;
+        require_invalid(config);
+    }
+    const std::array invalid_snap{
+        -0.001F,
+        nan,
+        infinity,
+        std::nextafter(
+            character::maximum_player_ground_snap_distance,
+            infinity),
+    };
+    for (const auto value : invalid_snap) {
+        config = test_config();
+        config.grounding.snap_distance = value;
+        require_invalid(config);
+    }
+}
+
+TEST_CASE(
+    "canonical terrain support preserves slope and edge ownership",
+    "[character][player-capsule][terrain-support][slope][edge]")
+{
+    using namespace shark;
+
+    const character::PlayerCapsuleShape shape;
+    const character::PlayerGroundingSettings settings;
+
+    SECTION("flat support")
+    {
+        const auto surface = make_surface();
+        const auto support =
+            character::query_player_terrain_support(
+                shape,
+                settings,
+                surface,
+                0.0F,
+                0.0F);
+        REQUIRE(support);
+        REQUIRE(support.value());
+        REQUIRE(support.value()->walkable);
+        REQUIRE(support.value()->center_position_y == 1.0F);
+        const auto expected =
+            surface.sample_lod0_surface(0.0F, 0.0F);
+        REQUIRE(expected);
+        REQUIRE(support.value()->surface == *expected);
+    }
+
+    SECTION("threshold is inclusive")
+    {
+        const auto surface =
+            make_surface(make_plane_tile(0.5F));
+        const auto sample =
+            surface.sample_lod0_surface(0.0F, 0.0F);
+        REQUIRE(sample);
+        auto threshold = settings;
+        threshold.minimum_walkable_normal_y =
+            sample->normal.y;
+        const auto inclusive =
+            character::query_player_terrain_support(
+                shape,
+                threshold,
+                surface,
+                0.0F,
+                0.0F);
+        REQUIRE(inclusive);
+        REQUIRE(inclusive.value());
+        REQUIRE(inclusive.value()->walkable);
+
+        threshold.minimum_walkable_normal_y =
+            std::nextafter(sample->normal.y, 1.0F);
+        const auto unwalkable =
+            character::query_player_terrain_support(
+                shape,
+                threshold,
+                surface,
+                0.0F,
+                0.0F);
+        REQUIRE(unwalkable);
+        REQUIRE(unwalkable.value());
+        REQUIRE_FALSE(unwalkable.value()->walkable);
+        REQUIRE(
+            unwalkable.value()->center_position_y ==
+            Catch::Approx(
+                sample->position.y +
+                shape.vertical_half_segment +
+                shape.radius / sample->normal.y)
+                .margin(0.000001F));
+    }
+
+    SECTION("steep support")
+    {
+        const auto surface =
+            make_surface(make_plane_tile(2.0F));
+        const auto support =
+            character::query_player_terrain_support(
+                shape,
+                settings,
+                surface,
+                0.0F,
+                0.0F);
+        REQUIRE(support);
+        REQUIRE(support.value());
+        REQUIRE_FALSE(support.value()->walkable);
+    }
+
+    SECTION("diagonal and maximum edge")
+    {
+        const auto surface =
+            make_surface(make_twisted_tile());
+        constexpr std::array points{
+            math::Float3{0.5F, 0.0F, 0.5F},
+            math::Float3{1.0F, 0.0F, 1.0F},
+        };
+        for (const auto point : points) {
+            const auto sample =
+                surface.sample_lod0_surface(
+                    point.x,
+                    point.z);
+            const auto support =
+                character::query_player_terrain_support(
+                    shape,
+                    settings,
+                    surface,
+                    point.x,
+                    point.z);
+            REQUIRE(sample);
+            REQUIRE(support);
+            REQUIRE(support.value());
+            REQUIRE(support.value()->surface == sample);
+        }
+        const auto miss =
+            character::query_player_terrain_support(
+                shape,
+                settings,
+                surface,
+                std::nextafter(
+                    1.0F,
+                    std::numeric_limits<float>::infinity()),
+                1.0F);
+        REQUIRE(miss);
+        REQUIRE_FALSE(miss.value());
+    }
+
+    REQUIRE_FALSE(character::query_player_terrain_support(
+        shape,
+        settings,
+        make_surface(),
+        std::numeric_limits<float>::quiet_NaN(),
+        0.0F));
+}
+
+TEST_CASE(
+    "grounded player remains exactly stable under gravity",
+    "[character][player-capsule][grounded][stability]")
+{
+    using namespace shark;
+
+    const auto surface = make_surface();
+    auto player = make_simulation(surface);
+    for (std::uint64_t tick = 1U; tick <= 600U; ++tick) {
+        const character::PlayerActionCommand command{
+            .move_forward_held = tick % 2U == 0U,
+            .run_held = tick % 3U == 0U,
+        };
+        REQUIRE(character::advance_player_capsule(
+            player,
+            command,
+            surface,
+            1.0F / 60.0F,
+            tick));
+        REQUIRE(player.current.state.center_position ==
+            math::Float3{0.0F, 1.0F, 0.0F});
+        REQUIRE(player.current.vertical.phase ==
+            character::PlayerGroundPhase::grounded);
+        REQUIRE(positive_zero(
+            player.current.vertical.velocity_y));
+        REQUIRE(player.current.vertical.support_normal ==
+            math::Float3{0.0F, 1.0F, 0.0F});
+        REQUIRE(player.current.consumed_command == command);
+    }
+    REQUIRE(character::is_valid(player));
+}
+
+TEST_CASE(
+    "falling player integrates lands once and becomes grounded",
+    "[character][player-capsule][falling][landing]")
+{
+    using namespace shark;
+
+    const auto surface = make_surface();
+    auto player = make_simulation(
+        surface,
+        test_config({0.0F, 3.0F, 0.0F}));
+    REQUIRE(player.current.vertical.phase ==
+        character::PlayerGroundPhase::falling);
+
+    constexpr auto delta_seconds = 0.1F;
+    auto expected_y = 3.0;
+    auto expected_velocity = 0.0;
+    std::uint64_t landing_tick = 0U;
+    for (std::uint64_t tick = 1U; tick <= 20U; ++tick) {
+        expected_velocity -= 9.81 * delta_seconds;
+        expected_y += expected_velocity * delta_seconds;
+        REQUIRE(character::advance_player_capsule(
             player,
             {},
-            3U);
-    REQUIRE_FALSE(malformed_result);
-    REQUIRE(malformed_result.error().code() ==
-        core::ErrorCode::invalid_argument);
-    REQUIRE(player == malformed);
+            surface,
+            delta_seconds,
+            tick));
+        if (player.current.vertical.phase ==
+            character::PlayerGroundPhase::landing) {
+            landing_tick = tick;
+            REQUIRE(player.previous.vertical.phase ==
+                character::PlayerGroundPhase::falling);
+            REQUIRE(player.current.state.center_position.y ==
+                1.0F);
+            REQUIRE(positive_zero(
+                player.current.vertical.velocity_y));
+            break;
+        }
+        REQUIRE(player.current.vertical.phase ==
+            character::PlayerGroundPhase::falling);
+        REQUIRE(
+            player.current.vertical.velocity_y ==
+            Catch::Approx(
+                static_cast<float>(expected_velocity))
+                .margin(0.00001F));
+        REQUIRE(
+            player.current.state.center_position.y ==
+            Catch::Approx(
+                static_cast<float>(expected_y))
+                .margin(0.00001F));
+    }
+    REQUIRE(landing_tick > 0U);
+
+    REQUIRE(character::advance_player_capsule(
+        player,
+        {},
+        surface,
+        delta_seconds,
+        landing_tick + 1U));
+    REQUIRE(player.previous.vertical.phase ==
+        character::PlayerGroundPhase::landing);
+    REQUIRE(player.current.vertical.phase ==
+        character::PlayerGroundPhase::grounded);
+    REQUIRE(player.current.state.center_position.y == 1.0F);
 }
 
 TEST_CASE(
-    "player reset starts a new collapsed snapshot generation",
-    "[character][player-capsule][reset][snapshot]")
+    "gentle and steep faces publish distinct contact phases",
+    "[character][player-capsule][grounding][steep-contact]")
 {
     using namespace shark;
 
-    auto player = make_simulation();
+    SECTION("gentle")
+    {
+        const auto surface =
+            make_surface(make_plane_tile(0.5F));
+        const auto support =
+            character::query_player_terrain_support(
+                {},
+                {},
+                surface,
+                0.0F,
+                0.0F);
+        REQUIRE(support);
+        REQUIRE(support.value());
+        auto config = test_config({
+            0.0F,
+            support.value()->center_position_y,
+            0.0F,
+        });
+        auto player = make_simulation(surface, config);
+        REQUIRE(player.current.vertical.phase ==
+            character::PlayerGroundPhase::grounded);
+        REQUIRE(character::advance_player_capsule(
+            player,
+            {},
+            surface,
+            1.0F / 60.0F,
+            1U));
+        REQUIRE(player.current.vertical.phase ==
+            character::PlayerGroundPhase::grounded);
+        REQUIRE(player.current.vertical.support_normal ==
+            support.value()->surface.normal);
+    }
+
+    SECTION("steep")
+    {
+        const auto surface =
+            make_surface(make_plane_tile(2.0F));
+        const auto support =
+            character::query_player_terrain_support(
+                {},
+                {},
+                surface,
+                0.0F,
+                0.0F);
+        REQUIRE(support);
+        REQUIRE(support.value());
+        REQUIRE_FALSE(support.value()->walkable);
+        auto player = make_simulation(
+            surface,
+            test_config({
+                0.0F,
+                support.value()->center_position_y,
+                0.0F,
+            }));
+        REQUIRE(player.current.vertical.phase ==
+            character::PlayerGroundPhase::steep_contact);
+        REQUIRE(character::advance_player_capsule(
+            player,
+            {},
+            surface,
+            1.0F / 60.0F,
+            1U));
+        REQUIRE(player.current.vertical.phase ==
+            character::PlayerGroundPhase::steep_contact);
+        REQUIRE(positive_zero(
+            player.current.vertical.velocity_y));
+
+        auto falling = make_simulation(
+            surface,
+            test_config({0.0F, 5.0F, 0.0F}));
+        std::uint64_t tick = 0U;
+        do {
+            ++tick;
+            REQUIRE(character::advance_player_capsule(
+                falling,
+                {},
+                surface,
+                0.1F,
+                tick));
+        } while (
+            falling.current.vertical.phase ==
+                character::PlayerGroundPhase::falling &&
+            tick < 30U);
+        REQUIRE(falling.current.vertical.phase ==
+            character::PlayerGroundPhase::steep_contact);
+        REQUIRE(falling.current.state.center_position.y ==
+            support.value()->center_position_y);
+    }
+}
+
+TEST_CASE(
+    "airborne reset restores and collapses grounded spawn",
+    "[character][player-capsule][reset][airborne]")
+{
+    using namespace shark;
+
+    const auto surface = make_surface();
+    auto player = make_simulation(surface);
     REQUIRE(character::advance_player_capsule(
         player,
-        {.move_forward_held = true},
+        {},
+        surface,
+        1.0F / 60.0F,
         1U));
 
-    player.current.state = {
-        .center_position = {5.0F, 8.0F, 4.0F},
-        .facing_yaw_radians = 1.25F,
+    player.current.state.center_position.y = 5.0F;
+    player.current.vertical = {
+        .velocity_y = -2.0F,
+        .phase = character::PlayerGroundPhase::falling,
+        .support_normal = {},
     };
     REQUIRE(character::is_valid(player));
 
@@ -548,26 +694,25 @@ TEST_CASE(
         .move_backward_held = true,
         .run_held = true,
         .jump_pressed = true,
-        .primary_action_pressed = true,
         .reset_pressed = true,
-        .look_yaw_delta_radians = 0.25F,
     };
     REQUIRE(character::advance_player_capsule(
         player,
         reset,
+        surface,
+        1.0F / 60.0F,
         2U));
-    const character::PlayerCapsuleState spawn{
-        .center_position =
-            player.config.spawn_center_position,
-        .facing_yaw_radians =
-            player.config.spawn_facing_yaw_radians,
-    };
-    REQUIRE(player.previous.state == spawn);
-    REQUIRE(player.current.state == spawn);
+    REQUIRE(player.previous.state ==
+        player.current.state);
+    REQUIRE(player.previous.vertical ==
+        player.current.vertical);
+    REQUIRE(player.current.state.center_position ==
+        player.config.spawn_center_position);
+    REQUIRE(player.current.vertical.phase ==
+        character::PlayerGroundPhase::grounded);
+    REQUIRE(player.current.reset_generation == 1U);
     REQUIRE(player.previous.fixed_tick == 1U);
     REQUIRE(player.current.fixed_tick == 2U);
-    REQUIRE(player.previous.reset_generation == 1U);
-    REQUIRE(player.current.reset_generation == 1U);
     REQUIRE(player.previous.consumed_command ==
         character::PlayerActionCommand{});
     REQUIRE(player.current.consumed_command == reset);
@@ -577,105 +722,233 @@ TEST_CASE(
             player,
             0.5F);
     REQUIRE(middle);
-    REQUIRE(middle.value() == spawn);
-
-    REQUIRE(character::advance_player_capsule(
-        player,
-        {.reset_pressed = true},
-        3U));
-    REQUIRE(player.previous.fixed_tick == 2U);
-    REQUIRE(player.current.fixed_tick == 3U);
-    REQUIRE(player.previous.reset_generation == 2U);
-    REQUIRE(player.current.reset_generation == 2U);
-    REQUIRE(player.previous.state == spawn);
-    REQUIRE(player.current.state == spawn);
+    REQUIRE(middle.value() == player.current.state);
 }
 
 TEST_CASE(
-    "player capsule rejects malformed history and tick overflow",
-    "[character][player-capsule][validation][overflow][rollback]")
+    "player interpolation collapse copies pose and vertical authority",
+    "[character][player-capsule][interpolation][collapse]")
 {
     using namespace shark;
 
-    SECTION("snapshot gap")
-    {
-        auto player = make_simulation();
-        REQUIRE(character::advance_player_capsule(
-            player,
-            {},
-            1U));
-        player.previous.fixed_tick = 4U;
+    const auto surface = make_surface();
+    auto player = make_simulation(
+        surface,
+        test_config({0.0F, 3.0F, 0.0F}));
+    REQUIRE(character::advance_player_capsule(
+        player,
+        {.move_forward_held = true},
+        surface,
+        0.1F,
+        1U));
+    REQUIRE(player.previous.state != player.current.state);
+    REQUIRE(player.previous.vertical !=
+        player.current.vertical);
+
+    auto expected = player;
+    expected.previous.state = expected.current.state;
+    expected.previous.vertical =
+        expected.current.vertical;
+    REQUIRE(character::collapse_player_capsule_interpolation(
+        player));
+    REQUIRE(player == expected);
+    for (const auto alpha :
+         std::array{0.0F, 0.25F, 0.5F, 0.75F, 1.0F}) {
+        const auto interpolated =
+            character::interpolate_player_capsule(
+                player,
+                alpha);
+        REQUIRE(interpolated);
+        REQUIRE(interpolated.value() ==
+            player.current.state);
+    }
+
+    auto invalid = player;
+    invalid.current.vertical.velocity_y = 1.0F;
+    const auto before = invalid;
+    REQUIRE_FALSE(
+        character::collapse_player_capsule_interpolation(
+            invalid));
+    REQUIRE(invalid == before);
+}
+
+TEST_CASE(
+    "player advance rejects invalid input and rolls back",
+    "[character][player-capsule][validation][rollback]")
+{
+    using namespace shark;
+
+    const auto surface = make_surface();
+    auto player = make_simulation(surface);
+
+    for (const auto delta :
+         std::array{
+             0.0F,
+             -0.1F,
+             std::numeric_limits<float>::quiet_NaN(),
+             std::nextafter(
+                 character::maximum_player_fixed_delta_seconds,
+                 std::numeric_limits<float>::infinity()),
+         }) {
         const auto before = player;
-        REQUIRE_FALSE(character::is_valid(player));
         const auto result =
             character::advance_player_capsule(
                 player,
                 {},
-                2U);
+                surface,
+                delta,
+                1U);
         REQUIRE_FALSE(result);
         REQUIRE(result.error().code() ==
             core::ErrorCode::invalid_argument);
         REQUIRE(player == before);
     }
 
-    SECTION("generation mismatch")
-    {
-        auto player = make_simulation();
-        REQUIRE(character::advance_player_capsule(
-            player,
-            {},
-            1U));
-        player.previous.reset_generation = 1U;
+    for (const auto tick :
+         std::array<std::uint64_t, 3>{0U, 2U, 8U}) {
         const auto before = player;
-        REQUIRE_FALSE(character::is_valid(player));
         REQUIRE_FALSE(character::advance_player_capsule(
             player,
             {},
-            2U));
+            surface,
+            1.0F / 60.0F,
+            tick));
         REQUIRE(player == before);
     }
 
-    SECTION("fixed tick overflow")
-    {
-        auto player = make_simulation();
-        player.previous.fixed_tick =
-            std::numeric_limits<std::uint64_t>::max() - 1U;
-        player.current.fixed_tick =
-            std::numeric_limits<std::uint64_t>::max();
-        const auto before = player;
-        REQUIRE(character::is_valid(player));
-        const auto result =
-            character::advance_player_capsule(
-                player,
-                {.reset_pressed = true},
-                0U);
-        REQUIRE_FALSE(result);
-        REQUIRE(result.error().code() ==
-            core::ErrorCode::unavailable);
-        REQUIRE(player == before);
-    }
+    auto invalid_command = character::PlayerActionCommand{};
+    invalid_command.look_yaw_delta_radians =
+        std::nextafter(
+            character::maximum_player_look_delta_radians,
+            std::numeric_limits<float>::infinity());
+    const auto command_before = player;
+    REQUIRE_FALSE(character::advance_player_capsule(
+        player,
+        invalid_command,
+        surface,
+        1.0F / 60.0F,
+        1U));
+    REQUIRE(player == command_before);
+
+    auto malformed = player;
+    malformed.current.vertical.phase =
+        character::PlayerGroundPhase::falling;
+    malformed.current.vertical.support_normal =
+        {0.0F, 1.0F, 0.0F};
+    const auto malformed_before = malformed;
+    REQUIRE_FALSE(character::advance_player_capsule(
+        malformed,
+        {},
+        surface,
+        1.0F / 60.0F,
+        1U));
+    REQUIRE(malformed == malformed_before);
+
+    auto below = player;
+    REQUIRE(character::advance_player_capsule(
+        below,
+        {},
+        surface,
+        1.0F / 60.0F,
+        1U));
+    below.current.state.center_position.y = 0.5F;
+    below.current.vertical = {
+        .velocity_y = -1.0F,
+        .phase = character::PlayerGroundPhase::falling,
+    };
+    const auto below_before = below;
+    const auto below_result =
+        character::advance_player_capsule(
+            below,
+            {},
+            surface,
+            1.0F / 60.0F,
+            2U);
+    REQUIRE_FALSE(below_result);
+    REQUIRE(below_result.error().code() ==
+        core::ErrorCode::invalid_state);
+    REQUIRE(below == below_before);
+
+    auto bounded = make_simulation(
+        surface,
+        test_config({0.0F, 2.0F, 0.0F}));
+    bounded.config.center_bounds.minimum.y = 1.999F;
+    const auto bounded_before = bounded;
+    const auto bounded_result =
+        character::advance_player_capsule(
+            bounded,
+            {},
+            surface,
+            0.25F,
+            1U);
+    REQUIRE_FALSE(bounded_result);
+    REQUIRE(bounded_result.error().code() ==
+        core::ErrorCode::unavailable);
+    REQUIRE(bounded == bounded_before);
 }
 
 TEST_CASE(
-    "player capsule interpolation uses bounded position and shortest yaw",
+    "player reset and fixed tick overflow remain transactional",
+    "[character][player-capsule][overflow][rollback]")
+{
+    using namespace shark;
+
+    const auto surface = make_surface();
+    auto player = make_simulation(surface);
+    player.previous.fixed_tick =
+        std::numeric_limits<std::uint64_t>::max() - 1U;
+    player.current.fixed_tick =
+        std::numeric_limits<std::uint64_t>::max();
+    player.previous.reset_generation =
+        std::numeric_limits<std::uint64_t>::max();
+    player.current.reset_generation =
+        std::numeric_limits<std::uint64_t>::max();
+    REQUIRE(character::is_valid(player));
+    const auto before = player;
+    const auto result =
+        character::advance_player_capsule(
+            player,
+            {.reset_pressed = true},
+            surface,
+            1.0F / 60.0F,
+            0U);
+    REQUIRE_FALSE(result);
+    REQUIRE(result.error().code() ==
+        core::ErrorCode::unavailable);
+    REQUIRE(player == before);
+}
+
+TEST_CASE(
+    "player pose interpolation remains bounded and shortest arc",
     "[character][player-capsule][interpolation][yaw]")
 {
     using namespace shark;
 
-    auto player = make_simulation();
+    const auto surface = make_surface();
+    auto player = make_simulation(
+        surface,
+        test_config({0.0F, 5.0F, 0.0F}));
     player.previous = {
         .state = {
-            .center_position = {-8.0F, 0.0F, 4.0F},
+            .center_position = {-8.0F, 4.0F, 4.0F},
             .facing_yaw_radians =
                 170.0F * math::pi / 180.0F,
+        },
+        .vertical = {
+            .velocity_y = -2.0F,
+            .phase = character::PlayerGroundPhase::falling,
         },
         .fixed_tick = 7U,
     };
     player.current = {
         .state = {
-            .center_position = {8.0F, 16.0F, -4.0F},
+            .center_position = {8.0F, 2.0F, -4.0F},
             .facing_yaw_radians =
                 -170.0F * math::pi / 180.0F,
+        },
+        .vertical = {
+            .velocity_y = -4.0F,
+            .phase = character::PlayerGroundPhase::falling,
         },
         .fixed_tick = 8U,
     };
@@ -700,7 +973,7 @@ TEST_CASE(
     REQUIRE(start.value() == player.previous.state);
     REQUIRE(end.value() == player.current.state);
     REQUIRE(middle.value().center_position ==
-        math::Float3{0.0F, 8.0F, 0.0F});
+        math::Float3{0.0F, 3.0F, 0.0F});
     REQUIRE(std::abs(middle.value().facing_yaw_radians) ==
         Catch::Approx(math::pi).margin(0.000001F));
     REQUIRE(player == before);
@@ -708,24 +981,29 @@ TEST_CASE(
     constexpr auto nan =
         std::numeric_limits<float>::quiet_NaN();
     for (const auto alpha : {-0.001F, 1.001F, nan}) {
-        const auto result =
+        REQUIRE_FALSE(
             character::interpolate_player_capsule(
                 player,
-                alpha);
-        REQUIRE_FALSE(result);
-        REQUIRE(result.error().code() ==
-            core::ErrorCode::invalid_argument);
+                alpha));
     }
 
-    player.current.state.facing_yaw_radians = math::pi;
-    REQUIRE_FALSE(character::is_valid(player));
-    REQUIRE_FALSE(character::interpolate_player_capsule(
-        player,
-        0.5F));
+    auto seam_config = test_config();
+    seam_config.spawn_facing_yaw_radians =
+        1.3000000365e-7F;
+    auto seam = make_simulation(surface, seam_config);
+    REQUIRE(character::advance_player_capsule(
+        seam,
+        {.look_yaw_delta_radians =
+             std::nextafter(
+                 math::pi,
+                 -std::numeric_limits<float>::infinity())},
+        surface,
+        1.0F / 60.0F,
+        1U));
 }
 
 TEST_CASE(
-    "player capsule command traces are invariant across render partitions",
+    "player vertical snapshots are invariant across render partitions",
     "[character][player-capsule][fixed-step][invariance]")
 {
     constexpr std::array<std::uint32_t, 4> render_rates{
@@ -737,7 +1015,7 @@ TEST_CASE(
     const auto baseline = run_schedule(render_rates[0]);
     REQUIRE(baseline.simulation.current.fixed_tick == 120U);
     REQUIRE(
-        baseline.simulation.current.reset_generation == 2U);
+        baseline.simulation.current.reset_generation == 1U);
 
     for (const auto render_rate : render_rates) {
         CAPTURE(render_rate);

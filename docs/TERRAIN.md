@@ -1,7 +1,8 @@
 # Canonical Terrain-Tile Contract
 
 - **Completed through:** `ISL-001`
-- **Last verified:** July 25, 2026
+- **Character integration verified through:** `CHR-002`
+- **Last verified:** July 26, 2026
 
 ISL-001 retains the T-007 rolling-height source and all historical T-008 basin
 fixtures, but the no-argument Island Demo applies a separate deterministic Q8
@@ -12,9 +13,10 @@ footprint at the origin. The `-4`-meter waterline surrounds a low walkable
 interior, a shallow shelf, and a seabed that reaches at least seven meters
 below water on every terrain edge.
 
-The scenario publishes dry spawn ground at `(0,0.890625,112)`, CHR-001 capsule
-center `(0,1.890625,112)`, and a CAM-001 third-person orbit targeting
-`(0,2.640625,112)` from an initially unobstructed nine-meter boom. It also
+The scenario publishes dry spawn ground at `(0,0.890625,112)`, a CHR-002
+slope-correct capsule center at approximately `(0,1.8923082,112)`, and a
+third-person orbit targeting approximately `(0,2.6423082,112)` from an
+initially unobstructed nine-meter boom. It also
 retains four PHY-004 diagnostic
 spheres, an exactly sampled 500-meter-or-longer walkable loop, and dry/shallow/
 transition/swim shore samples. W-001's six-vertex surface now renders the
@@ -528,7 +530,7 @@ of all six clip half-spaces. Nonfinite or rank-deficient view-projection
 matrices fail the frame before submission.
 
 The interactive camera starts at the scenario-owned orbit, approximately
-`(0,4.8673,120.7202)` meters with pitch `-0.25` radians and a 1,500-meter far
+`(0,4.8689,120.7202)` meters with pitch `-0.25` radians and a 1,500-meter far
 plane, looking toward the player capsule on the dry island. A canonical LOD0
 segment-clearance query shortens its presentation boom when terrain would
 obstruct the view. `F7` retains free-fly movement at 32 meters/second with a
@@ -1151,15 +1153,19 @@ lake-at-rest shoreline over that same simulation-owned bed. It does not snap
 water depth to the terrain or derive collision from a visual LOD. ISL-001 adds
 the separate playable-island fixture described below. WQ-001 now obtains bed
 height only through `HeightTileSurface::sample_lod0_surface`; it never reads a
-coarse/render mesh and never mutates terrain. CHR-001 authors one bounded
-upright capsule whose bottom exactly matches the canonical LOD0 dry-spawn
-sample; it adds no terrain-contact query or locomotion. CAM-001 now uses the
-canonical LOD0 segment query only for presentation obstruction and never
-changes terrain or Character authority. The active queue is `CHR-002`, which
-will add authoritative capsule support/grounding queries. `W-005`, the GPU
-shallow-water solver, remains an
-approved deferred specialization in [ENGINE_PLAN.md](ENGINE_PLAN.md); gameplay
-query invariants are in [WATER.md](WATER.md), and the player contract is in
+coarse/render mesh and never mutates terrain. CHR-002 now uses that same exact
+face sample at player X/Z for authoritative support. Its supported center
+places the lower capsule sphere one radius from the selected face plane,
+classifies walkability from the exact geometric normal, and preserves fixed
+triangle and inclusive edge ownership. It is intentionally a one-sample
+heightfield controller; horizontal sweep and obstacle collision are not
+claimed. CAM-001 continues to use the canonical LOD0 segment query only for
+presentation obstruction and never changes Character authority.
+
+The active queue is `CHR-003`, grounded locomotion. `W-005`, the GPU
+shallow-water solver, remains an approved deferred specialization in
+[ENGINE_PLAN.md](ENGINE_PLAN.md); gameplay query invariants are in
+[WATER.md](WATER.md), and the player contract is in
 [CHARACTER.md](CHARACTER.md).
 
 ## ISL-001 playable island

@@ -181,10 +181,10 @@ indexed draws and the frame contains `V + 6` indexed draws plus the water and
 tone-map non-indexed draws. `F4` adds `V + 1` diagnostic draws without
 changing the graph. The
 initial/resized and scripted-overview smoke poses expose 93 and 72 chunks;
-their `0/93` and `0/72` LOD0/coarse splits submit 80,352 and 62,208
+their `0/93` and `1/71` LOD0/coarse splits submit 80,352 and 62,880
 terrain-surface indices. The final smoke-only near pose exposes 61 chunks at
-`1/60` and submits 53,376 indices, keeping both packed D3D12 terrain ranges
-live. These variable draws inside `Terrain` do not add passes or resources.
+`0/61` and submits 52,704 indices. The turned phase keeps both packed D3D12
+terrain ranges live. These variable draws inside `Terrain` do not add passes or resources.
 CPU frustum extraction, AABB tests, distance measurement, and LOD selection
 occur before graph execution and likewise add no graph declaration.
 
@@ -231,7 +231,7 @@ cross-queue fences, async compute, or enhanced barriers.
 
 Graph compilation remains frame-local, serial, and intentionally small. The
 HDR target is still renderer-created and imported, not graph-created. This
-keeps the implementation proportional to Shark's approved San Andreas-class
+keeps the implementation proportional to Shark's bounded PS2-era action-RPG
 scope while leaving later renderer infrastructure possible when a measured
 need appears.
 
@@ -247,8 +247,12 @@ writes `SceneColor` and reads depth plus the already-imported radiance cubemap.
 The procedural `SV_VertexID` quad therefore adds no import or GPU resource.
 Color and depth hazards produce five dependencies, while the six physical
 transitions stay unchanged and three additional accesses elide, yielding the
-exact active `15/5/5/6/34` contract. Rain remains deferred under the San
-Andreas-class ceiling. PHY-004 supplies four interpolated sphere transforms
+exact active `15/5/5/6/34` contract. Rain remains deferred under the bounded
+action-RPG ceiling. PHY-004 supplies four interpolated sphere transforms
 inside the existing `Terrain` callback and preserves this graph exactly.
 This component page no longer
 duplicates the active queue; [ENGINE_PLAN.md](ENGINE_PLAN.md) is authoritative.
+
+ISL-001 changes only scenario data and the typed side of the existing water
+clip test. It keeps the same imports, accesses, callbacks, hazards, transitions,
+elisions, draw count, and exact `15/5/5/6/34` graph accounting.

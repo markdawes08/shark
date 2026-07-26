@@ -268,8 +268,8 @@ and coarse terrain indices occupy `0..345,599` and `345,600..539,999`; bounds,
 marker, and sphere begin at 540,000, 545,400, and 545,406. The four sphere
 draws reuse that one geometry range, so the normal `V + 6` indexed draws and optional
 `F4` diagnostic draws still use four geometry buffers. Initial/resized smoke
-poses select `V0/Vc=0/93`; the turned overview selects `0/72`; and the final
-smoke-only `(16, -1, 0)` near pose selects `1/60` with unchanged yaw/pitch.
+poses select `V0/Vc=0/93`; the turned overview selects `1/71`; and the final
+smoke-only `(16, -1, 0)` near pose selects `0/61` with unchanged yaw/pitch.
 Both packed terrain index ranges are therefore live. Exact per-frame graph
 accounting is 15 imports, five passes, five dependencies, six transitions,
 and 34 elisions. Diagnostics reserve 12 timestamps per context: frame
@@ -280,7 +280,7 @@ begin/end plus begin/end for each pass.
 The hardware smoke path requires 1,000 successful presents, normal packaged
 WARP requires 600, and focused packaged WARP with GPU-based validation requires
 120. They exercise both terrain fill modes, the exact
-`0/93 -> 0/72 -> 1/60` schedule, both D3D12 terrain index ranges, all three
+`0/93 -> 1/71 -> 0/61` schedule, both D3D12 terrain index ranges, all three
 terrain material views, both environment modes, resize, camera rotation,
 translation-only near motion, and frame retirement; compact/focused CPU tests
 retain broader mixed-LOD coverage. T-007 hardware Debug/Release, normal WARP,
@@ -295,14 +295,16 @@ Manual acceptance requires coherent environment response on terrain, water,
 and the glossy sphere; a translation-invariant HDR sky; clean `F3` switching
 to the procedural fallback; stable reversed-Z shoreline occlusion; subtle
 normal-wave motion; and a finite tone-mapped result through
-resize/minimize/restore. The lake must stay inside the local quad-domain and
-`rho <= 1` intersection while canonical terrain remains unchanged.
+resize/minimize/restore. The no-argument Island Demo must keep one dry
+`rho < 1` island and render water on the authored `rho >= 1` exterior without
+a second visible dry component; canonical terrain remains unchanged. The
+retained Environment Lab fixture still validates its bounded `rho <= 1` lake.
 
 S-003 adds no shader reflection, artifact database, root-signature versioning,
 PSO hash/cache, runtime compilation, hot reload, general material graph,
 arbitrary environment probes, runtime environment convolution, automatic
 exposure, HDR display output, or image-comparison testing. Those omissions
-preserve the bounded San Andreas-class product scope while allowing modern HDR
+preserve the bounded PS2-era action-RPG product scope while allowing modern HDR
 implementation quality.
 
 T-006 historically completed its hardware, WARP, and focused GPU-validation
@@ -312,12 +314,20 @@ changed none of those pipeline objects. Hardware Debug/Release, normal WARP,
 and focused GBV passed its four-phase graphics-validation contract; that
 evidence remains historical.
 
-W-001 adds the water HLSL pair, root signature, premultiplied-alpha PSO, one
+W-001 added the water HLSL pair, root signature, premultiplied-alpha PSO, one
 environment-radiance binding, six-vertex procedural draw, named PIX scope,
 and timestamp pair. It deliberately adds no input element, geometry buffer,
 water texture, persistent descriptor, or simulated state. Terrain retains the
-exact `0/93 -> 0/72 -> 1/60` smoke schedule. Rain remains deferred and the San
-Andreas-class ceiling is unchanged.
+historical `0/93 -> 0/72 -> 1/60` smoke schedule. Rain remains deferred and the
+PS2-era action-RPG ceiling is unchanged.
+
+ISL-001 types the formerly reserved final water root constant as the support
+side. The original lake clips to warped `rho <= 1`; the Island Demo clips to
+`rho >= 1`, leaving the same authored island footprint dry while water extends
+to the scenario's large quad boundary. The root-signature budget remains 20
+DWORDs, and the root signature, PSO, shader stages, draw, descriptors,
+resources, and graph pass are otherwise unchanged. Its active terrain schedule
+is `0/93 -> 1/71 -> 0/61`.
 
 PHY-001 added the material-sphere `b2` translation. PHY-002 drives it from a
 terrain-supported simulation snapshot and retargets the existing static cyan

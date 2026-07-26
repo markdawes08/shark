@@ -196,6 +196,10 @@ resource, descriptor, draw, or D3D12 path.
 
 ## Next boundary
 
-W-005 may port fixed-step batches to D3D12 ping-pong compute resources and must
-match this CPU oracle within documented tolerances. Rain coupling and
-simulated-water rendering remain later increments.
+ISL-001 completed the playable-island scenario without changing this numerical
+core. `WQ-001` is active and adds CPU gameplay-water queries over authored calm
+water and canonical terrain; it does not advance or consume this solver.
+`W-005` may later port fixed-step batches to D3D12 ping-pong compute resources
+and must match this CPU oracle within documented tolerances. GPU
+simulated-water rendering, rain coupling, and hydrology remain approved
+deferred specializations.

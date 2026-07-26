@@ -15,7 +15,7 @@
 #include <shark/terrain/height_tile.hpp>
 #include <shark/terrain/material_palette.hpp>
 #include <shark/world/camera.hpp>
-#include <shark/world/environment_lab_scenario.hpp>
+#include <shark/world/island_demo_scenario.hpp>
 
 #include "camera_controller.hpp"
 #include "options.hpp"
@@ -834,16 +834,16 @@ void log_platform_event(const shark::platform::Event& event)
 
     const auto terrain_build_started =
         std::chrono::steady_clock::now();
-    auto environment_scenario_result =
-        world::make_environment_lab_scenario();
-    if (!environment_scenario_result) {
+    auto island_scenario_result =
+        world::make_island_demo_scenario();
+    if (!island_scenario_result) {
         return core::Result<void>::failure(
-            std::move(environment_scenario_result).error());
+            std::move(island_scenario_result).error());
     }
-    auto environment_scenario =
-        std::move(environment_scenario_result).value();
+    auto island_scenario =
+        std::move(island_scenario_result).value();
     auto terrain_surface_result = terrain::HeightTileSurface::create(
-        std::move(environment_scenario.terrain));
+        std::move(island_scenario.terrain));
     if (!terrain_surface_result) {
         return core::Result<void>::failure(
             std::move(terrain_surface_result).error());
@@ -886,15 +886,15 @@ void log_platform_event(const shark::platform::Event& event)
             terrain_chunk_layout.chunks.size() ||
         terrain_coarse_layout.indices.size() !=
             terrain::large_capacity_tile_coarse_index_count ||
+        !std::isfinite(
+            terrain_coarse_layout.maximum_geometric_error) ||
         terrain_coarse_layout.maximum_geometric_error !=
-            world::
-                environment_lab_coarse_maximum_geometric_error) {
+            world::island_demo_coarse_maximum_geometric_error) {
         return core::Result<void>::failure(core::Error{
             core::ErrorCategory::simulation,
             core::ErrorCode::invalid_state,
-            "The Environment Lab terrain did not produce the fixed "
-            "15x15 two-level chunk layout and fixed composite error "
-            "bound",
+            "The Island Demo terrain did not produce the fixed 15x15 "
+            "two-level chunk layout and fixed composite error bound",
         });
     }
     std::vector<std::uint16_t> terrain_surface_indices;
@@ -1001,9 +1001,9 @@ void log_platform_event(const shark::platform::Event& event)
     }
 
     const auto query_marker_world_x =
-        environment_scenario.sphere_body_spawn_positions[0].x;
+        island_scenario.sphere_body_spawn_positions[0].x;
     const auto query_marker_world_z =
-        environment_scenario.sphere_body_spawn_positions[0].z;
+        island_scenario.sphere_body_spawn_positions[0].z;
     const auto query_marker_sample =
         terrain_surface.sample_lod0_surface(
             query_marker_world_x,
@@ -1019,7 +1019,7 @@ void log_platform_event(const shark::platform::Event& event)
     const terrain::Ray3 query_marker_ray{
         {
             query_marker_world_x,
-            environment_scenario.sphere_body_spawn_positions[0].y +
+            island_scenario.sphere_body_spawn_positions[0].y +
                 50.0F,
             query_marker_world_z,
         },
@@ -1079,7 +1079,7 @@ void log_platform_event(const shark::platform::Event& event)
         1.0F,
     };
     const auto query_marker_length =
-        environment_scenario.sphere_body_radius + 1.0F;
+        island_scenario.sphere_body_radius + 1.0F;
     constexpr float query_marker_cross_radius = 0.20F;
     const math::Float3 query_marker_tip{
         marker_sample.position.x +
@@ -1303,27 +1303,30 @@ void log_platform_event(const shark::platform::Event& event)
             .subresource_count = brdf_lut_views.size(),
         },
     };
-    const auto& lake_footprint =
-        environment_scenario.lake_basin.footprint;
+    const auto& island_water = island_scenario.water;
+    const auto& island_footprint = island_water.footprint;
     renderer_config.water_surface = {
         .center = {
-            lake_footprint.center.x,
-            environment_scenario.lake_basin.future_waterline_y,
-            lake_footprint.center.z,
+            island_footprint.center_x,
+            island_water.waterline_y,
+            island_footprint.center_z,
         },
-        .semi_axis_x = lake_footprint.semi_axis_x,
-        .semi_axis_z = lake_footprint.semi_axis_z,
+        .semi_axis_x = island_footprint.semi_axis_x,
+        .semi_axis_z = island_footprint.semi_axis_z,
         .x_warp_square_offset =
-            lake_footprint.x_warp_square_offset,
-        .x_warp_divisor = lake_footprint.x_warp_divisor,
+            island_footprint.x_warp_square_offset,
+        .x_warp_divisor = island_footprint.x_warp_divisor,
         .z_warp_square_offset =
-            lake_footprint.z_warp_square_offset,
-        .z_warp_divisor = lake_footprint.z_warp_divisor,
-        .core_depth = environment_scenario.lake_basin.core_depth,
+            island_footprint.z_warp_square_offset,
+        .z_warp_divisor = island_footprint.z_warp_divisor,
+        .core_depth = island_water.depth_proxy,
         .render_half_extent_x =
-            world::environment_lab_water_render_half_extent_x,
+            island_water.render_half_extent_x,
         .render_half_extent_z =
-            world::environment_lab_water_render_half_extent_z,
+            island_water.render_half_extent_z,
+        .support =
+            renderer::WaterSurfaceSupport::
+                outside_warped_footprint,
     };
     renderer_config.synchronize_to_vertical_refresh = !smoke_mode;
     auto renderer_result = renderer::Renderer::create(
@@ -1362,7 +1365,7 @@ void log_platform_event(const shark::platform::Event& event)
         core::LogLevel::info,
         "terrain",
         std::string{
-            "Built bounded Environment Lab terrain: samples="} +
+            "Built bounded Island Demo terrain: samples="} +
             std::to_string(terrain_tile.sample_columns) + "x" +
             std::to_string(terrain_tile.sample_rows) +
             ", spacing=" +
@@ -1419,51 +1422,48 @@ void log_platform_event(const shark::platform::Event& event)
                     large_capacity_tile_maximum_lod0_slope_degrees) +
             " degrees");
 
-    const auto& lake_basin = environment_scenario.lake_basin;
+    const auto& island_shape = island_scenario.island;
+    const auto shallow_depth =
+        island_shape.waterline_y -
+        island_scenario.shore_entry_samples[1].y;
+    const auto transition_depth =
+        island_shape.waterline_y -
+        island_scenario.shore_entry_samples[2].y;
+    const auto swim_depth =
+        island_shape.waterline_y -
+        island_scenario.shore_entry_samples[3].y;
     core::log_message(
         core::LogLevel::info,
-        "terrain.basin",
+        "terrain.island",
         std::string{
-            "Closed dry lake scenario: composite-height-checksum="} +
+            "Playable island scenario: composite-height-checksum="} +
             format_hexadecimal(
-                world::environment_lab_terrain_height_checksum,
+                island_scenario.terrain_height_checksum,
                 16) +
             ", footprint-center=(" +
-            std::to_string(lake_basin.footprint.center.x) + ", " +
-            std::to_string(lake_basin.footprint.center.z) +
+            std::to_string(island_shape.footprint.center_x) + ", " +
+            std::to_string(island_shape.footprint.center_z) +
             "), semi-axes=(" +
-            std::to_string(lake_basin.footprint.semi_axis_x) + ", " +
-            std::to_string(lake_basin.footprint.semi_axis_z) +
-            ")m, future-waterline=" +
-            std::to_string(lake_basin.future_waterline_y) +
-            "m, sampled-core=(" +
+            std::to_string(island_shape.footprint.semi_axis_x) + ", " +
+            std::to_string(island_shape.footprint.semi_axis_z) +
+            ")m, waterline=" +
+            std::to_string(island_shape.waterline_y) +
+            "m, spawn-ground=(" +
             std::to_string(
-                environment_scenario.lake_core_position.x) + ", " +
+                island_scenario.spawn_ground_position.x) + ", " +
             std::to_string(
-                environment_scenario.lake_core_position.y) + ", " +
+                island_scenario.spawn_ground_position.y) + ", " +
             std::to_string(
-                environment_scenario.lake_core_position.z) +
-            "), spawn-ground=(" +
+                island_scenario.spawn_ground_position.z) +
+            "), dry/shallow/transition/swim transect depths=(" +
             std::to_string(
-                environment_scenario.spawn_ground_position.x) + ", " +
-            std::to_string(
-                environment_scenario.spawn_ground_position.y) + ", " +
-            std::to_string(
-                environment_scenario.spawn_ground_position.z) +
-            "), maximum-adjacent-step-x/z=" +
-            std::to_string(
-                world::
-                    environment_lab_maximum_x_adjacent_height_step) +
-            "/" +
-            std::to_string(
-                world::
-                    environment_lab_maximum_z_adjacent_height_step) +
-            "m, maximum-LOD0-slope=" +
-            std::to_string(
-                world::
-                    environment_lab_maximum_lod0_slope_degrees) +
-            " degrees; W-001 renders a bounded visual surface at the "
-            "published waterline without changing terrain");
+                island_shape.waterline_y -
+                island_scenario.shore_entry_samples[0].y) + ", " +
+            std::to_string(shallow_depth) + ", " +
+            std::to_string(transition_depth) + ", " +
+            std::to_string(swim_depth) +
+            ")m; one six-vertex water draw surrounds the authored "
+            "shoreline");
 
     core::log_message(
         core::LogLevel::info,
@@ -1579,7 +1579,7 @@ void log_platform_event(const shark::platform::Event& event)
         camera.lens.far_plane = 1'500.0F;
     }
     else {
-        camera = environment_scenario.spawn_camera;
+        camera = island_scenario.spawn_camera;
     }
     auto simulation_clock_result =
         simulation::FixedStepClock::create(
@@ -1593,42 +1593,42 @@ void log_platform_event(const shark::platform::Event& event)
     auto simulation_clock =
         std::move(simulation_clock_result).value();
     static_assert(
-        world::environment_lab_sphere_body_count ==
+        world::island_demo_sphere_body_count ==
         physics::sphere_body_capacity);
     static_assert(
-        world::environment_lab_sphere_body_count ==
+        world::island_demo_sphere_body_count ==
         renderer::maximum_material_sphere_count);
     physics::SphereBodyStates initial_sphere_bodies{};
     physics::SphereColliders sphere_colliders{};
     for (std::size_t body_index = 0;
-         body_index < world::environment_lab_sphere_body_count;
+         body_index < world::island_demo_sphere_body_count;
          ++body_index) {
         initial_sphere_bodies[body_index] =
             physics::RigidBodyState{
                 .position =
-                    environment_scenario
+                    island_scenario
                         .sphere_body_spawn_positions[body_index],
                 .orientation =
-                    environment_scenario
+                    island_scenario
                         .sphere_body_initial_orientations[body_index],
                 .linear_velocity =
-                    environment_scenario
+                    island_scenario
                         .sphere_body_initial_velocities[body_index],
                 .angular_velocity =
-                    environment_scenario
+                    island_scenario
                         .sphere_body_initial_angular_velocities[
                             body_index],
             };
         sphere_colliders[body_index] =
             physics::SphereCollider{
                 .radius =
-                    environment_scenario.sphere_body_radius,
+                    island_scenario.sphere_body_radius,
             };
     }
     auto sphere_mass_properties_result =
         physics::make_solid_sphere_mass_properties(
-            environment_scenario.sphere_body_mass,
-            environment_scenario.sphere_body_radius);
+            island_scenario.sphere_body_mass,
+            island_scenario.sphere_body_radius);
     if (!sphere_mass_properties_result) {
         return core::Result<void>::failure(
             std::move(sphere_mass_properties_result).error());
@@ -1646,7 +1646,7 @@ void log_platform_event(const shark::platform::Event& event)
     const physics::SphereBodyCollisionSettings
         sphere_collision_settings{
             .restitution =
-                environment_scenario.sphere_restitution,
+                island_scenario.sphere_restitution,
         };
     bool observed_airborne_pair_collision = false;
     bool observed_torque_driven_rotation = false;
@@ -2101,7 +2101,7 @@ void log_platform_event(const shark::platform::Event& event)
              ++step) {
             previous_sphere_bodies = current_sphere_bodies;
             for (std::size_t body_index = 0;
-                 body_index < world::environment_lab_sphere_body_count;
+                  body_index < world::island_demo_sphere_body_count;
                  ++body_index) {
                 auto terrain_result =
                     physics::advance_sphere_against_terrain(
@@ -2123,7 +2123,7 @@ void log_platform_event(const shark::platform::Event& event)
                     current_sphere_bodies,
                     sphere_colliders,
                     sphere_body_mass_properties,
-                    world::environment_lab_sphere_body_count,
+                    world::island_demo_sphere_body_count,
                     sphere_collision_settings);
             if (!collision_result) {
                 return core::Result<void>::failure(
@@ -2157,13 +2157,13 @@ void log_platform_event(const shark::platform::Event& event)
                 }
             }
             for (std::size_t body_index = 0;
-                 body_index < world::environment_lab_sphere_body_count;
+                  body_index < world::island_demo_sphere_body_count;
                  ++body_index) {
                 auto angular_result =
                     physics::advance_rigid_body_angular_motion(
                         current_sphere_bodies[body_index],
                         sphere_mass_properties,
-                        environment_scenario
+                        island_scenario
                             .sphere_body_torques[body_index],
                         simulation_clock.fixed_delta_seconds());
                 if (!angular_result) {
@@ -2188,7 +2188,7 @@ void log_platform_event(const shark::platform::Event& event)
             renderer::maximum_material_sphere_count>
             interpolated_sphere_orientations{};
         for (std::size_t body_index = 0;
-             body_index < world::environment_lab_sphere_body_count;
+              body_index < world::island_demo_sphere_body_count;
              ++body_index) {
             auto interpolated_body_result =
                 physics::interpolate_rigid_body(
@@ -2252,7 +2252,7 @@ void log_platform_event(const shark::platform::Event& event)
                 interpolated_sphere_orientations,
             .material_sphere_count =
                 static_cast<std::uint32_t>(
-                    world::environment_lab_sphere_body_count),
+                    world::island_demo_sphere_body_count),
             .terrain_mode = terrain_mode,
             .terrain_material_view = terrain_material_view,
             .environment_lighting_mode =
@@ -2319,7 +2319,7 @@ void log_platform_event(const shark::platform::Event& event)
         }
         const auto expected_broad_phase_proxy_count =
             simulation_clock.total_step_count() *
-            world::environment_lab_sphere_body_count;
+            world::island_demo_sphere_body_count;
         const auto expected_broad_phase_possible_pair_count =
             simulation_clock.total_step_count() *
             physics::sphere_pair_capacity;
@@ -2353,7 +2353,7 @@ void log_platform_event(const shark::platform::Event& event)
                     "normalized torque-driven sphere rotation"));
         }
         for (std::size_t body_index = 0;
-             body_index < world::environment_lab_sphere_body_count;
+             body_index < world::island_demo_sphere_body_count;
              ++body_index) {
             if (!physics::is_valid(
                     current_sphere_bodies[body_index])) {
@@ -2403,18 +2403,17 @@ void log_platform_event(const shark::platform::Event& event)
         constexpr std::uint64_t initial_window_coarse_chunks = 93;
         constexpr std::uint64_t resized_window_lod0_chunks = 0;
         constexpr std::uint64_t resized_window_coarse_chunks = 93;
-        constexpr std::uint64_t turned_lod0_chunks = 0;
-        constexpr std::uint64_t turned_coarse_chunks = 72;
-        constexpr std::uint64_t near_lod0_chunks = 1;
-        constexpr std::uint64_t near_coarse_chunks = 60;
+        constexpr std::uint64_t turned_lod0_chunks = 1;
+        constexpr std::uint64_t turned_coarse_chunks = 71;
+        constexpr std::uint64_t near_lod0_chunks = 0;
+        constexpr std::uint64_t near_coarse_chunks = 61;
         constexpr auto initial_window_visible_chunks =
             initial_window_lod0_chunks +
             initial_window_coarse_chunks;
         constexpr auto near_visible_chunks =
             near_lod0_chunks + near_coarse_chunks;
         constexpr auto expected_maximum_geometric_error =
-            world::
-                environment_lab_coarse_maximum_geometric_error;
+            world::island_demo_coarse_maximum_geometric_error;
         const auto initial_window_frames = resize_after_frames;
         const auto resized_window_frames =
             change_camera_after_frames - resize_after_frames;
@@ -2544,7 +2543,7 @@ void log_platform_event(const shark::platform::Event& event)
             stats.skybox_draw_calls != stats.frame_submissions ||
             stats.material_sphere_draw_calls !=
                 stats.frame_submissions *
-                    world::environment_lab_sphere_body_count ||
+                    world::island_demo_sphere_body_count ||
             stats.tone_map_draw_calls != stats.frame_submissions ||
             stats.terrain_query_marker_draw_calls !=
                 expected_diagnostic_frames ||

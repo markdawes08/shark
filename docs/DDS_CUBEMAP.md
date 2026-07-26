@@ -220,5 +220,5 @@ T-008 and W-001 add no DDS file, texture, descriptor, upload, or color-space
 conversion. Visual water samples the existing environment-radiance descriptor
 and does not repurpose the retained orientation fixture. This component page
 no longer duplicates the rolling project queue; [ENGINE_PLAN.md](ENGINE_PLAN.md)
-is the roadmap source of truth. Rain remains deferred and the approved San
-Andreas-class ceiling is unchanged.
+is the roadmap source of truth. Rain remains deferred and the approved bounded
+action-RPG ceiling is unchanged.

@@ -8,9 +8,11 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <limits>
 #include <numbers>
 #include <type_traits>
+#include <vector>
 
 namespace {
 
@@ -28,6 +30,26 @@ environment_lab_water() noexcept
         .core_depth = 6.5F,
         .render_half_extent_x = 64.0F,
         .render_half_extent_z = 56.0F,
+    };
+}
+
+[[nodiscard]] constexpr shark::renderer::WaterSurfaceSettings
+island_demo_water() noexcept
+{
+    return shark::renderer::WaterSurfaceSettings{
+        .center = {0.0F, -4.0F, 0.0F},
+        .semi_axis_x = 210.0F,
+        .semi_axis_z = 170.0F,
+        .x_warp_square_offset = 0.0F,
+        .x_warp_divisor = 4'096.0F,
+        .z_warp_square_offset = 0.0F,
+        .z_warp_divisor = 4'096.0F,
+        .core_depth = 9.0F,
+        .render_half_extent_x = 2'048.0F,
+        .render_half_extent_z = 2'048.0F,
+        .support =
+            shark::renderer::WaterSurfaceSupport::
+                outside_warped_footprint,
     };
 }
 
@@ -66,6 +88,9 @@ TEST_CASE(
         offsetof(
             WaterSurfaceRootConstants,
             environment_lighting_mode) == sizeof(float) * 16U);
+    STATIC_REQUIRE(
+        offsetof(WaterSurfaceRootConstants, support) ==
+        sizeof(float) * 18U);
 
     constexpr auto settings = environment_lab_water();
     constexpr shark::math::Float3 camera{11.0F, 23.0F, -7.0F};
@@ -103,7 +128,10 @@ TEST_CASE(
         static_cast<std::uint32_t>(
             EnvironmentLightingMode::procedural_daylight));
     REQUIRE(constants.environment_max_lod == 5.0F);
-    REQUIRE(constants.reserved_zero == 0.0F);
+    REQUIRE(
+        constants.support ==
+        static_cast<std::uint32_t>(
+            WaterSurfaceSupport::inside_warped_footprint));
     REQUIRE(constants.reserved_one == 0.0F);
 
     const auto wrapped_constants =
@@ -213,6 +241,10 @@ TEST_CASE(
     require_invalid(invalid);
     invalid = environment_lab_water();
     invalid.semi_axis_x = minimum_positive;
+    require_invalid(invalid);
+    invalid = environment_lab_water();
+    invalid.support =
+        static_cast<shark::renderer::WaterSurfaceSupport>(99U);
     require_invalid(invalid);
 }
 
@@ -351,6 +383,141 @@ TEST_CASE(
                 settings.center.z + settings.render_half_extent_z) >
             1.0);
     }
+}
+
+TEST_CASE(
+    "water support can surround one bounded island footprint",
+    "[renderer][d3d12][water][support][island][contract]")
+{
+    using namespace shark::renderer;
+    using namespace shark::renderer::d3d12::detail;
+
+    constexpr auto settings = island_demo_water();
+    REQUIRE(valid_water_surface_settings(settings));
+    REQUIRE_FALSE(water_surface_contains(settings, 0.0F, 0.0F));
+    REQUIRE_FALSE(water_surface_contains(settings, 0.0F, 160.0F));
+    REQUIRE(water_surface_contains(settings, 0.0F, 176.0F));
+    REQUIRE(water_surface_contains(
+        settings,
+        -settings.render_half_extent_x,
+        -settings.render_half_extent_z));
+    REQUIRE(water_surface_contains(
+        settings,
+        settings.render_half_extent_x,
+        settings.render_half_extent_z));
+    REQUIRE_FALSE(water_surface_contains(
+        settings,
+        settings.render_half_extent_x + 1.0F,
+        0.0F));
+
+    const auto constants = make_water_surface_root_constants(
+        settings,
+        {},
+        0.0F,
+        EnvironmentLightingMode::image_based);
+    REQUIRE(
+        constants.support ==
+        static_cast<std::uint32_t>(
+            WaterSurfaceSupport::outside_warped_footprint));
+
+    // Sample the authored quad on a fixed regression grid. This is evidence
+    // that this locked scenario exposes one interior dry component and no
+    // sampled remote polynomial lobe; it is not a general topology proof or a
+    // pixel assertion for arbitrary settings.
+    constexpr std::size_t sample_columns = 257;
+    constexpr std::size_t sample_rows = 257;
+    std::vector<std::uint8_t> excluded(
+        sample_columns * sample_rows,
+        0U);
+    const auto sample_index = [](const std::size_t x,
+                                 const std::size_t z) {
+        return z * sample_columns + x;
+    };
+    for (std::size_t z = 0; z < sample_rows; ++z) {
+        for (std::size_t x = 0; x < sample_columns; ++x) {
+            const auto world_x =
+                -settings.render_half_extent_x +
+                2.0F * settings.render_half_extent_x *
+                    static_cast<float>(x) /
+                    static_cast<float>(sample_columns - 1U);
+            const auto world_z =
+                -settings.render_half_extent_z +
+                2.0F * settings.render_half_extent_z *
+                    static_cast<float>(z) /
+                    static_cast<float>(sample_rows - 1U);
+            if (water_surface_normalized_radius_squared(
+                    settings,
+                    world_x,
+                    world_z) < 1.0) {
+                excluded[sample_index(x, z)] = 1U;
+            }
+        }
+    }
+
+    std::vector<std::uint8_t> visited(excluded.size(), 0U);
+    constexpr std::array<std::array<int, 2>, 4> neighbors{{
+        {-1, 0},
+        {1, 0},
+        {0, -1},
+        {0, 1},
+    }};
+    std::size_t excluded_components = 0;
+    bool excluded_touches_quad_edge = false;
+    for (std::size_t start_z = 0; start_z < sample_rows; ++start_z) {
+        for (std::size_t start_x = 0;
+             start_x < sample_columns;
+             ++start_x) {
+            const auto start = sample_index(start_x, start_z);
+            if (excluded[start] == 0U || visited[start] != 0U) {
+                continue;
+            }
+            ++excluded_components;
+            std::deque<std::array<std::size_t, 2>> pending;
+            pending.push_back({start_x, start_z});
+            visited[start] = 1U;
+            while (!pending.empty()) {
+                const auto point = pending.front();
+                pending.pop_front();
+                excluded_touches_quad_edge =
+                    excluded_touches_quad_edge ||
+                    point[0] == 0U ||
+                    point[1] == 0U ||
+                    point[0] + 1U == sample_columns ||
+                    point[1] + 1U == sample_rows;
+                for (const auto direction : neighbors) {
+                    const auto next_x =
+                        static_cast<std::int64_t>(point[0]) +
+                        direction[0];
+                    const auto next_z =
+                        static_cast<std::int64_t>(point[1]) +
+                        direction[1];
+                    if (next_x < 0 ||
+                        next_z < 0 ||
+                        next_x >=
+                            static_cast<std::int64_t>(
+                                sample_columns) ||
+                        next_z >=
+                            static_cast<std::int64_t>(
+                                sample_rows)) {
+                        continue;
+                    }
+                    const auto x =
+                        static_cast<std::size_t>(next_x);
+                    const auto z =
+                        static_cast<std::size_t>(next_z);
+                    const auto index = sample_index(x, z);
+                    if (excluded[index] == 0U ||
+                        visited[index] != 0U) {
+                        continue;
+                    }
+                    visited[index] = 1U;
+                    pending.push_back({x, z});
+                }
+            }
+        }
+    }
+    REQUIRE(excluded_components == 1U);
+    REQUIRE_FALSE(excluded_touches_quad_edge);
 }
 
 TEST_CASE(

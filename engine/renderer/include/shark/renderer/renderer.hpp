@@ -142,10 +142,16 @@ struct EnvironmentLightingUploadView final {
     Texture2DUploadView brdf_lut;
 };
 
+enum class WaterSurfaceSupport : std::uint32_t {
+    inside_warped_footprint = 0,
+    outside_warped_footprint = 1,
+};
+
 // A bounded, presentation-only horizontal water surface. The visible domain
-// is the intersection of the warped rho <= 1 field and this procedural
-// six-vertex quad. The explicit quad selects the intended local basin even
-// when the polynomial warp has remote mathematical solutions.
+// is the intersection of this procedural six-vertex quad and either side of
+// the warped rho == 1 shoreline. The quad bounds evaluation; it does not prove
+// that an outside-support polynomial has only one excluded component. Scenario
+// authors own that topology validation for their selected settings and extent.
 struct WaterSurfaceSettings final {
     math::Float3 center{};
     float semi_axis_x{};
@@ -157,6 +163,8 @@ struct WaterSurfaceSettings final {
     float core_depth{};
     float render_half_extent_x{};
     float render_half_extent_z{};
+    WaterSurfaceSupport support{
+        WaterSurfaceSupport::inside_warped_footprint};
 
     [[nodiscard]] friend bool operator==(
         const WaterSurfaceSettings&,

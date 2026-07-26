@@ -175,17 +175,17 @@ Run only the normal shader target and focused build checks with:
 & $ctest --preset windows-debug -R '^build\.shader_'
 ```
 
-For the visual acceptance check, run `SharkSandbox` without arguments. A solid
+For the visual acceptance check, run `SharkSandbox.exe` without arguments. A solid
 height tile must show tiled ground and rock materials blended by slope and
 height, mapped surface detail, and direct-sun plus environment response. The
 four glossy neutral material spheres must reflect the same environment used by
-the terrain. The interactive camera starts at scenario-owned eye
-`(-128,3.34375,-20)` with pitch `-0.1`, overlooking a smoothly irregular
-approximately `112x96`-meter lake. The surface must stay bounded to the basin,
-meet the terrain naturally at its depth-tested shoreline, transmit and tint
-the underlying terrain, reflect the active environment more strongly at
-grazing angles, and show subtle animated normal waves and sun glint. It
-remains a visual surface with no fluid behavior.
+the terrain. The interactive camera starts at the Island Demo's scenario-owned
+eye `(0,2.890625,112)` with pitch `-0.12`, standing on the dry island. The
+surface must surround the one island footprint, meet the terrain naturally at
+its depth-tested shoreline, transmit and tint the underlying seabed, reflect
+the active environment more strongly at grazing angles, and show subtle
+animated normal waves and sun glint. No second dry hole should appear before
+the far plane. It remains a visual surface with no fluid behavior.
 Diagnostics start off; press `F4` and confirm the magenta depth-tested chunk
 AABBs match the currently logged visible count and that the cyan query pin
 appears. Surface chunks and matching bounds must disappear together when the
@@ -198,13 +198,14 @@ the sphere under constant torque, including after linear terrain support.
 
 The separate deterministic `--present-smoke` path must start at
 `93 / 225 visible (LOD0=0, coarse=93)`, retain that split after resize, reach
-`72 / 225 visible (LOD0=0, coarse=72)` after its yaw, then
+`72 / 225 visible (LOD0=1, coarse=71)` after its yaw, then
 finish from the smoke-only `(16, -1, 0)` pose with the same yaw/pitch at
-`61 / 225 visible (LOD0=1, coarse=60)`. Those smoke-only poses do not replace
+`61 / 225 visible (LOD0=0, coarse=61)`. Those smoke-only poses do not replace
 the scenario-owned interactive spawn. The broad landscape must appear natural, mostly flat, and
-nonperiodic without spikes or abrupt boundary artifacts. The dry basin must
-read as a smooth irregular depression rather than a perfect circle, sharp
-crater, repeated stamp, or stepped terrace. In `F1` wireframe, shared chunk edges must
+nonperiodic without spikes or abrupt boundary artifacts. The island must read
+as one low natural landmass with a walkable interior, shallow shore shelf, and
+progressive deeper seabed rather than a perfect circle, sharp crater, repeated
+stamp, or stepped terrace. In `F1` wireframe, shared chunk edges must
 remain connected without cracks, skirts, or missing corners. The cyan query pin
 must begin on the canonical LOD0 surface
 and extend along its exact triangle normal. `F1` must keep the enabled pin
@@ -711,9 +712,33 @@ range handling, and rollback. Debug and Release W-004-focused runs each pass
 because no application, renderer, shader, resource, descriptor, draw, or D3D12
 path changed.
 
-The next increment is `W-005`: port fixed-step shallow-water batches to
-ping-pong D3D12 compute resources and match the CPU oracle within documented
-tolerances.
+ISL-001 makes the playable island the no-argument launch scenario. Build and
+inspect it directly with:
+
+```powershell
+& $cmake --build --preset windows-debug --target SharkSandbox SharkTests
+& .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe
+```
+
+The executable still resolves its packaged runtime and content relative to its
+own directory, so it can be launched from Explorer without a repository-root
+working directory. Focused verification is:
+
+```powershell
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[terrain][island]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[world][scenario][island-demo]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[renderer][d3d12][water]"
+```
+
+The shaped-height checksum is `0x53DD2821AE9ACDEA`; maximum coarse error is
+`0.501953125` meter. Debug and Release each pass 492,503 assertions across 327
+cases. The hardware, normal WARP, and focused 120-frame GPU-validated WARP
+presentation smokes retain one water draw per frame, zero D3D12
+corruption/errors, and zero live child objects.
+
+The next increment is `WQ-001`: add geometry-neutral CPU gameplay-water
+queries that agree with the visible island water and canonical terrain.
+W-005 remains an approved deferred fluid specialization.
 
 ## Visual Studio
 

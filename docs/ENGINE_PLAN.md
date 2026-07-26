@@ -3,73 +3,67 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 25, 2026
-- **Latest completed:** `W-004` - wet/dry fronts and shoreline activation
-- **Next increment:** `W-005` - GPU shallow-water solver
+- **Latest completed:** `ISL-001` - deterministic playable-island scenario
+- **Next increment:** `WQ-001` - CPU gameplay-water queries
 
 ## 1. Project direction
 
 Shark will be a Windows-first 3D graphics and physics simulation engine built
-directly on modern Direct3D 12. It will not become a general-purpose or
-RAGE-scale engine. The near-term product is an **Environment Lab**: a small
-executable in which we can fly a camera through a sky, explore a large natural
-terrain region, begin beside a dry lake basin, add visually convincing water,
-collide objects with the terrain, and evolve that water into a physically
-meaningful surface-water simulation.
+directly on modern Direct3D 12. It is not a general-purpose commercial engine.
+The completed Environment and Simulation foundations already provide a sky,
+daylight and HDR lighting, bounded natural terrain, a calm visual lake,
+canonical terrain queries, fixed-step rigid-body physics, and a tested CPU
+shallow-water solver.
 
-The first vertical slice, **Environment Lab 0.1**, will contain:
+The first playable goalpost is **Island Demo 0.1**:
 
-- a controllable free-fly camera;
-- a basic procedural daylight fallback plus deterministic HDR
-  image-based lighting;
-- one bounded, resident, mostly flat natural heightfield with physically based
-  textures;
-- a deterministic dry spawn overlooking a closed lake-like basin;
-- a visually convincing static lake surface;
-- diagnostics output with frame and GPU timings.
+- one original, bounded small-island environment with a dry spawn, traversable
+  beach, graduated shallow shelf, and deeper swimmable water;
+- one visible placeholder character controlled from a third-person camera;
+- deterministic walk, run, jump, fall, land, slope, and shoreline behavior;
+- dry, wading, and surface-swimming movement modes with reliable entry and
+  exit;
+- CPU-authoritative terrain and water queries that never wait for GPU data;
+- the existing sky, sun, terrain materials, water presentation, diagnostics,
+  and fixed-step simulation; and
+- reproducible Debug/Release behavior and clean D3D12 validation.
 
-The previously planned visual-rain track (`R-001` through `R-004`) remains
-approved but is deliberately deferred. It does not block the terrain, visual
-lake, physics, or fluid sequence. Later physical precipitation is driven by
-measured `WeatherState` rates and never depends on visual particle count.
+The demo deliberately does not require combat, enemies, party AI, dialogue,
+quests, underwater free-swimming, rain, dynamic hydrology, streaming, or
+production character assets. Those are later proposals, not hidden work inside
+the first checkpoint.
 
-The next slice, **Simulation Lab 0.2**, will add:
-
-- a deterministic fixed simulation clock;
-- physics use of the canonical terrain height, normal, and ray queries already
-  shared with rendering;
-- basic rigid bodies colliding with terrain;
-- a conservative shallow-water solver; and
-- rendering driven by the simulated water state.
-
-The later **Coupled World 0.3** slice will add measured rainfall feeding water,
-runoff between terrain tiles, buoyancy, and eventually two-way water/body
-coupling. San Andreas-class character, vehicle, world-streaming, population,
-mission, audio, and interface systems may come only after this environment
-foundation is stable.
+The visual-rain track (`R-001` through `R-004`), GPU shallow-water work
+(`W-005` and `W-006`), and coupled hydrology remain approved Shark
+specializations but are no longer on the critical path to Island Demo 0.1.
+The W-002 through W-004 CPU solver remains useful research and a future source
+for simulated shorelines; ordinary character swimming needs a deterministic
+water-volume query and movement state, not a full fluid simulation.
 
 ### Long-term capability ceiling
 
-Shark's outward feature breadth is deliberately capped at a **San
-Andreas-class local open-world sandbox**: the category and approximate scale of
-runtime capabilities demonstrated by the original *Grand Theft Auto: San
-Andreas* shipped experience, implemented independently with modern technology.
-This is a scope boundary, not a promise to reproduce that game feature for
-feature.
+Shark's outward feature breadth is capped at a **bounded, zone-based,
+single-player third-person action-RPG/platformer**: the observable functional
+envelope demonstrated by the original 2002 PlayStation 2 release of *Kingdom
+Hearts*, implemented independently with modern technology and original
+content. “Kingdom engine” is useful shorthand for the owner's target, not a
+claim that Shark knows or reproduces Square's undocumented internal
+architecture.
 
 Within that ceiling, later proposals may cover:
 
-- a region-scale world with streamed outdoor, urban, rural, and limited
-  interior cells, plus LOD and culling;
-- day/night, weather, terrain, water, particles, props, skinned characters,
-  and ordinary environmental effects;
-- one authoritative local simulation with controllable third-person
-  characters, bounded pedestrians and traffic, and simple interaction/combat;
-- arcade-style road, bicycle, rail, water, and air vehicles with enter/exit
-  behavior;
-- animation, collision, character, rigid-body, and vehicle physics sufficient
-  for those systems; and
-- bounded mission/event scripting, save/load, map/HUD, input, audio/radio, and
-  focused content-authoring tools.
+- authored outdoor and indoor zones with explicit transitions, local LOD, and
+  bounded scene populations;
+- stylized terrain, water, props, particles, skinned characters, animation,
+  lighting, and ordinary environmental effects;
+- one authoritative local simulation with a controllable third-person
+  character, platforming, interactions, surface swimming, and a distinct later
+  underwater movement mode;
+- lock-on action combat, abilities, simple magic/items, enemies, party members,
+  and bounded navigation/behavior;
+- scripted encounters, dialogue, cutscenes, progression, inventory, HUD,
+  save/load, input, audio, and scene transitions; and
+- focused import and scenario-authoring tools justified by those features.
 
 This ceiling limits **feature breadth**, not implementation quality. Shark may
 use C++20, Direct3D 12, PBR materials, HDR lighting, higher precision,
@@ -77,22 +71,18 @@ deterministic tests, modern accessibility and input practices, current asset
 formats, and stronger diagnostics. It does not intentionally reproduce
 PlayStation 2 limitations.
 
-The reference is the shipped functional envelope, not a claim that stock
-RenderWare supplied every system. Commercial games commonly layered
-game-specific technology and content pipelines over middleware. Shark will not
-seek RenderWare, Rockstar, or *Grand Theft Auto* source, asset, binary, plug-in,
-save, map, or mod compatibility.
+The reference is shipped player-facing behavior, not proprietary
+implementation detail. Shark will not seek Square Enix, Disney, *Kingdom
+Hearts*, or character/world source, assets, formats, binaries, behavior cloning,
+save compatibility, or mod compatibility. Island Demo 0.1 must be an original
+scenario rather than a Destiny Islands replica.
 
-The current goalpost is unchanged, although the active order now places a
-larger resident terrain and visual lake ahead of physics while visual rain is
-deferred. Every milestone through M7, including the bounded shallow-water and
-coupling work, remains approved. Those systems may be
-more physically honest internally than their historical visual counterparts,
-and the M6-M7 fluid depth is an explicitly retained Shark specialization even
-where it exceeds the shipped game's simulation depth. It stays bounded to the
-already-approved categories of terrain, weather, surface water, and body
-interaction; it does not authorize volumetric oceans, planet-scale simulation,
-or a broader general-purpose engine.
+The goalpost changed on July 25, 2026 from an environment-first technology
+sequence to the playable island slice above. No completed work is discarded:
+the renderer, terrain, lake, canonical queries, capsule/box/sphere collision,
+contact solver, broad phase, sleeping, and W-002 through W-004 fluid oracle all
+support the new direction. Region-scale open-world streaming, vehicles,
+traffic, crowds, and radio are removed from the promised capability envelope.
 
 ## 2. Working agreement
 
@@ -151,7 +141,7 @@ Architecture Decision Record (ADR) explaining why.
 | Windowing | Native Win32 | Minimal dependency surface and direct DXGI integration |
 | Build | CMake 4.2+, `Visual Studio 18 2026` generator, and vcpkg registry commit `f87344cac03158cbf1467264565f1fd36b382a24` | Reproducible command-line and Visual Studio builds |
 | Graphics API | Direct3D 12 behind a narrow Renderer/RHI boundary; typed resource handles remain future work | Keeps native D3D objects private without inventing an unneeded Vulkan abstraction |
-| Product scope | San Andreas-class local sandbox feature ceiling, with the current environment/simulation milestones retained | Prevents drift toward a RAGE-scale or general-purpose engine while allowing modern implementation |
+| Product scope | Bounded zone-based single-player action-RPG/platformer at original PS2 *Kingdom Hearts* feature breadth | Focuses work on authored environments, character traversal, swimming, animation, and later combat rather than open-world breadth |
 | Runtime | Retail DirectX 12 Agility SDK `1.619.4`, pinned in `F-002` | Current stable D3D12 runtime; preview SDKs stay off `main` |
 | Shaders | HLSL compiled to DXIL by retail DXC `1.9.2602.24`, pinned in `F-002` | Reproducible Shader Model 6 builds and PIX source debugging |
 | Required GPU baseline | Feature Level 12_0+ and Shader Model 6.0+ | Runs the first environment on a broad D3D12 hardware base with conventional descriptor tables |
@@ -245,8 +235,10 @@ flowchart TD
     Snapshot[Immutable CPU/GPU simulation views]
     Assets[Assets: source data, textures, shaders]
     Terrain[Terrain: canonical height, material, and soil data]
+    Water[Water query: containment, surface, depth, flow]
     Weather[Weather: wind and precipitation state]
     Physics[Physics: bodies, contacts, solver]
+    Character[Character: kinematic player and movement modes]
     Fluids[Fluids: water depth and momentum]
     Renderer[Renderer: passes and scene extraction]
     Graph[Render/Compute Graph]
@@ -259,12 +251,19 @@ flowchart TD
     Simulation --> World
     Simulation --> Weather
     Simulation --> Physics
+    Simulation --> Character
     Simulation --> Fluids
     Terrain --> Physics
+    Terrain --> Character
+    Terrain --> Water
     Terrain --> Fluids
+    World --> Water
+    Fluids --> Water
+    Water --> Character
     World --> Snapshot
     Weather --> Snapshot
     Physics --> Snapshot
+    Character --> Snapshot
     Fluids --> Snapshot
     Snapshot --> Renderer
     Terrain --> Renderer
@@ -287,12 +286,14 @@ flowchart TD
 | `RenderGraph` | pass/resource declarations, order, barriers, lifetimes, queue synchronization | scene mutation or gameplay decisions |
 | `Renderer` | public renderer config/frame/status/stats, production frame pipeline, camera data, sky/terrain/water/rain passes, debug views, and private D3D12 presentation backend | authoritative physics or fluid state |
 | `Assets` | CPU asset records, loading, derived-data keys, shader artifacts | frame scheduling |
-| `World` | transforms, cameras, lights, scenario state, immutable frame snapshots | raw GPU resources |
+| `World` | transforms, cameras, lights, scenario placement, immutable frame snapshots | raw GPU resources or terrain/water data ownership |
 | `Simulation` | fixed clock, subsystem order, input/output exchange, snapshot publication | rendering passes or subsystem internals |
 | `Terrain` | authoritative height/material/soil tiles and spatial queries | D3D12 resource ownership |
+| `Water` | authored calm-water bodies and CPU containment, surface, bed, depth, and optional-flow queries | character movement policy, visual materials, or GPU resources |
 | `Weather` | wind, precipitation rate, later temperature/humidity/evaporation drivers | terrain infiltration capacity or rain particles as physical rainfall |
 | `Physics` | bodies, colliders, broad/narrow phase, contact solver, debug primitives | D3D headers or render meshes |
-| `Fluids` | water depth/momentum, solver, conservation accounting, coupling | presentation or material decisions |
+| `Character` | one kinematic player capsule, locomotion modes, controller state, and previous/current snapshots | platform input devices, terrain/water ownership, D3D headers, or render meshes |
+| `Fluids` | water depth/momentum, solver, conservation accounting, coupling, and an optional CPU water-query adapter | presentation, character policy, or material decisions |
 | `Diagnostics` | tests, scenario capture, debug HUD, timings, validation output | production simulation policy |
 
 REN-001 completes the first durable renderer boundary. The public move-only
@@ -359,15 +360,23 @@ without changing canonical terrain.
    coarser visual LOD is a derived approximation with an exact measured error
    bound and never changes physics with camera distance.
 2. Physics never reads a render mesh or Direct3D resource.
-3. Visual rain particles and physical rainfall share `WeatherState`, but particle
+3. The character controller is kinematic and separate from dynamic rigid-body
+   integration. It uses canonical CPU collision queries and never reads a
+   render mesh.
+4. Character water behavior consumes a platform-independent `WaterQuery`
+   result containing support containment, surface height, local depth, and
+   optional flow. It never samples a renderer texture or waits for GPU
+   readback. The first adapter is analytic calm water; simulated water may
+   provide a later adapter.
+5. Visual rain particles and physical rainfall share `WeatherState`, but particle
    count never determines water volume.
-4. The fluid solver owns water state. Rendering receives a read-only snapshot or
+6. The fluid solver owns water state. Rendering receives a read-only snapshot or
    SRV and never mutates the simulation.
-5. Render and compute passes declare GPU access to the graph. Individual systems
+7. Render and compute passes declare GPU access to the graph. Individual systems
    do not issue ad hoc barriers or cross-queue waits.
-6. Simulation publishes immutable previous/current snapshots. Rendering
+8. Simulation publishes immutable previous/current snapshots. Rendering
    interpolates between them and never advances simulation.
-7. No synchronous full GPU readback is allowed in the normal frame loop.
+9. No synchronous full GPU readback is allowed in the normal frame loop.
 
 ### Frame and simulation flow
 
@@ -375,24 +384,26 @@ without changing canonical terrain.
 Poll input and platform events
   -> accumulate real elapsed time
   -> run zero or more fixed 60 Hz CPU ticks
-       1. update weather
-       2. consume the newest completed compact fluid-query result, never wait
-       3. advance physics and world state
-       4. queue versioned weather/body inputs and requested fluid steps
-       5. publish the immutable CPU simulation snapshot
+       1. sample one tick-owned player action command
+       2. update weather and authored scenario state
+       3. evaluate canonical terrain and CPU water queries
+       4. advance the kinematic character, dynamic physics, and world state
+       5. optionally consume completed fluid queries or queue fluid work,
+          never wait
+       6. publish the immutable CPU simulation snapshot
   -> interpolate render snapshot
   -> build render/compute graph
-       1. advance queued GPU fluid steps with CFL-limited substeps
-       2. publish ping-pong fluid render views and enqueue compact query readback
-       3. shadows/depth -> terrain/opaque -> sky -> water -> rain -> post/debug
+       1. optionally advance queued GPU fluid steps when W-005 resumes
+       2. shadows/depth -> terrain/character/opaque -> sky -> water -> post/debug
   -> record, submit, present
 ```
 
-Before the GPU solver exists, the CPU reference can advance inline during a
-fixed tick. The normal GPU path is deliberately asynchronous: catch-up ticks
-reuse the latest completed compact query and never stall for water. A synchronized
+Island Demo 0.1 uses an analytic calm-water query entirely on the CPU. When the
+GPU solver resumes, its normal path remains asynchronous: catch-up ticks reuse
+the latest completed compact query and never stall for water. A synchronized
 mode exists only for focused verification. This staggered order avoids an
-unstable circular solve; iterative two-way coupling is a later milestone.
+unstable circular solve; iterative two-way coupling remains a later
+specialization.
 
 ## 7. Direct3D 12 renderer design
 
@@ -683,6 +694,8 @@ architecture folders are not committed merely to make the tree look complete.
 |   |-- assets/
 |   |-- world/
 |   |-- simulation/
+|   |-- character/
+|   |-- water/
 |   |-- terrain/
 |   |-- weather/
 |   |-- physics/
@@ -815,13 +828,41 @@ M5.
 | `W-002` | S | Complete: add an allocation-free double-precision `8 x 8` CPU oracle with separate canonical bed and conserved `h/hu/hv` state, an exact row-major prefix and positive-zero tail, finite/nonnegative/dry-state gates, cardinal reflective solid-wall ghosts, fully wet lake-at-rest construction over an exact canonical-terrain cell-average bed, and deterministic volume/momentum diagnostics; prove the hydrostatic fixture without claiming a time update, wet-front policy, GPU work, or W-001 coupling | `feat(fluids): add shallow-water reference state` |
 | `W-003` | S | Complete: add a transactional, unsplit, first-order CPU finite-volume advance over the W-002 strictly wet state; share hydrostatically reconstructed Rusanov mass fluxes with side-specific bed-pressure corrections; recompute scale-safe X/Z signal rates for bounded `CFL <= 0.5` substeps that land on the exact requested interval; reject dry, nonpositive, nonfinite, range, ledger, and budget failures without clamps or caller mutation; publish an enforced scale/operation-aware volume ledger and diagnostic report; and prove non-unit analytic fluxes, uneven lake at rest, long sealed dam break, X/Z and full `8 x 8` two-dimensional determinism, range edges, and post-work rollback without GPU or W-001 integration | `feat(fluids): advance wet shallow water` |
 | `W-004` | S | Complete: define a binary-exact `2^-20`-meter dry-depth threshold and strict exact-dry/retained-film/active classes; retain every positive depth and its hydrostatic pressure while projecting only near-dry momentum to positive zero with an explicit integrated discard ledger; admit dry inputs and reconstructed dry faces through range-safe hydrostatic reconstruction; activate and deactivate through shared conservative fluxes without depth clamps; preserve transactional CFL and volume gates; and prove partially wet uneven lake-at-rest shorelines, analytic one- and two-dimensional fronts, analytic retreat, strict adjacent-value thresholds, mixed-front determinism, extreme dry no-op and rounded-zero-CFL ranges, non-unit momentum accounting, and post-projection rollback without GPU or W-001 integration | `feat(fluids): add wet and dry boundaries` |
-| `W-005` | S | Port fixed-step batches to ping-pong compute resources; match CPU cases within tolerance and detect NaN/Inf/negative depth | `feat(fluids): add GPU shallow-water solver` |
-| `W-006` | S | Render `terrain height + water depth`; simulated surface normals and velocity drive visual detail/foam | `feat(water): render simulated surface water` |
+| `W-005` | S | Deferred after W-004: port fixed-step batches to ping-pong compute resources; match CPU cases within tolerance and detect NaN/Inf/negative depth | `feat(fluids): add GPU shallow-water solver` |
+| `W-006` | S | Deferred with W-005: render `terrain height + water depth`; simulated surface normals and velocity drive visual detail/foam | `feat(water): render simulated surface water` |
 
-**M6 exit / Simulation Lab 0.2:** rigid bodies collide with the canonical
-terrain while a tested shallow-water state drives the displayed water surface.
+**M6 CPU checkpoint achieved:** W-004 provides the tested wet/dry reference
+solver. The GPU solver and simulated-surface rendering remain approved but do
+not gate character wading or swimming.
 
-### M7 - Coupled environment
+### M7 - Playable island
+
+Each row remains one owner-reviewed commit. General entities, an ECS,
+production skeletal assets, combat, underwater movement, and dynamic fluid
+coupling are outside this first playable path.
+
+| ID | Level | Increment and acceptance gate | Suggested commit |
+|---|---:|---|---|
+| `ISL-001` | V | Complete: retain the Environment Lab and numerical fixtures while adding a separate Q8 island over the existing `241x241` topology; lock checksum `0x53DD2821AE9ACDEA`, one connected dry component, a dry spawn and continuously walkable loop, a fully submerged perimeter, and a dry/shallow/transition/swim transect; make it the no-argument sandbox scenario and extend the existing 20-DWORD, six-vertex water path with a validated outside-footprint support mode that adds no pass, texture, descriptor, resource, or simulated state | `feat(terrain): add playable island scenario` |
+| `WQ-001` | - | Add a geometry-neutral CPU-authoritative calm-water query for support containment, surface height, bed height, local depth, and optional flow; agree with the visible equilibrium surface and never access a GPU resource or wait on readback | `feat(water): add gameplay water queries` |
+| `CHR-001` | S | Add one bounded player-capsule state, named keyboard/mouse action commands sampled at fixed-tick boundaries, previous/current snapshots, spawn/reset behavior, and an inspectable temporary proxy; do not add a general entity system or locomotion yet | `feat(character): add player capsule state` |
+| `CAM-001` | V | Add an interpolated third-person follow/orbit camera, camera-relative movement basis, bounded pitch/distance, and a canonical-terrain obstruction probe without changing character authority | `feat(camera): add third-person follow camera` |
+| `CHR-002` | S | Add gravity, canonical-terrain capsule grounding, walkable-slope classification, stable support, falling, and landing; prove fixed-rate invariance and transactional invalid-state handling before horizontal control | `feat(character): add terrain grounding` |
+| `CHR-003` | S | Add fixed-tick walk/run acceleration, braking, facing, and bounded slope traversal from camera-relative commands; the player follows the island route without penetration or render-rate dependence | `feat(character): add grounded locomotion` |
+| `CHR-004` | S | Add jump launch, airborne control, landing, and deterministic recovery to the dry spawn; exclude ledge grabs, ladders, wall climbing, and arbitrary obstacle stepping | `feat(character): add jumping and landing` |
+| `CHR-005` | S | Add dry-to-wading transitions from WQ-001, immersion hysteresis, depth-scaled movement, and reliable shore exit without changing water volume | `feat(character): add shallow-water wading` |
+| `CHR-006` | S | Add surface-swim entry/exit, buoyant surface positioning, directional movement, and recovery to grounded motion; underwater free-swimming and combat remain later | `feat(character): add surface swimming` |
+| `AVT-001` | V | Replace the diagnostic capsule with one project-owned low-poly placeholder and bounded idle/walk/run/jump/wade/swim presentation states; retain controller motion as authority and defer a general skeletal asset pipeline | `feat(character): render placeholder avatar` |
+| `DEMO-001` | - | Launch Island Demo 0.1 from the dry spawn: orbit a visible character, walk/run/jump around the island, enter progressively deeper water, wade, surface-swim, and return to land without penetration, teleport, NaN, duplicate state transitions, or frame-rate-dependent outcomes; pass Debug/Release and clean hardware/WARP validation | `feat(demo): complete playable island slice` |
+
+**M7 exit / Island Demo 0.1:** one original character can traverse one original
+small island and reliably transition between land, shallow water, and surface
+swimming.
+
+### M8 - Coupled environment specialization
+
+This former M7 track remains approved after the playable island. It is not a
+prerequisite for character swimming.
 
 | ID | Level | Increment and acceptance gate | Suggested commit |
 |---|---:|---|---|
@@ -833,7 +874,7 @@ terrain while a tested shallow-water state drives the displayed water surface.
 | `C-005` | C | Represent static body occupancy as effective moving-bed/free-volume data without deleting water; visualize excluded volume and boundaries | `feat(fluids): add conservative body occupancy` |
 | `C-006` | C | Add moving no-penetration boundary fluxes and conservative redistribution; the staggered floating-block case stays stable within mass tolerance | `feat(fluids): couple moving body displacement` |
 
-**M7 exit:** the permanent integration scenario is "measured precipitation
+**M8 exit:** the permanent integration scenario is "measured precipitation
 fills a terrain bowl and a block floats in it," with conservation, stability,
 and performance metrics. Visual rain particles are not required for this
 physical source term.
@@ -847,6 +888,9 @@ physical source term.
 | Camera/cube | Basis and near/far math, elapsed-time input, aspect-changing resize, 24/36 geometry bounds, one static upload, one indexed draw/camera upload/depth clear per submission |
 | Sky/assets | Cubemap orientation, translation invariance, sRGB/linear correctness, missing-asset error |
 | Terrain | Flat/ramp samples, ray and finite-segment closest-feature hits, normals, cell/chunk boundary equality, LOD seam captures, resident-region index/memory budgets, deterministic natural-height metrics, and closed-basin/spawn assertions |
+| Island | One connected landmass, closed coastline, dry spawn, traversable route, graduated shallow shelf, bounded deep-water region, and deterministic fixture checksum |
+| Character/camera | Fixed-tick command sampling, grounding, slopes, walk/run/jump, interpolation, camera obstruction, invalid-state rollback, and 30/60/120/144 Hz render invariance |
+| Water gameplay | CPU containment/surface/bed/depth queries, character-side immersion classification, threshold hysteresis, wading, surface-swim entry/exit, shore recovery, and no GPU synchronization |
 | Rain | Seed repeatability, capacity bounds, emission statistics, impact height, GPU timing |
 | Physics | Gravity trajectory, resting contact, analytic sphere/capsule closest features, full oriented-box SAT/manifold geometry, slope friction, restitution, stack stability, canonical islands, sleep/wake transitions, awake-path identity, rollback, and NaN scan |
 | Fluids | Lake at rest, dam break, walls, wet/dry front, non-negative depth, mass accounting, CPU/GPU tolerance |
@@ -858,13 +902,22 @@ fixed seeds and record their configuration so failures can be replayed.
 
 ## 12. Capability ceiling and deferred systems
 
-The San Andreas-class ceiling is a maximum envelope, not a backlog. Nothing in
-this section competes with the coupled-environment critical path through M7.
+The original-PS2-action-RPG ceiling is a maximum envelope, not a backlog.
+Nothing in this section competes with the playable-island critical path through
+M7.
+
+### Deferred simulated-water track
+
+`W-005` and `W-006` remain the next numerical-fluid increments when that track
+resumes. They are a Shark specialization rather than proof required for
+character swimming. WQ-001 begins with calm analytic water and preserves an
+adapter boundary so simulated water can replace its surface/flow source later
+without changing character policy.
 
 ### Deferred visual-weather track
 
 The owner deferred these effects on July 19, 2026. They remain approved but
-have no position on the active `W-005` path. Resuming one requires a small plan
+have no position on the active `WQ-001` path. Resuming one requires a small plan
 update; skipping them does not remove the numerical precipitation rate used by
 later hydrology.
 
@@ -879,9 +932,10 @@ later hydrology.
 
 A new capability enters the roadmap only when:
 
-1. it directly advances an existing M1-M7 gate or maps to one of the
-   San Andreas-class categories below;
-2. it remains bounded to Shark's local, region-scale product model;
+1. it directly advances an existing M1-M8 gate or maps to one of the bounded
+   action-RPG categories below;
+2. it remains bounded to authored zones and one local single-player
+   simulation;
 3. any modern GPU or simulation technique serves that approved behavior rather
    than becoming a new product goal; and
 4. it can be divided into small increments with observable acceptance gates.
@@ -889,22 +943,21 @@ A new capability enters the roadmap only when:
 If a proposal fails or ambiguously satisfies that test, it stays out until the
 owner explicitly amends this plan.
 
-### Eligible only after the coupled environment
+### Eligible after Island Demo 0.1
 
 Later proposals are eligible for planning when they directly support one of
 these bounded outcomes:
 
-- streamed region cells, exterior/interior transitions, culling, and visual
-  LOD;
-- stable entity handles, scenario/save serialization, and one authoritative
-  local world;
-- a third-person controller, skeletal animation, basic interactions, inventory,
-  and combat;
-- arcade-style vehicle handling, enter/exit behavior, and the road, bicycle,
-  rail, boat, and aircraft categories;
-- bounded pedestrian, traffic, navigation, and simple behavior systems;
-- mission/event scripting, HUD/map, audio, radio playback, and save/load; or
-- focused import, scenario, world-cell, and mission-authoring tools.
+- stable entity handles, scenario/save serialization, authored-zone loading,
+  and explicit exterior/interior transitions;
+- a project-owned glTF skeletal-asset path, animation sampling/blending, and
+  richer traversal actions such as ledge hanging or climbing;
+- a distinct underwater free-swim mode and later underwater-aware combat;
+- lock-on melee, abilities, magic/items, damage, enemies, party members,
+  bounded navigation, and simple behavior;
+- triggers, interactions, scripted encounters, dialogue, cutscenes,
+  progression, inventory, HUD, save/load, and audio; or
+- focused import, animation, scenario, encounter, and dialogue-authoring tools.
 
 Each still requires its own small roadmap increments and acceptance tests. The
 list defines what may eventually be proposed; it commits Shark to none of them
@@ -916,16 +969,17 @@ yet.
   infrastructure, or an online economy;
 - a general-purpose commercial editor, plug-in marketplace, arbitrary game
   genres, or a public compatibility layer for another engine;
-- infinite procedural or planet-scale worlds, massively simulated societies,
-  or unbounded crowds and traffic;
+- seamless region-scale open worlds, general vehicles/traffic, infinite
+  procedural or planet-scale worlds, massively simulated societies, or
+  unbounded crowds;
 - fully destructible environments, production soft bodies, cinematic
   destruction, or general volumetric physics;
 - procedural atmosphere as a product pillar, volumetric cloud simulation,
   erosion, ocean simulation, FLIP, SPH, or full 3D Navier-Stokes fluids;
-- VR/AR, photorealistic RAGE-class feature chasing, or hardware feature
-  checklists that do not solve an approved San Andreas-class requirement; and
-- proprietary Rockstar/RenderWare formats, assets, code, behavior cloning, or
-  binary/mod/save compatibility.
+- VR/AR, photorealistic feature chasing, or hardware feature checklists that do
+  not solve an approved action-RPG requirement; and
+- proprietary Square Enix, Disney, or *Kingdom Hearts* formats, assets, code,
+  characters, worlds, behavior cloning, or binary/mod/save compatibility.
 
 Custom allocators, a job system, parallel command recording, async compute,
 arbitrary convex collision, GJK/EPA, CCD, virtual texturing, DirectStorage,
@@ -936,50 +990,53 @@ fallback policy, tests, PIX evidence where relevant, and an ADR. "Modern" means
 using current stable tools and the smallest sound technique for the approved
 problem, not accumulating feature checkboxes.
 
-### Eventual controllable-entity path
+### Island-demo character path
 
-The current `World` boundary deliberately leaves room for controllable entities
-without requiring an ECS now. After M7, the likely dependency order is stable
-entity handles and scenario/save serialization; streamed world cells; a
-capsule-based third-person controller using the existing terrain, physics, and
-fluid queries; glTF skeletal meshes and animation; arcade vehicles and
-enter/exit behavior; bounded pedestrian and traffic populations; and finally
-mission/event scripting, HUD, and audio. An ECS is adopted only if measured
-entity scale or query patterns make it useful. A general-purpose editor or
-online architecture is not implied.
+The current `World` boundary leaves room for controllable entities without
+requiring an ECS. M7 starts with one explicitly bounded player record, one
+kinematic capsule, named tick-owned actions, and immutable snapshots. Terrain
+and water remain query providers rather than character-owned data. Stable
+general entity handles, an ECS, a production skeletal pipeline, combat, party
+members, and zone serialization wait until measured needs after the demo.
 
 ## 13. Principal risks and controls
 
 | Risk | Control |
 |---|---|
-| Scope explosion | Enforce the San Andreas-class feature-breadth ceiling, require one behavior and one acceptance gate per increment, and amend this plan before adding a new system category |
+| Scope explosion | Enforce the bounded PS2-era action-RPG ceiling, require one behavior and one acceptance gate per increment, and amend this plan before adding a new system category |
 | D3D12 lifetime/synchronization bugs | One queue first, centralized graph/barriers, fence retirement, debug layer, GPU validation, DRED |
 | Preview API churn | Pin retail Agility/DXC on `main`; experiments stay isolated |
 | Hardware differences | Startup capability report, explicit adapter choice, WARP smoke, multi-vendor tolerance tests |
 | Render/collision mismatch | One canonical `HeightTileSurface` source and identical fixed-triangle interpolation rules |
 | Resident-terrain growth | T-006 holds 58,081 shared vertices and 225 chunks on global `R16_UINT`; its measured 2,473,944-byte surface payload stays below 2.5 MiB and its two packed committed D3D12 buffers total 2,621,440 bytes; require evidence before wider indices, render sections, or streaming |
 | Custom physics robustness | Restrict shapes/features, build analytic tests, and keep a replaceable backend boundary |
+| Character-controller instability | Keep one kinematic capsule, fixed-tick commands, canonical terrain/water queries, explicit movement-mode hysteresis, and render-rate invariance tests |
 | Fluid instability or lost water | Conservative scheme, CFL substeps, positivity checks, lake-at-rest and mass accounting tests |
-| CPU/GPU stalls | GPU-owned fluid state, immutable snapshots, delayed/coarse queries, no full per-frame readback |
+| CPU/GPU stalls | CPU-authored gameplay water queries for the island; GPU-owned fluid state, immutable snapshots, delayed/coarse adapters, and no full per-frame readback when simulation resumes |
 | Coupling instability | Progress from independent systems to one-way and then staggered two-way coupling |
 | VRAM/descriptor growth | Fixed budgets, fence-safe handles, telemetry before streaming or aliasing |
 | Unlicensed content | Procedural/owned/licensed source assets with recorded provenance |
 
 ## 14. Immediate next increment
 
-After W-004 is reviewed and committed by the owner, implement only `W-005`:
+With ISL-001 completed, implement only `WQ-001`:
 
-- add D3D12-owned ping-pong depth/momentum resources behind the platform-neutral
-  fluid boundary and schedule fixed-step batches through declared graph access;
-- port the W-004 first-order hydrostatic/Rusanov update and wet/dry policy to a
-  pinned compute shader without making the renderer own simulation state;
-- compare small deterministic GPU cases with the double-precision CPU oracle
-  under documented tolerances and fail focused verification on NaN, Inf, or
-  negative depth;
-- prove resource transitions, dispatch bounds, deterministic input/output
-  staging, and fence-safe readback under the D3D12 debug layer; and
-- stop before simulated-water rendering, async compute, per-frame full
-  readback, rain coupling, tiled runoff, or buoyancy.
+- add a platform- and renderer-independent calm-water body/query boundary under
+  `engine/water`, using the Island Demo's authored footprint, support side,
+  surface height, and optional zero flow;
+- combine that authored body with canonical `HeightTileSurface` samples to
+  report containment, surface height, bed height, and nonnegative local depth;
+  water containment requires both authored horizontal support and canonical
+  bed below the surface, with an explicit shoreline tolerance policy so
+  gameplay cannot disagree with triangle-interpolated visible terrain;
+- return explicit no-water/out-of-terrain results and reject nonfinite or
+  internally inconsistent inputs transactionally;
+- prove agreement at the Island Demo's dry, shallow, transition, swim,
+  tolerance-adjacent shoreline, and terrain-boundary cases, plus deterministic
+  repeated queries;
+  and
+- stop before capsule immersion policy, movement-mode thresholds, character
+  state, GPU readback, dynamic waves, fluid coupling, or renderer changes.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -1219,14 +1276,32 @@ W-004-focused runs each pass 10,118 assertions across 13 cases; the combined
 fluid suite passes 12,679 assertions across 41 cases. Both complete CPU
 configurations pass 492,415 assertions across 321 cases.
 
-The active queue is `W-005`, the GPU shallow-water solver. `R-001` through
-`R-004` remain deferred.
+ISL-001 adds a separate project-owned Q8 island without changing the retained
+Environment Lab or fluid fixtures. Its `210/170`-meter warped footprint sits
+inside the unchanged `960x960`-meter resident terrain; checksum
+`0x53DD2821AE9ACDEA` locks the shaped heights. The default launch has one dry
+component, a dry spawn at `(0, 0.890625, 112)`, a continuously sampled loop of
+at least 500 meters, no dry terrain-edge samples, at least seven meters of
+perimeter depth, and fixed shore depths `0.33984375`, `1.359375`, and
+`5.734375` meters. The visual water quad now supports the outside of the
+authored footprint through one formerly reserved root constant while retaining
+20 DWORDs, six vertices, one pass, four geometry buffers, ten persistent
+descriptors, and no water resource or simulated state.
+
+Debug and Release each pass 492,503 assertions across 327 cases. The 1,000-frame
+RTX 4070, 600-frame WARP, and focused 120-frame GPU-validated WARP smokes retain
+zero D3D12 corruption/errors and zero live child objects; the Island Demo smoke
+locks `93 -> 72 -> 61` visible chunks, a `0.501953125`-meter maximum coarse
+error, and one water draw per submitted frame.
+
+The active queue is `WQ-001`, CPU gameplay-water queries.
+`W-005`, `W-006`, `R-001` through `R-004`, and coupled hydrology remain
+approved but deferred from the Island Demo 0.1 critical path.
 
 ## 15. Primary technical references
 
-- [Official Grand Theft Auto: San Andreas manual](https://media.rockstargames.com/rockstargames-newsite/img/manuals/en_us/GTA_SA_PS3_MANUAL_ENG.pdf)
-- [Official Rockstar San Andreas game tips](https://support.rockstargames.com/articles/45AsV3RgyoHZqpsHgDppXu/game-tips-for-gta-san-andreas-special-ed)
-- [EA/Criterion retrospective on technology layered over RenderWare 3.x](https://www.ea.com/news/frostbite-software-engineer-alex-fry)
+- [Square Enix: the KINGDOM HEARTS series began in 2002](https://www.square-enix-games.com/en_US/home/attention-keyblade-wielders-kingdom-hearts-series-coming-steam)
+- [Official KINGDOM HEARTS manual: field actions, targeting, and swimming controls](https://www.kingdomhearts.com/kh15manual/kingdom_hearts_15_manual.pdf)
 - [DirectX 12 Agility SDK releases](https://devblogs.microsoft.com/directx/directx12agility/)
 - [Getting started with the Agility SDK](https://devblogs.microsoft.com/directx/gettingstarted-dx12agility/)
 - [Microsoft Direct3D WARP package](https://www.nuget.org/packages/Microsoft.Direct3D.WARP)

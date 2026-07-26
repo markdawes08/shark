@@ -12,9 +12,10 @@ daylight fallback. S-003 adds a bounded linear-HDR environment, derives the
 image-based-lighting data used by the scene, and sends all scene color through
 a final tone-map pass.
 
-This is intentionally a small, modern lighting foundation inside Shark's San
-Andreas-class feature ceiling. It is not a physical atmosphere, weather model,
-dynamic time-of-day system, cloud renderer, or RAGE-scale lighting stack.
+This is intentionally a small, modern lighting foundation inside Shark's
+bounded PS2-era action-RPG feature ceiling. It is not a physical atmosphere,
+weather model, dynamic time-of-day system, cloud renderer, or photoreal
+lighting stack.
 
 ## Deterministic HDR source and derived maps
 
@@ -255,8 +256,8 @@ cross-face seam-hardened production filter. The current sky samples radiance
 mip zero, and material roughness uses the separately GGX-prefiltered specular
 cube, so that limitation is not on the visible S-003 path.
 
-It does not broaden Shark beyond the approved San Andreas-class local-sandbox
-ceiling. T-006 historically completed the bounded `241x241`-sample resident
+It does not broaden Shark beyond the approved bounded action-RPG ceiling.
+T-006 historically completed the bounded `241x241`-sample resident
 terrain capacity while preserving sky pixels, resources, shaders, and the
 one-draw sky policy. `T-007` completed its fixed-seed natural rolling heights
 on July 19, 2026; its final near-pose smoke phase kept both terrain index
@@ -269,5 +270,5 @@ the one-draw sky policy. `W-001` preserves those contracts and places
 transparent water after the opaque sky so wireframe terrain cannot expose
 clear pixels that overwrite the lake. This component page no longer duplicates
 the rolling project queue; [ENGINE_PLAN.md](ENGINE_PLAN.md) is the source of
-truth for the next increment. Rain remains deferred under the San
-Andreas-class ceiling.
+truth for the next increment. Rain remains deferred under the bounded
+action-RPG ceiling.

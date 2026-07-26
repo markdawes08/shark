@@ -789,6 +789,14 @@ current one-meter-radius, four-meter-cell, slope-bounded Environment Lab
 heightfield. It is not closest-feature sphere/triangle collision and can still
 tunnel under sufficiently large discrete motion. The visible lake remains
 W-001 presentation-only water, and `R-001` through `R-004` remain deferred.
-W-004 adds no sandbox or GPU fluid integration. The active queue is `W-005`,
-the GPU shallow-water solver, and is centralized in
+W-004 adds no sandbox or GPU fluid integration. ISL-001 now supplies the
+deterministic playable-island scenario while retaining this fixture. The active
+queue is `WQ-001`, CPU gameplay-water queries. W-005 remains an approved
+deferred fluid specialization; the queue is centralized in
 [ENGINE_PLAN.md](ENGINE_PLAN.md).
+
+ISL-001 keeps the four-sphere runtime diagnostics while moving them onto the
+playable island. The 1,000-frame hardware smoke records exact broad-phase
+totals `4000/6000/179/1/1/1` for proxies, possible pairs, X overlaps,
+candidates, narrow-phase tests, and contacts. The changed overlap count is
+scenario placement evidence, not a physics-algorithm change.

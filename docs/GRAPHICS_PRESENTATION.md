@@ -290,9 +290,9 @@ focused GPU-validated WARP requires 120. The paths:
   uses `640x360 -> 480x300`, preserving the same aspect sequence;
 - start with 93 of 225 terrain chunks visible at a `0/93` LOD0/coarse split,
   retain that after resize, then script yaw `1.25` radians so 72 remain visible
-  at a `0/72` split from three quarters through seven eighths, then move only
+  at a `1/71` split from three quarters through seven eighths, then move only
   the smoke camera to `(16, -1, 0)` with the same yaw/pitch for the final
-  eighth so 61 remain at `1/60`;
+  eighth so 61 remain at `0/61`;
 - exercise all three contexts;
 - exercise both terrain fill modes, all three material views, and both
   environment modes;
@@ -350,7 +350,7 @@ parallel recording, copy queue, async compute, enhanced barriers, automatic
 exposure, HDR display output, or texture streaming.
 
 This modern chunked HDR implementation does not broaden Shark beyond its
-approved San Andreas-class local-sandbox feature ceiling. T-006 historically
+approved bounded PS2-era action-RPG feature ceiling. T-006 historically
 completed the bounded `241x241`-sample, `960x960`-meter capacity fixture.
 `T-007` completed its fixed-seed natural rolling heights on July 19, 2026 with
 unchanged topology, resources, and canonical queries. Its final near-pose phase
@@ -369,5 +369,15 @@ visible shoreline. Terrain remains unchanged and no fluid simulation is
 claimed. PHY-004 feeds four interpolated simulation transforms through seven
 sphere root constants per draw. It records the same four draws without
 changing frame-resource, descriptor, geometry, pass, or upload budgets. Rain remains
-deferred under the San Andreas-class ceiling. See
+deferred under the bounded action-RPG ceiling. See
 [ENGINE_PLAN.md](ENGINE_PLAN.md) for the active increment queue.
+
+ISL-001 reuses that exact presentation path with scenario-authored exterior
+support: the warped island footprint is dry, the surrounding authored domain
+is water, and canonical-terrain depth testing exposes the shoreline. The
+scenario uses 2,048-meter X/Z half-extents so the far plane ends against water
+rather than the water quad. It adds no GPU resource, descriptor, upload, PSO,
+root-signature DWORD, or graph pass. The active smoke schedule is
+`0/93 -> 1/71 -> 0/61`; cumulative 1,000-frame draw/index totals remain
+unchanged because the one LOD0 chunk moved from the final phase to the turned
+phase.

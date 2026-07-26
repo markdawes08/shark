@@ -250,14 +250,15 @@ with GPU-based validation. Hardware and normal WARP change from `1280x720` to
 `960x600`; focused GPU validation alone uses `640x360 -> 480x300`. Both
 sequences intentionally change aspect from `16:9` to `1.6`, and each applies
 `1.25` radians of scripted yaw at three quarters.
-The interactive camera starts at T-008's scenario-owned
-`(-128,3.34375,-20)` eye with pitch `-0.1` radians and a 1,500-meter far plane,
-overlooking the dry basin. Presentation smoke deliberately retains the
+The interactive camera starts at ISL-001's scenario-owned
+`(0,2.890625,112)` eye with pitch `-0.12` radians and a 1,500-meter far plane,
+standing on the dry island. Presentation smoke deliberately retains the
 separate deterministic `(0,28,112)` start with pitch `-0.25`. Its initial and
 resized views expose 93 terrain chunks at a `0/93`
-LOD0/coarse split. The turned overview exposes 72 at `0/72` from three quarters
+LOD0/coarse split. The turned overview exposes 72 at `1/71` from three quarters
 through seven eighths. For the final eighth, presentation smoke alone moves to
-`(16, -1, 0)` with the same yaw/pitch and exposes 61 at `1/60`, keeping both
+`(16, -1, 0)` with the same yaw/pitch and exposes 61 at `0/61`; the preceding
+turned phase keeps both
 terrain index ranges live without replacing the scenario-owned interactive start.
 Hardware and normal WARP minimize/restore at halfway; focused validation
 intentionally skips that already-covered interval.
@@ -271,7 +272,7 @@ The permanent accounting contract requires:
   marker; plus one six-vertex water draw, one fullscreen tone-map draw, five
   texture-table bindings, one frame-constant upload, and one depth clear;
 - 225 chunk tests per submitted frame, visible-plus-culled conservation, exact
-  `93 -> 72 -> 61` visibility, and exact `0/93 -> 0/72 -> 1/60` LOD0/coarse
+  `93 -> 72 -> 61` visibility, and exact `0/93 -> 1/71 -> 0/61` LOD0/coarse
   splits across the deterministic smoke poses;
 - one graph compilation/execution, five pass executions, 15 imports, five
   dependencies, six recorded transitions, and 34 elided transitions per frame;
@@ -306,16 +307,14 @@ after resize. Press `F4` and verify the magenta bounds and cyan terrain pin
 appear, with the pin anchored to the displayed surface and pointing along its
 exact geometric normal; press it again and verify both disappear. Resize,
 minimize/restore, and shutdown must remain clean.
-The validation cube must remain outside the analytic basin support, above the
-`-4`-meter future waterline, and unburied. All four material spheres must meet
-those conditions at their initial paused spawns; after `F5`, bodies 1 and 2
+The validation cube and all four material spheres must begin on the dry island,
+above the `-4`-meter waterline and unburied. After `F5`, bodies 1 and 2
 collide airborne while primary body 0 settles on the visible canonical LOD0
-face without hover or penetration. T-008
-adds the dry indentation and metadata but creates no water. The scenario-owned
-camera must begin on dry ground overlooking the basin without changing the sky
-under translation.
+face without hover or penetration. The scenario-owned camera must begin on dry
+ground facing across the island without changing the sky under translation.
 When running `--present-smoke`, its final reported state must be 61 visible
-chunks at `LOD0=1, coarse=60`; this final near pose is not an interactive camera
+chunks at `LOD0=0, coarse=61`; the preceding turned phase must report
+`LOD0=1, coarse=71`. These smoke poses are not interactive camera
 default.
 No cube face, edge, or corner may appear as a painted wall. See
 [the sky procedure](SKYBOX.md#manual-acceptance).
@@ -381,4 +380,4 @@ see
 [the simulation contract](SIMULATION.md). This component page
 no longer duplicates the rolling project
 queue; [ENGINE_PLAN.md](ENGINE_PLAN.md) is the roadmap source of truth. Rain
-remains deferred under the San Andreas-class ceiling.
+remains deferred under the bounded PS2-era action-RPG ceiling.

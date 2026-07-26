@@ -244,4 +244,4 @@ heap, descriptor-lifetime, or device-removal policy. Water's root signature
 and PSO remain renderer-owned objects covered by the existing shutdown and
 live-object validation. This component page no longer duplicates the rolling
 project queue; [ENGINE_PLAN.md](ENGINE_PLAN.md) is the roadmap source of truth.
-Rain remains deferred under the approved San Andreas-class ceiling.
+Rain remains deferred under the approved bounded action-RPG ceiling.

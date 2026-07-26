@@ -20,7 +20,8 @@ cbuffer WaterSurfaceConstants : register(b1)
 
     uint water_environment_mode;
     float water_environment_max_lod;
-    float2 water_reserved;
+    uint water_support;
+    float water_reserved;
 };
 
 TextureCube<float4> water_environment_radiance : register(t0);
@@ -120,9 +121,13 @@ float4 PSMain(const VertexOutput input) : SV_Target0
 {
     const float radius_squared =
         water_normalized_radius_squared(input.world_position.xz);
-    clip(1.0F - radius_squared);
+    const float support_distance =
+        water_support == 0U
+        ? 1.0F - radius_squared
+        : radius_squared - 1.0F;
+    clip(support_distance);
 
-    const float interior = saturate(1.0F - radius_squared);
+    const float interior = saturate(support_distance);
     const float edge_coverage = saturate(interior * 48.0F);
     const float approximate_depth =
         water_core_depth * interior * interior;

@@ -249,10 +249,11 @@ hdr_scene_color_srv_creations == resize_count + 1
 ```
 
 Each smoke starts and resizes with 93 visible chunks at a `0/93` LOD0/coarse
-split, reaches 72 at `0/72` after its scripted `1.25`-radian yaw, then spends
+split, reaches 72 at `1/71` after its scripted `1.25`-radian yaw, then spends
 its final eighth at the smoke-only `(16, -1, 0)` near pose with the same
-yaw/pitch and `61 (1/60)`. The same counts are locked by focused frustum and
-LOD-selection tests. Surface index counts are 80,352, 62,208, and 53,376 at
+yaw/pitch and `61 (0/61)`. The same counts are locked by focused island
+scenario and renderer tests. Surface index counts are 80,352, 62,880, and
+52,704 at
 those poses. `terrain_draw_calls` and LOD/fill/material-view counters count
 actual D3D12 draws, not one logical Terrain pass per frame. Bounds and the query
 marker are off by default; the smoke enables them for one 30-frame interval,
@@ -265,8 +266,10 @@ pix_terrain_events + cube_draw_calls + skybox_draw_calls + water_draw_calls
 ```
 
 For `Q=F/8`, cumulative visibility is
-`Q * (2*A + 4*B + C + D)` with `A/B/C/D=93/93/72/61`. Only D contributes
-`Q` LOD0 draws. The Debug and Release 1,000-frame hardware paths require:
+`Q * (2*A + 4*B + C + D)` with `A/B/C/D=93/93/72/61`. Only D contributed
+`Q` LOD0 draws in the historical Environment Lab schedule; in the Island Demo,
+only C contributes them. The Debug and Release 1,000-frame hardware paths
+require:
 
 ```text
 terrain_chunks_tested/visible/culled == 225000/86375/138625
@@ -303,7 +306,7 @@ terrain_shaded_draw_calls/terrain_material_weight_draw_calls
 ```
 
 All three blocks additionally require visibility last/min/max `61/61/93`,
-final LOD0/coarse `1/60`, scene/sky matrix changes `4/3`, 2,790 bounds
+final LOD0/coarse `0/61`, scene/sky matrix changes `4/3`, 2,790 bounds
 draws/66,960 indices, and 30 marker draws/180 indices. T-007 Debug/Release
 hardware, normal WARP, and focused GBV passed their blocks exactly with zero
 corruption/errors and zero live child objects. T-008 retains these locked
@@ -411,9 +414,9 @@ For manual PIX acceptance:
 2. At the initial pose, confirm `Terrain` contains 93 864-index coarse draws
    and four spheres, with no LOD0 draw. Toggle `F4` and confirm 93 matching
    24-index bounds draws plus one marker; they are absent when the toggle is
-   off. At the scripted overview, confirm 72 coarse and zero LOD0 draws. In the
-   final smoke-only near phase, confirm one 1,536-index LOD0 draw and 60
-   864-index coarse draws. Cube and sky each retain one indexed draw; `Water`
+   off. At the scripted overview, confirm one 1,536-index LOD0 draw and 71
+   864-index coarse draws. In the final smoke-only near phase, confirm 61
+   coarse draws and no LOD0 draw. Cube and sky each retain one indexed draw; `Water`
    retains one six-vertex non-indexed draw and `ToneMap` one fullscreen draw.
 3. Confirm all six graph transitions occur inside `Frame` but outside the
    applicable pass intervals.
@@ -435,8 +438,8 @@ upload timing, dynamic pass profiler, query-heap growth, graph-wide automatic
 instrumentation, cross-queue clock calibration, stable-power-state control,
 multi-queue timing, or performance threshold.
 
-The diagnostics remain proportional to Shark's bounded San Andreas-class
-local-sandbox goal. T-006 historically completed the bounded
+The diagnostics remain proportional to Shark's bounded PS2-era action-RPG
+goal. T-006 historically completed the bounded
 `241x241`-sample capacity fixture, memory/startup evidence, and clean graphics
 runs. `T-007` completed its deterministic natural-height contract on July 19,
 2026 while retaining the diagnostics architecture and adding a final
@@ -448,8 +451,15 @@ pair. It reuses the radiance descriptor and creates no water GPU resource, so
 the static upload, four geometry buffers, and ten persistent descriptors stay
 unchanged. The active diagnostics contract is `15/5/5/6/34`, five texture
 bindings, and 12 timestamps per submitted frame. Rain remains deferred and
-the approved San Andreas-class ceiling is unchanged. PHY-004 preserves this
+the approved bounded action-RPG ceiling is unchanged. PHY-004 preserves this
 accounting while four CPU simulation snapshots rebind seven root constants for
 normalized orientation and position. It adds no PIX event, timestamp, resource,
 descriptor, pass, or draw. See [ENGINE_PLAN.md](ENGINE_PLAN.md) for the active
 increment queue.
+
+ISL-001 preserves the complete `15/5/5/6/34`, five-binding, and 12-timestamp
+diagnostics contract while moving the single active LOD0 chunk to the turned
+phase. Debug and Release each pass 492,503 assertions across 327 cases. The
+1,000-frame RTX 4070, 600-frame WARP, and focused 120-frame GPU-validated WARP
+smokes pass the island schedule with one water draw per submitted frame, zero
+D3D12/DXGI corruption or errors, and zero renderer-owned live child objects.

@@ -52,7 +52,9 @@ struct WaterSurfaceRootConstants final {
         static_cast<std::uint32_t>(
             EnvironmentLightingMode::image_based)};
     float environment_max_lod{5.0F};
-    float reserved_zero{};
+    std::uint32_t support{
+        static_cast<std::uint32_t>(
+            WaterSurfaceSupport::inside_warped_footprint)};
     float reserved_one{};
 };
 
@@ -76,7 +78,11 @@ struct WaterSurfaceRootConstants final {
         settings.z_warp_divisor > 0.0F &&
         settings.core_depth > 0.0F &&
         settings.render_half_extent_x >= settings.semi_axis_x &&
-        settings.render_half_extent_z >= settings.semi_axis_z;
+        settings.render_half_extent_z >= settings.semi_axis_z &&
+        (settings.support ==
+             WaterSurfaceSupport::inside_warped_footprint ||
+         settings.support ==
+             WaterSurfaceSupport::outside_warped_footprint);
     if (!fields_are_valid) {
         return false;
     }
@@ -186,12 +192,19 @@ struct WaterSurfaceRootConstants final {
         std::abs(
             static_cast<double>(z) -
             static_cast<double>(settings.center.z));
-    return offset_x <=
-            static_cast<double>(settings.render_half_extent_x) &&
-        offset_z <=
-            static_cast<double>(settings.render_half_extent_z) &&
-        water_surface_normalized_radius_squared(settings, x, z) <=
-            1.0;
+    if (offset_x >
+            static_cast<double>(settings.render_half_extent_x) ||
+        offset_z >
+            static_cast<double>(settings.render_half_extent_z)) {
+        return false;
+    }
+
+    const auto radius_squared =
+        water_surface_normalized_radius_squared(settings, x, z);
+    return settings.support ==
+            WaterSurfaceSupport::inside_warped_footprint
+        ? radius_squared <= 1.0
+        : radius_squared >= 1.0;
 }
 
 [[nodiscard]] inline WaterSurfaceRootConstants
@@ -221,7 +234,7 @@ make_water_surface_root_constants(
         .environment_lighting_mode =
             static_cast<std::uint32_t>(environment_lighting_mode),
         .environment_max_lod = 5.0F,
-        .reserved_zero = 0.0F,
+        .support = static_cast<std::uint32_t>(settings.support),
         .reserved_one = 0.0F,
     };
 }

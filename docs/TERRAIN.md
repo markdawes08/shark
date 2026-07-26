@@ -1,37 +1,30 @@
 # Canonical Terrain-Tile Contract
 
-- **Completed through:** `PHY-010`
-- **Last verified:** July 22, 2026
+- **Completed through:** `ISL-001`
+- **Last verified:** July 25, 2026
 
-T-008 composes the untouched T-007 rolling-height oracle with a bounded
-deterministic Q8 lake-basin post-process. The active composite checksum is
-`0x4890DE3E1AA063A9`; extrema and world AABB remain unchanged, while maximum
-LOD0 slope becomes `18.681598` degrees, maximum adjacent X/Z steps become
-`1.16015625`/`1.33203125` meters, and maximum coarse deviation becomes
-`0.603515625` meter. The validated spawn-side support component is centered at
-`(-128,-128)` with `56/48`-meter nominal semi-axes and dense-sampled continuous
-spans of approximately `111.998421x95.998672` meters. Its waterline is `-4`
-meters. The
-sampled core at `(-124,-10.47265625,-128)` is `6.47265625` meters below that
-line; 260 canonical rim samples are fixed at `-2.5` meters, and the footprint
-contains 530 canonical samples.
+ISL-001 retains the T-007 rolling-height source and all historical T-008 basin
+fixtures, but the no-argument Island Demo applies a separate deterministic Q8
+island shape to the unchanged `241x241`, four-meter topology. Its active
+checksum is `0x53DD2821AE9ACDEA`, maximum coarse error is `0.501953125` meter,
+and exactly one dry lattice component lies inside a warped `210x170`-meter
+footprint at the origin. The `-4`-meter waterline surrounds a low walkable
+interior, a shallow shelf, and a seabed that reaches at least seven meters
+below water on every terrain edge.
 
-The scenario publishes dry spawn ground at `(-128,1.34375,-20)` and a camera eye
-at `(-128,3.34375,-20)` with pitch `-0.1`; sampled support-boundary distance is
-about 58.496138 meters. The scenario also publishes four PHY-004 sphere
-spawns. Primary body 0 remains at `(-128,-44)` exactly 12 meters above its
-canonical LOD0 ground sample; bodies 1 and 2 share an airborne collision
-height, and body 3 remains isolated. Cube and all spheres remain outside the
-water support and initially unburied.
-W-001 consumes the basin metadata without changing any canonical terrain
-sample, query, topology, resource, or descriptor.
+The scenario publishes dry spawn ground at `(0,0.890625,112)` and camera eye
+`(0,2.890625,112)` with pitch `-0.12`. It also retains four PHY-004 diagnostic
+spheres, an exactly sampled 500-meter-or-longer walkable loop, and dry/shallow/
+transition/swim shore samples. W-001's six-vertex surface now renders the
+exterior support without changing canonical terrain ownership, topology, GPU
+resources, descriptors, or graph structure.
 
-Focused Debug verification passes 56,792 lake-basin assertions across three
-cases, 4,732 scenario assertions across three cases, 23 culling assertions
-across two cases, and 367 LOD assertions across two cases. Active T-008
-validation passed the Debug build and all `150/150` tests in 195.60 seconds;
-its hardware, WARP, and WARP+GBV presentation gates took 8.61, 83.60, and
-66.85 seconds. The Release build and all `150/150` tests passed in 157.45
+Debug and Release each pass 492,503 assertions across 327 cases. The 1,000-frame
+RTX 4070, 600-frame WARP, and focused 120-frame GPU-validated WARP smokes pass
+the `93 -> 72 -> 61` visibility and `0/93 -> 1/71 -> 0/61` LOD schedule with
+zero D3D12 corruption/errors and zero renderer-owned live child objects.
+Historical T-008 basin evidence remains documented below because those
+retained fixtures still protect the earlier terrain and water contracts.
 seconds, with the same gates taking 2.06, 78.66, and 60.14 seconds. Both
 configurations retained exact smoke accounting.
 
@@ -533,13 +526,14 @@ of all six clip half-spaces. Nonfinite or rank-deficient view-projection
 matrices fail the frame before submission.
 
 The interactive camera starts at the scenario-owned eye
-`(-128,3.34375,-20)` meters with pitch `-0.1` radians and a 1,500-meter far
-plane, overlooking the dry basin. Normal movement is 32 meters/second and
+`(0,2.890625,112)` meters with pitch `-0.12` radians and a 1,500-meter far
+plane, standing on the dry island. Normal movement is 32 meters/second and
 sprint is four times that speed. Presentation smoke deliberately retains its
 separate deterministic `(0,28,112)` pose with pitch `-0.25`. At both its
 initial `16:9` aspect and the scripted
 `960x600` resize, the camera sees `93 / 225` chunks. Turning to yaw `1.25`
-radians at the resized aspect leaves `72 / 225` visible. The renderer logs
+radians at the resized aspect leaves `72 / 225` visible at a `1/71`
+LOD0/coarse split; its final translated pose sees 61 at `0/61`. The renderer logs
 `Terrain chunks: <visible> / <total> visible (LOD0=<fine>, coarse=<coarse>)`
 under `renderer.terrain` only when visibility or the LOD split changes. Culling
 uses the ordinary camera matrix, never the translation-free sky matrix, and
@@ -993,15 +987,15 @@ coverage locks shortest 3D camera-to-closed-AABB distance, the inclusive
 `error <= 0.008 * distance` threshold, inside/zero-error behavior,
 finite-input rejection, and all three active smoke splits.
 
-For manual acceptance, run `SharkSandbox` without arguments. The active
-960-meter landscape must read as broad, mostly flat rolling terrain with a
-smoothly irregular lake near the scenario spawn. The basin must not resemble a
-perfect circle, sharp crater, repeated procedural stamp, or stepped terrace.
-Its depth-tested shoreline must follow the canonical terrain, while Fresnel,
+For manual acceptance, run `SharkSandbox.exe` without arguments. The active
+960-meter landscape must read as one broad, low natural island surrounded by
+water. The dry footprint and shallow shelf must not resemble a perfect circle,
+sharp crater, repeated procedural stamp, or stepped terrace. Its depth-tested
+shoreline must follow the canonical terrain, while Fresnel,
 depth tint and absorption, bounded environment reflection/refraction, animated
 normal-only waves, and sun glint make the surface readable without implying a
 fluid simulation. The numeric tests, not visual estimation, own the exact
-footprint, depth, rim, and spawn-distance gates. Capture the initial interactive
+footprint, shore-depth, route, and spawn gates. Capture the initial interactive
 view plus the resized and turned deterministic smoke views for comparison.
 Interactive terrain diagnostics start off; press `F4` and confirm the cyan pin
 begins on the terrain and follows its exact triangle normal while the visible
@@ -1012,9 +1006,9 @@ disappear together without popping an intersecting chunk. Press `F4` again and
 confirm both diagnostic classes disappear without changing surfaces or LOD.
 The separate deterministic smoke must begin at
 `93 / 225 visible (LOD0=0, coarse=93)`, retain 93 visible after its resize, reach
-`72 / 225 visible (LOD0=0, coarse=72)` after its yaw, then finish at the
+`72 / 225 visible (LOD0=1, coarse=71)` after its yaw, then finish at the
 smoke-only `(16, -1, 0)` pose with
-`61 / 225 visible (LOD0=1, coarse=60)`. That final phase does not change the
+`61 / 225 visible (LOD0=0, coarse=61)`. That final phase does not change the
 ordinary interactive start.
 
 In `F1` wireframe, inspect the interactive equal-coarse neighbors and confirm every
@@ -1071,8 +1065,8 @@ accounting, zero corruption/errors, and zero live child objects.
 T-008 composes that historical oracle with scenario-owned lake metadata and a
 bounded dry indentation. Its focused lake, scenario, culling, and LOD tests pass
 with the counts recorded above, and both complete active test runs pass
-`150/150`. It changes no San Andreas-class feature ceiling, and the visual-rain
-track remains deferred.
+`150/150`. It does not change the bounded PS2-era action-RPG feature ceiling,
+and the visual-rain track remains deferred.
 
 W-001 consumes that immutable metadata with one procedural six-vertex flat quad
 centered at `(-128,-4,-128)` and conservative `64/56`-meter half extents. The
@@ -1145,6 +1139,51 @@ preserves the W-002 hydrostatic fixture with hydrostatic reconstruction. It
 does not read a render mesh or coarse terrain LOD. W-004 now permits exact-dry
 cells and retained films while preserving a partially wet uneven-bed
 lake-at-rest shoreline over that same simulation-owned bed. It does not snap
-water depth to the terrain or derive collision from a visual LOD. The active
-queue is `W-005`, the GPU shallow-water solver, and remains centralized in
+water depth to the terrain or derive collision from a visual LOD. ISL-001 adds
+the separate playable-island fixture described below. The active queue is
+`WQ-001`, CPU gameplay-water queries. `W-005`, the GPU shallow-water solver,
+remains an approved deferred specialization in
 [ENGINE_PLAN.md](ENGINE_PLAN.md).
+
+## ISL-001 playable island
+
+ISL-001 retains `make_environment_lab_scenario()` and every compact, basin,
+physics, and fluid fixture. The no-argument sandbox instead calls
+`make_island_demo_scenario()`, which applies a separate deterministic Q8
+post-process to the unchanged `241x241`, four-meter terrain topology.
+
+The island uses a mildly warped `210x170`-meter elliptical footprint centered
+at the world origin and a `-4`-meter waterline. Every sample inside the
+footprint is dry; every sample outside it is submerged. Interior height blends
+the retained natural source relief into a low, walkable profile. Outside the
+shore, the bed progresses from a 0.25-meter shelf to a nine-meter deep-water
+profile while retaining bounded natural seabed relief. Quantization remains
+one Q8 unit (`1/256` meter).
+
+Permanent gates lock:
+
+- shaped-height checksum `0x53DD2821AE9ACDEA`;
+- exactly one connected dry lattice component and no dry perimeter sample;
+- at least seven meters of water over every terrain-edge sample;
+- dry spawn `(0, 0.890625, 112)` and a continuously sampled walkable loop of
+  at least 500 meters;
+- authored shore depths `0.33984375`, `1.359375`, and `5.734375` meters after
+  the dry sample;
+- unchanged 58,081 vertices, 225 chunks, and 540,000 combined indices; and
+- `0.501953125` meter maximum boundary-preserving coarse error.
+
+The calm-water renderer still issues one procedural six-vertex draw. A typed
+support mode now selects either the original basin interior or the island
+exterior through one formerly reserved root constant. The Island Demo authors
+a 2,048-meter half-extent on both X and Z so the water reaches beyond the 1,500-meter
+camera far plane. A fixed grid over the full authored quad provides regression
+evidence that the locked scenario has one sampled interior dry component and no sampled remote
+polynomial hole. Scenario construction owns this topology; the generic
+renderer validator checks numeric safety, not arbitrary polynomial components.
+No pass, texture, descriptor, buffer, simulated state, or canonical terrain
+ownership changed.
+
+Debug and Release each pass 492,503 assertions across 327 cases. The
+1,000-frame RTX 4070, 600-frame WARP, and focused 120-frame GPU-validated WARP
+smokes lock visible chunk phases `93 -> 72 -> 61`, one water draw per submitted
+frame, zero D3D12 corruption/errors, and zero live child objects.

@@ -4629,7 +4629,8 @@ core::Result<Renderer> Renderer::create(
         return core::Result<Renderer>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
             "Renderer water surface must provide finite positive axes, "
-            "warp divisors, depth, and shader-safe clip extents"));
+            "warp divisors, depth, shader-safe clip extents, and a "
+            "recognized support side"));
     }
 
     const auto native_window = static_cast<HWND>(config.native_window);

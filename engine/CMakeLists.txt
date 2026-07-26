@@ -83,15 +83,19 @@ add_library(SharkEngine STATIC
     simulation/include/shark/simulation/fixed_step_clock.hpp
     simulation/src/fixed_step_clock.cpp
     terrain/include/shark/terrain/height_tile.hpp
+    terrain/include/shark/terrain/island.hpp
     terrain/include/shark/terrain/lake_basin.hpp
     terrain/include/shark/terrain/material_palette.hpp
     terrain/src/height_tile.cpp
+    terrain/src/island.cpp
     terrain/src/lake_basin.cpp
     terrain/src/material_palette.cpp
     world/include/shark/world/camera.hpp
     world/include/shark/world/environment_lab_scenario.hpp
+    world/include/shark/world/island_demo_scenario.hpp
     world/src/camera.cpp
     world/src/environment_lab_scenario.cpp
+    world/src/island_demo_scenario.cpp
 )
 
 target_include_directories(SharkEngine

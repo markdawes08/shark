@@ -11,6 +11,7 @@ add_executable(SharkTests
     unit/assertion_tests.cpp
     unit/dds_cubemap_tests.cpp
     unit/environment_lighting_tests.cpp
+    unit/island_demo_scenario_tests.cpp
     unit/fluids_shallow_water_reference_tests.cpp
     unit/fluids_shallow_water_solver_tests.cpp
     unit/fluids_shallow_water_wet_dry_tests.cpp
@@ -48,6 +49,7 @@ add_executable(SharkTests
     unit/simulation_fixed_step_clock_tests.cpp
     unit/terrain_height_tile_tests.cpp
     unit/terrain_height_tile_query_tests.cpp
+    unit/terrain_island_tests.cpp
     unit/terrain_lake_basin_tests.cpp
     unit/terrain_material_palette_tests.cpp
     unit/environment_lab_scenario_tests.cpp

@@ -150,9 +150,10 @@ The same events also feed the fixed-tick player-command boundary: WASD and
 Shift are held movement/run actions, Space is a one-shot jump action, left
 mouse is primary action, right-mouse drag supplies bounded look deltas, and
 `R` resets the capsule. CAM-001 maps those look deltas to the fixed-tick orbit
-and consumes wheel zoom at the same boundary. CHR-002 records the player
-command and always advances vertical gravity/grounding; among those action
-fields only reset changes pose until grounded locomotion.
+and consumes wheel zoom at the same boundary. CHR-003 advances that orbit
+first, derives the current horizontal basis, and then applies walk/run,
+acceleration, braking, facing, and sampled canonical-terrain traversal to the
+player on the same fixed tick. Space and primary action remain deferred.
 
 ## Shader build contract
 
@@ -820,7 +821,7 @@ camera and exact `93 -> 72 -> 61` visibility schedule. It records 5,000 graph
 passes, 1,000 capsule draws, zero D3D12 corruption/errors, and zero live D3D12
 child objects.
 
-CHR-002 focused verification is:
+CHR-003 focused verification is:
 
 ```powershell
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[character][player-capsule]"
@@ -830,29 +831,33 @@ CHR-002 focused verification is:
 & .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe --present-smoke
 ```
 
-These checks cover stable flat and sloped support, steep classification,
-semi-implicit falling and one-tick landing, edge ownership, reset/collapse,
-transactional invalid input, vertical camera following, scenario-derived dry
-spawn, and exact 30/60/120/144 Hz transcripts. The hardware smoke additionally
-requires every emitted player tick to remain grounded at the canonical Island
-spawn while all GPU accounting remains unchanged.
+These checks cover camera-relative walk/run targets, acceleration, braking,
+reversal, facing, stable flat and sloped support, sampled steep/bounds
+rejection, semi-implicit falling and one-tick landing, edge ownership,
+reset/collapse, transactional invalid input, moving camera following, the
+complete dry Island route, and exact 30/60/120/144 Hz transcripts. The
+presentation smokes additionally require every neutral player tick to remain
+grounded at the canonical Island spawn while all GPU accounting remains
+unchanged.
 
-The complete Debug and Release suites each pass 506,735 assertions across 378
+The complete Debug and Release suites each pass 560,277 assertions across 385
 cases. The 1,000-frame Debug RTX 4070 presentation smoke records
 `player-grounded-ticks=1000`, 1,000 capsule draws, 5,000 graph passes, zero
-D3D12 corruption/errors, and zero live D3D12 child objects.
+D3D12 corruption/errors, and zero live D3D12 child objects. Packaged WARP
+passes 600 grounded ticks, 600 capsule draws, and 3,000 graph passes with the
+same clean validation state.
 
 Launch `SharkSandbox.exe` to inspect the blue capsule through the default
-third-person camera. Press `F5`, then use right-mouse drag and the wheel to
-exercise orbit/zoom; `F6` can advance either input one tick while paused.
-`F7` toggles the diagnostic free-fly camera. `R` resets the capsule on the next
-tick. Gravity and terrain grounding always advance with Character; WASD,
-Shift, Space, and left mouse already produce bounded fixed-tick commands, but
-horizontal movement and jumping remain deferred. See
-[CHARACTER.md](CHARACTER.md).
+third-person camera. Press `F5`, then use WASD to walk, either Shift to run,
+right-mouse drag to steer/orbit, and the wheel to zoom; `F6` can advance input
+one tick while paused. `F7` toggles the diagnostic free-fly camera. `R` resets
+the capsule on the next tick. Gravity, grounding, and horizontal locomotion
+always advance with Character; Space and left mouse already produce bounded
+fixed-tick commands but remain deferred. See [CHARACTER.md](CHARACTER.md).
 
-The next increment is `CHR-003`: add deterministic grounded locomotion. W-005
-remains an approved deferred fluid specialization.
+The next increment is `CHR-004`: add jumping, airborne control, landing, and
+deterministic recovery. W-005 remains an approved deferred fluid
+specialization.
 
 ## Visual Studio
 

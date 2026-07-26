@@ -1594,10 +1594,10 @@ void log_platform_event(const shark::platform::Event& event)
               "resumes/pauses the "
               "fixed 60 Hz sphere simulation and F6 advances one "
               "tick while paused; F7 toggles third-person/free-fly; "
-              "RMB orbits and the wheel zooms the fixed-tick "
-              "third-person camera; standard gravity and canonical "
-              "terrain grounding advance per tick, and R resets the "
-              "blue capsule proxy");
+              "WASD moves the blue capsule, Shift runs, RMB orbits, "
+              "and the wheel zooms the fixed-tick third-person "
+              "camera; standard gravity and canonical terrain "
+              "grounding advance per tick, and R resets the player");
 
     auto simulation_clock_result =
         simulation::FixedStepClock::create(
@@ -1912,8 +1912,9 @@ void log_platform_event(const shark::platform::Event& event)
                         free_fly_camera_enabled
                             ? "Camera mode: free-fly (WASD, RMB, "
                               "Shift)"
-                            : "Camera mode: third-person (RMB orbit, "
-                              "wheel zoom; F5/F6 advance input)");
+                            : "Camera mode: third-person (WASD, "
+                              "Shift, RMB orbit, wheel zoom; F5/F6 "
+                              "advance input)");
                 }
             }
             player_command_source.handle_event(event);
@@ -2242,21 +2243,6 @@ void log_platform_event(const shark::platform::Event& event)
                 free_fly_camera_enabled
                 ? character::PlayerActionCommand{}
                 : sampled_player_command;
-            auto player_step_result =
-                character::advance_player_capsule(
-                    player_simulation,
-                    player_command,
-                    terrain_surface,
-                    simulation_clock.fixed_delta_seconds(),
-                    fixed_tick);
-            if (!player_step_result) {
-                return core::Result<void>::failure(
-                    std::move(player_step_result).error());
-            }
-            player_grounded_tick_count +=
-                static_cast<std::uint64_t>(
-                    player_simulation.current.vertical.phase ==
-                    character::PlayerGroundPhase::grounded);
             const world::ThirdPersonOrbitDelta camera_delta =
                 free_fly_camera_enabled
                 ? world::ThirdPersonOrbitDelta{}
@@ -2278,6 +2264,33 @@ void log_platform_event(const shark::platform::Event& event)
                 return core::Result<void>::failure(
                     std::move(camera_step_result).error());
             }
+            auto camera_basis_result =
+                world::horizontal_camera_basis(
+                    player_camera_rig.current.state.yaw_radians);
+            if (!camera_basis_result) {
+                return core::Result<void>::failure(
+                    std::move(camera_basis_result).error());
+            }
+            const character::PlayerMovementFrame movement_frame{
+                .right = camera_basis_result.value().right,
+                .forward = camera_basis_result.value().forward,
+            };
+            auto player_step_result =
+                character::advance_player_capsule(
+                    player_simulation,
+                    player_command,
+                    movement_frame,
+                    terrain_surface,
+                    simulation_clock.fixed_delta_seconds(),
+                    fixed_tick);
+            if (!player_step_result) {
+                return core::Result<void>::failure(
+                    std::move(player_step_result).error());
+            }
+            player_grounded_tick_count +=
+                static_cast<std::uint64_t>(
+                    player_simulation.current.vertical.phase ==
+                    character::PlayerGroundPhase::grounded);
             previous_sphere_bodies = current_sphere_bodies;
             for (std::size_t body_index = 0;
                   body_index < world::island_demo_sphere_body_count;
@@ -2500,6 +2513,22 @@ void log_platform_event(const shark::platform::Event& event)
 
     if (smoke_mode) {
         const auto& stats = renderer_instance.stats();
+        const auto player_movement_basis_result =
+            world::horizontal_camera_basis(
+                player_camera_rig.current.state.yaw_radians);
+        if (!player_movement_basis_result) {
+            return core::Result<void>::failure(
+                renderer_smoke_error(
+                    "The presentation smoke camera yaw did not "
+                    "produce a valid player movement basis"));
+        }
+        const character::PlayerMovementFrame
+            expected_player_movement_frame{
+                .right =
+                    player_movement_basis_result.value().right,
+                .forward =
+                    player_movement_basis_result.value().forward,
+            };
         const auto player_support_result =
             character::query_player_terrain_support(
                 player_simulation.config.shape,
@@ -2523,6 +2552,12 @@ void log_platform_event(const shark::platform::Event& event)
                 player_simulation.config.spawn_center_position ||
             player_simulation.current.state.facing_yaw_radians !=
                 player_simulation.config.spawn_facing_yaw_radians ||
+            player_simulation.current.horizontal_velocity !=
+                math::Float3{} ||
+            player_simulation.current.consumed_command !=
+                character::PlayerActionCommand{} ||
+            player_simulation.current.consumed_movement_frame !=
+                expected_player_movement_frame ||
             player_simulation.current.reset_generation != 0U ||
             player_simulation.current.vertical.phase !=
                 character::PlayerGroundPhase::grounded ||

@@ -23,6 +23,19 @@ inline constexpr float default_player_minimum_walkable_normal_y =
     0.70710678118654752440F;
 inline constexpr float default_player_ground_snap_distance = 0.05F;
 inline constexpr float maximum_player_ground_snap_distance = 1.0F;
+inline constexpr float default_player_walk_speed = 4.0F;
+inline constexpr float default_player_run_speed = 7.0F;
+inline constexpr float default_player_ground_acceleration = 24.0F;
+inline constexpr float default_player_ground_braking_deceleration = 32.0F;
+inline constexpr float
+    default_player_facing_turn_speed_radians_per_second = 10.0F;
+inline constexpr float default_player_maximum_probe_spacing = 0.25F;
+inline constexpr float maximum_player_horizontal_speed = 32.0F;
+inline constexpr float maximum_player_ground_acceleration = 256.0F;
+inline constexpr float
+    maximum_player_facing_turn_speed_radians_per_second = 32.0F;
+inline constexpr float minimum_player_probe_spacing = 0.01F;
+inline constexpr float maximum_player_probe_spacing = 1.0F;
 inline constexpr float maximum_player_fixed_delta_seconds = 0.25F;
 
 struct PlayerGroundingSettings final {
@@ -34,6 +47,33 @@ struct PlayerGroundingSettings final {
     [[nodiscard]] friend bool operator==(
         const PlayerGroundingSettings&,
         const PlayerGroundingSettings&) noexcept = default;
+};
+
+struct PlayerGroundLocomotionSettings final {
+    float walk_speed{default_player_walk_speed};
+    float run_speed{default_player_run_speed};
+    float acceleration{default_player_ground_acceleration};
+    float braking_deceleration{
+        default_player_ground_braking_deceleration};
+    float facing_turn_speed_radians_per_second{
+        default_player_facing_turn_speed_radians_per_second};
+    float maximum_probe_spacing{
+        default_player_maximum_probe_spacing};
+
+    [[nodiscard]] friend bool operator==(
+        const PlayerGroundLocomotionSettings&,
+        const PlayerGroundLocomotionSettings&) noexcept = default;
+};
+
+// Character-owned, device-neutral horizontal frame supplied once per fixed
+// tick. At camera yaw zero, right is +X and forward is -Z.
+struct PlayerMovementFrame final {
+    math::Float3 right{1.0F, 0.0F, 0.0F};
+    math::Float3 forward{0.0F, 0.0F, -1.0F};
+
+    [[nodiscard]] friend bool operator==(
+        const PlayerMovementFrame&,
+        const PlayerMovementFrame&) noexcept = default;
 };
 
 enum class PlayerGroundPhase : std::uint8_t {
@@ -80,6 +120,7 @@ struct PlayerCapsuleConfig final {
     math::Float3 spawn_center_position{};
     float spawn_facing_yaw_radians{};
     PlayerGroundingSettings grounding;
+    PlayerGroundLocomotionSettings ground_locomotion;
 
     [[nodiscard]] friend bool operator==(
         const PlayerCapsuleConfig&,
@@ -97,9 +138,9 @@ struct PlayerCapsuleState final {
 
 // Device-neutral actions sampled once for an emitted fixed tick. Held values
 // may repeat on consecutive ticks; the three *_pressed values are one-tick
-// pulses supplied by the platform-facing sampler. CHR-002 records every
-// command, always advances vertical grounding, and gives reset_pressed the
-// only action-driven pose behavior until locomotion.
+// pulses supplied by the platform-facing sampler. Ground locomotion consumes
+// the four directional holds and run; later increments own the remaining
+// action policy.
 struct PlayerActionCommand final {
     bool move_forward_held{};
     bool move_backward_held{};
@@ -120,7 +161,9 @@ struct PlayerActionCommand final {
 struct PlayerCapsuleSnapshot final {
     PlayerCapsuleState state;
     PlayerVerticalState vertical;
+    math::Float3 horizontal_velocity{};
     PlayerActionCommand consumed_command;
+    PlayerMovementFrame consumed_movement_frame;
     std::uint64_t fixed_tick{};
     std::uint64_t reset_generation{};
 
@@ -145,6 +188,12 @@ static_assert(std::is_standard_layout_v<PlayerCapsuleShape>);
 static_assert(std::is_trivially_copyable_v<PlayerCapsuleShape>);
 static_assert(std::is_standard_layout_v<PlayerGroundingSettings>);
 static_assert(std::is_trivially_copyable_v<PlayerGroundingSettings>);
+static_assert(
+    std::is_standard_layout_v<PlayerGroundLocomotionSettings>);
+static_assert(
+    std::is_trivially_copyable_v<PlayerGroundLocomotionSettings>);
+static_assert(std::is_standard_layout_v<PlayerMovementFrame>);
+static_assert(std::is_trivially_copyable_v<PlayerMovementFrame>);
 static_assert(std::is_standard_layout_v<PlayerVerticalState>);
 static_assert(std::is_trivially_copyable_v<PlayerVerticalState>);
 static_assert(std::is_standard_layout_v<PlayerCapsuleCenterBounds>);
@@ -165,6 +214,12 @@ static_assert(std::is_trivially_copyable_v<PlayerCapsuleSimulation>);
 
 [[nodiscard]] bool is_valid(
     const PlayerGroundingSettings& settings) noexcept;
+
+[[nodiscard]] bool is_valid(
+    const PlayerGroundLocomotionSettings& settings) noexcept;
+
+[[nodiscard]] bool is_valid(
+    const PlayerMovementFrame& frame) noexcept;
 
 [[nodiscard]] bool is_valid(
     const PlayerActionCommand& command) noexcept;
@@ -202,17 +257,21 @@ create_player_capsule(
     PlayerCapsuleConfig config,
     const terrain::HeightTileSurface& terrain_surface);
 
-// fixed_tick must be exactly current.fixed_tick + 1. The operation validates
-// source terrain consistency and its complete candidate before committing.
+// fixed_tick must be exactly current.fixed_tick + 1. Grounded movement uses
+// the supplied frame, bounded canonical terrain probes, and the longest
+// walkable prefix. The operation validates source terrain consistency and its
+// complete candidate before committing.
 [[nodiscard]] core::Result<void> advance_player_capsule(
     PlayerCapsuleSimulation& simulation,
     PlayerActionCommand command,
+    PlayerMovementFrame movement_frame,
     const terrain::HeightTileSurface& terrain_surface,
     float fixed_delta_seconds,
     std::uint64_t fixed_tick);
 
-// Collapses only presentation history after a time-baseline discontinuity.
-// Tick, command, generation, config, and current authority remain unchanged.
+// Collapses pose, vertical, and horizontal presentation history after a
+// time-baseline discontinuity. Tick, consumed inputs, generation, config, and
+// current authority remain unchanged.
 [[nodiscard]] core::Result<void>
 collapse_player_capsule_interpolation(
     PlayerCapsuleSimulation& simulation);

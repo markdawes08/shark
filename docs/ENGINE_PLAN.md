@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 26, 2026
-- **Latest completed:** `CHR-002` - terrain grounding and gravity
-- **Next increment:** `CHR-003` - grounded locomotion
+- **Latest completed:** `CHR-003` - grounded locomotion
+- **Next increment:** `CHR-004` - jumping and landing
 
 ## 1. Project direction
 
@@ -849,7 +849,7 @@ coupling are outside this first playable path.
 | `CHR-001` | S | Complete: add one Core-only bounded upright player capsule, named keyboard/mouse action commands sampled once per emitted fixed tick, transactional previous/current snapshots, exact dry-spawn/reset behavior without interpolation smear, and a blue temporary proxy that reuses the existing material-sphere geometry and Terrain pass; prove invalid-state rollback plus exact command/snapshot transcripts across 30/60/120/144 Hz without adding a general entity system, locomotion, camera follow, terrain contact, or water policy | `feat(character): add player capsule state` |
 | `CAM-001` | V | Complete: add an interpolated fixed-tick third-person follow/orbit rig with camera-relative horizontal basis, bounded pitch/distance, once-per-tick wheel zoom, and a canonical-LOD0 clearance probe that shortens only the presentation boom; retain the exact scripted smoke camera and expose the former free-fly controller through `F7` without changing character authority | `feat(camera): add third-person follow camera` |
 | `CHR-002` | S | Complete: add standard gravity, exact canonical-face support with slope-correct upright-capsule clearance, inclusive walkable-slope classification, stable grounded and steep-contact states, falling, one-tick landing, terrain-aware spawn/reset, and lifecycle interpolation collapse; prove edge ownership, rollback, camera follow, and exact 30/60/120/144 Hz transcripts without horizontal control | `feat(character): add terrain grounding` |
-| `CHR-003` | S | Add fixed-tick walk/run acceleration, braking, facing, and bounded slope traversal from camera-relative commands; the player follows the island route without penetration or render-rate dependence | `feat(character): add grounded locomotion` |
+| `CHR-003` | S | Complete: add authoritative fixed-tick horizontal velocity, `4/7 m/s` walk/run targets, `24 m/s²` acceleration, `32 m/s²` braking, bounded shortest-arc facing, and camera-relative intent from the newly advanced orbit yaw; traverse canonical terrain with deterministic probes no farther than `0.25 m` apart, retain the safe prefix and stop at steep/missing/out-of-bounds support, and prove the complete eight-point island loop plus exact 30/60/120/144 Hz transcripts without claiming an exact swept capsule | `feat(character): add grounded locomotion` |
 | `CHR-004` | S | Add jump launch, airborne control, landing, and deterministic recovery to the dry spawn; exclude ledge grabs, ladders, wall climbing, and arbitrary obstacle stepping | `feat(character): add jumping and landing` |
 | `CHR-005` | S | Add dry-to-wading transitions from WQ-001, immersion hysteresis, depth-scaled movement, and reliable shore exit without changing water volume | `feat(character): add shallow-water wading` |
 | `CHR-006` | S | Add surface-swim entry/exit, buoyant surface positioning, directional movement, and recovery to grounded motion; underwater free-swimming and combat remain later | `feat(character): add surface swimming` |
@@ -1020,18 +1020,17 @@ members, and zone serialization wait until measured needs after the demo.
 
 ## 14. Immediate next increment
 
-With CHR-002 completed, implement only `CHR-003`:
+With CHR-003 completed, implement only `CHR-004`:
 
-- add fixed-tick horizontal velocity with separate walk/run targets,
-  acceleration, and braking;
-- derive horizontal intent from the third-person camera's fixed-tick movement
-  frame while preserving deterministic command sampling;
-- turn the capsule toward meaningful movement and traverse only bounded
-  walkable canonical terrain without penetration;
-- prove route traversal, slope rejection, stop/reversal behavior, reset, and
-  exact 30/60/120/144 Hz outcomes; and
-- stop before jumping, wading, swimming, obstacle stepping, arbitrary props,
-  target lock, gamepad input, animation, or final avatar art.
+- add a bounded grounded jump launch and explicit airborne state transition;
+- add deterministic horizontal airborne control without bypassing the
+  authoritative fixed-tick Character boundary;
+- land once on walkable canonical terrain and recover cleanly to grounded
+  locomotion;
+- prove jump apex, landing, reset, terrain-edge behavior, and exact
+  30/60/120/144 Hz outcomes; and
+- stop before wading, swimming, obstacle stepping, ledge grabs, ladders, wall
+  climbing, arbitrary props, gamepad input, animation, or final avatar art.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -1345,7 +1344,21 @@ The 1,000-frame RTX 4070 Debug presentation smoke records 1,000 grounded player
 ticks, 1,000 capsule draws, 5,000 unchanged graph passes, zero D3D12
 corruption/errors, and zero live child objects.
 
-The active queue is `CHR-003`, grounded locomotion.
+CHR-003 adds camera-relative grounded locomotion with explicit `4/7 m/s`
+walk/run targets, bounded acceleration, braking, shortest-arc facing, and
+authoritative horizontal velocity. The fixed-tick orbit advances before
+Character, so a look-and-move command uses the new yaw on that same tick.
+Canonical terrain probes are spaced no farther than `0.25 m`; a rejected
+steep, missing, or out-of-bounds probe preserves the last safe point and zeros
+velocity. This is intentionally sampled heightfield traversal, not an exact
+crossed-triangle or arbitrary swept-capsule query. The complete eight-point
+Island route remains dry, walkable, and exactly supported. Debug and Release
+each pass 560,277 assertions across 385 cases. The 1,000-frame RTX 4070 and
+600-frame packaged-WARP presentation smokes retain neutral player motion,
+unchanged graph/draw accounting, zero D3D12 corruption/errors, and zero live
+child objects.
+
+The active queue is `CHR-004`, jumping and landing.
 `W-005`, `W-006`, `R-001` through `R-004`, and coupled hydrology remain
 approved but deferred from the Island Demo 0.1 critical path.
 

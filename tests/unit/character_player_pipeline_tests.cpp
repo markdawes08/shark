@@ -4,6 +4,7 @@
 #include <shark/platform/events.hpp>
 #include <shark/simulation/fixed_step_clock.hpp>
 #include <shark/terrain/height_tile.hpp>
+#include <shark/world/third_person_camera.hpp>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -23,8 +24,11 @@ inline constexpr std::size_t transcript_tick_count = 120;
 
 struct TranscriptEntry final {
     shark::character::PlayerActionCommand command;
+    shark::character::PlayerMovementFrame movement_frame;
     shark::character::PlayerCapsuleSnapshot previous;
     shark::character::PlayerCapsuleSnapshot current;
+    shark::world::ThirdPersonOrbitSnapshot camera_previous;
+    shark::world::ThirdPersonOrbitSnapshot camera_current;
 
     [[nodiscard]] friend bool operator==(
         const TranscriptEntry&,
@@ -128,6 +132,7 @@ void apply_tick_input_transitions(
         send_key(source, VK_SHIFT, platform::KeyAction::released);
         break;
     case 60:
+        send_key(source, 'W', platform::KeyAction::pressed);
         send_mouse_button(
             source,
             platform::MouseButton::right,
@@ -144,6 +149,9 @@ void apply_tick_input_transitions(
             platform::ButtonAction::released,
             110,
             100);
+        break;
+    case 70:
+        send_key(source, 'W', platform::KeyAction::released);
         break;
     case 75:
         send_key(source, 'R', platform::KeyAction::pressed);
@@ -182,8 +190,9 @@ make_player_simulation(
             .minimum = {-32.0F, -8.0F, -32.0F},
             .maximum = {32.0F, 32.0F, 32.0F},
         },
-        .spawn_center_position = {0.0F, 3.0F, 0.0F},
+        .spawn_center_position = {0.0F, 1.0F, 0.0F},
         .spawn_facing_yaw_radians = 0.25F,
+        .ground_locomotion = {},
     }, surface);
     REQUIRE(result);
     return std::move(result).value();
@@ -192,12 +201,16 @@ make_player_simulation(
 [[nodiscard]] shark::terrain::HeightTileSurface
 make_flat_surface()
 {
+    constexpr std::uint32_t sample_count = 65U;
     auto result = shark::terrain::HeightTileSurface::create({
-        .sample_columns = 3U,
-        .sample_rows = 3U,
+        .sample_columns = sample_count,
+        .sample_rows = sample_count,
         .sample_spacing = 1.0F,
-        .origin = {-1.0F, 0.0F, -1.0F},
-        .height_offsets = std::vector<float>(9U, 0.0F),
+        .origin = {-32.0F, 0.0F, -32.0F},
+        .height_offsets = std::vector<float>(
+            static_cast<std::size_t>(sample_count) *
+                sample_count,
+            0.0F),
     });
     REQUIRE(result);
     return std::move(result).value();
@@ -216,6 +229,10 @@ make_flat_surface()
     auto clock = std::move(clock_result).value();
     const auto surface = make_flat_surface();
     auto player = make_player_simulation(surface);
+    auto camera_result =
+        world::create_third_person_camera_rig({});
+    REQUIRE(camera_result);
+    auto camera_rig = std::move(camera_result).value();
     sandbox::PlayerCommandSource command_source{
         sandbox::PlayerCommandSourceConfig{
             .mouse_sensitivity = 0.01F,
@@ -253,9 +270,27 @@ make_flat_surface()
             const auto command =
                 command_source.sample_fixed_tick();
             REQUIRE(character::is_valid(command));
+            REQUIRE(world::advance_third_person_camera_rig(
+                camera_rig,
+                world::ThirdPersonOrbitDelta{
+                    .yaw_radians =
+                        command.look_yaw_delta_radians,
+                    .pitch_radians =
+                        command.look_pitch_delta_radians,
+                },
+                run.emitted_ticks));
+            const auto camera_basis =
+                world::horizontal_camera_basis(
+                    camera_rig.current.state.yaw_radians);
+            REQUIRE(camera_basis);
+            const character::PlayerMovementFrame movement_frame{
+                .right = camera_basis.value().right,
+                .forward = camera_basis.value().forward,
+            };
             REQUIRE(character::advance_player_capsule(
                 player,
                 command,
+                movement_frame,
                 surface,
                 clock.fixed_delta_seconds(),
                 run.emitted_ticks));
@@ -265,8 +300,13 @@ make_flat_surface()
                 static_cast<std::size_t>(
                     run.emitted_ticks - 1U)] = {
                         .command = command,
+                        .movement_frame = movement_frame,
                         .previous = player.previous,
                         .current = player.current,
+                        .camera_previous =
+                            camera_rig.previous,
+                        .camera_current =
+                            camera_rig.current,
                     };
         }
     }
@@ -353,38 +393,64 @@ TEST_CASE(
         baseline.transcript[61]
             .command.look_pitch_delta_radians == 0.0F);
 
-    std::array<std::uint64_t, 2> landing_ticks{};
-    std::size_t landing_count = 0U;
-    for (std::size_t entry_index = 0U;
-         entry_index < baseline.transcript.size();
-         ++entry_index) {
-        const auto& snapshot =
-            baseline.transcript[entry_index].current;
-        if (snapshot.vertical.phase ==
-            shark::character::PlayerGroundPhase::landing) {
-            REQUIRE(landing_count < landing_ticks.size());
-            landing_ticks[landing_count] =
-                static_cast<std::uint64_t>(entry_index) + 1U;
-            ++landing_count;
-            REQUIRE(snapshot.vertical.velocity_y == 0.0F);
-            REQUIRE(snapshot.vertical.support_normal ==
-                shark::math::Float3{0.0F, 1.0F, 0.0F});
-            REQUIRE(snapshot.state.center_position.y == 1.0F);
-        }
+    for (const auto& entry : baseline.transcript) {
+        REQUIRE(entry.current.vertical.phase ==
+            shark::character::PlayerGroundPhase::grounded);
+        REQUIRE(entry.current.vertical.velocity_y == 0.0F);
+        REQUIRE(entry.current.vertical.support_normal ==
+            shark::math::Float3{0.0F, 1.0F, 0.0F});
+        REQUIRE(entry.current.state.center_position.y == 1.0F);
+        REQUIRE(entry.current.horizontal_velocity.y == 0.0F);
+        REQUIRE(entry.current.consumed_command == entry.command);
+        REQUIRE(entry.current.consumed_movement_frame ==
+            entry.movement_frame);
     }
-    REQUIRE(landing_count == landing_ticks.size());
-    REQUIRE(landing_ticks[0] == 38U);
-    REQUIRE(landing_ticks[1] == 113U);
+
+    const auto& same_tick_orbit = baseline.transcript[59];
+    REQUIRE(same_tick_orbit.command.move_forward_held);
+    REQUIRE(same_tick_orbit.camera_previous.state.yaw_radians ==
+        0.0F);
+    REQUIRE(same_tick_orbit.camera_current.state.yaw_radians ==
+        Catch::Approx(0.12F).margin(0.000001F));
+    const auto same_tick_basis =
+        shark::world::horizontal_camera_basis(
+            same_tick_orbit.camera_current.state.yaw_radians);
+    REQUIRE(same_tick_basis);
+    REQUIRE(same_tick_orbit.movement_frame ==
+        shark::character::PlayerMovementFrame{
+            .right = same_tick_basis.value().right,
+            .forward = same_tick_basis.value().forward,
+        });
+    const auto same_tick_delta = shark::math::Float3{
+        same_tick_orbit.current.state.center_position.x -
+            same_tick_orbit.previous.state.center_position.x,
+        same_tick_orbit.current.state.center_position.y -
+            same_tick_orbit.previous.state.center_position.y,
+        same_tick_orbit.current.state.center_position.z -
+            same_tick_orbit.previous.state.center_position.z,
+    };
+    REQUIRE(same_tick_delta.x > 0.0F);
+    REQUIRE(same_tick_delta.z < 0.0F);
     REQUIRE(
-        baseline.transcript[
-            static_cast<std::size_t>(landing_ticks[0])]
-            .current.vertical.phase ==
-        shark::character::PlayerGroundPhase::grounded);
+        same_tick_orbit.current.horizontal_velocity.x ==
+        Catch::Approx(
+            same_tick_basis.value().forward.x * 0.4F)
+            .margin(0.000001F));
     REQUIRE(
-        baseline.transcript[
-            static_cast<std::size_t>(landing_ticks[1])]
-            .current.vertical.phase ==
-        shark::character::PlayerGroundPhase::grounded);
+        same_tick_orbit.current.horizontal_velocity.z ==
+        Catch::Approx(
+            same_tick_basis.value().forward.z * 0.4F)
+            .margin(0.000001F));
+    REQUIRE(same_tick_delta.x ==
+        Catch::Approx(
+            same_tick_orbit.current.horizontal_velocity.x /
+            60.0F)
+            .margin(0.000001F));
+    REQUIRE(same_tick_delta.z ==
+        Catch::Approx(
+            same_tick_orbit.current.horizontal_velocity.z /
+            60.0F)
+            .margin(0.000001F));
 
     const auto& reset_tick = baseline.transcript[74];
     REQUIRE(reset_tick.command.reset_pressed);
@@ -396,10 +462,15 @@ TEST_CASE(
         reset_tick.current.state);
     REQUIRE(reset_tick.previous.vertical ==
         reset_tick.current.vertical);
+    REQUIRE(reset_tick.previous.horizontal_velocity ==
+        shark::math::Float3{});
+    REQUIRE(reset_tick.current.horizontal_velocity ==
+        shark::math::Float3{});
     REQUIRE(reset_tick.current.vertical.phase ==
-        shark::character::PlayerGroundPhase::falling);
+        shark::character::PlayerGroundPhase::grounded);
     REQUIRE(reset_tick.current.vertical.velocity_y == 0.0F);
-    REQUIRE(reset_tick.current.state.center_position.y == 3.0F);
+    REQUIRE(reset_tick.current.state.center_position ==
+        shark::math::Float3{0.0F, 1.0F, 0.0F});
     REQUIRE_FALSE(
         baseline.transcript[75].command.reset_pressed);
 
@@ -415,4 +486,6 @@ TEST_CASE(
     REQUIRE_FALSE(
         baseline.transcript[104]
             .command.move_left_held);
+    REQUIRE(baseline.transcript.back().current.horizontal_velocity ==
+        shark::math::Float3{});
 }

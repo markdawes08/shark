@@ -811,15 +811,16 @@ it neither enters the rigid-body arrays nor changes their solver order.
 CAM-001 adds a separate presentation-only orbit rig on those same fixed ticks
 and never mutates Character.
 
-CHR-002 now advances the player first on every emitted tick with standard
-gravity and one canonical LOD0 support sample, then advances the orbit rig on
-that same tick, followed by the unchanged dynamic-sphere path. Semi-implicit
-vertical integration, terrain crossing, landing, stable support, reset, and
-all failures are transactional. Character remains kinematic and separate from
-dynamic Physics. A time-baseline discontinuity collapses player and camera
-presentation history before accumulated time is discarded.
+CHR-003 advances the authoritative orbit first on every emitted tick, derives
+its horizontal camera basis, advances Character with that movement frame on
+the same tick, and then runs the unchanged dynamic-sphere path. Character owns
+bounded walk/run acceleration, braking, facing, horizontal velocity, gravity,
+landing, support, and sampled terrain traversal; all failures remain
+transactional. The controller is kinematic and separate from dynamic Physics.
+A time-baseline discontinuity collapses player and camera presentation history
+before accumulated time is discarded.
 
-The active queue is `CHR-003`, grounded locomotion. W-005 remains an approved
+The active queue is `CHR-004`, jumping and landing. W-005 remains an approved
 deferred fluid specialization; the queue is centralized in
 [ENGINE_PLAN.md](ENGINE_PLAN.md), and the query contract is in
 [WATER.md](WATER.md). The player contract is in

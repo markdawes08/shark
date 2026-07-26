@@ -2,7 +2,7 @@
 
 - **Camera/cube capability completed through:** `G-005`
 - **Renderer integration verified through:** `CAM-001`
-- **Character integration verified through:** `CHR-002`
+- **Character integration verified through:** `CHR-003`
 - **Last verified:** July 26, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
@@ -98,6 +98,9 @@ snapshot:
 
 | Input | Third-person action |
 |---|---|
+| `W` / `S` | Walk forward / backward relative to the orbit yaw |
+| `A` / `D` | Walk left / right relative to the orbit yaw |
+| Hold `Shift` | Select the run target |
 | Hold right mouse and drag | Orbit yaw and pitch |
 | Vertical mouse wheel | Shorten/lengthen the desired boom |
 | `F7` | Toggle the retained diagnostic free-fly camera |
@@ -108,6 +111,12 @@ Pitch is bounded to `-1.2..0.35` radians and desired boom distance to
 center. A canonical LOD0 target-to-camera clearance query may shorten the
 applied boom to keep terrain out of the view, but it never changes desired
 distance, player state, terrain, or simulation state.
+
+CHR-003 advances the authoritative orbit before Character on each fixed tick,
+then copies the new yaw's horizontal basis into a Character-owned movement
+frame. A simultaneous right-drag and movement command therefore changes
+direction on that same tick. Rendering still composes the independently
+interpolated player and orbit snapshots at one alpha.
 
 The sandbox starts paused, so third-person orbit and wheel input remain pending
 until `F5` resumes the fixed clock or `F6` emits one tick:
@@ -281,7 +290,7 @@ with GPU-based validation. Hardware and normal WARP change from `1280x720` to
 sequences intentionally change aspect from `16:9` to `1.6`, and each applies
 `1.25` radians of scripted yaw at three quarters.
 The interactive camera starts from the scenario-owned third-person orbit: its
-CHR-002 slope-correct player target is approximately `(0,2.6423082,112)`, it
+CHR-003 slope-correct player target is approximately `(0,2.6423082,112)`, it
 starts near `(0,4.8689,120.7202)`, uses pitch `-0.25` radians and a 1,500-meter
 far plane, and has an unobstructed nine-meter boom behind the blue capsule. Presentation
 smoke deliberately retains the separate deterministic `(0,28,112)` start with
@@ -421,8 +430,10 @@ the blue proxy. CAM-001 now derives a terrain-cleared camera from that
 interpolated player snapshot and its own interpolated fixed-tick orbit without
 changing Character authority. CHR-002 adds fixed-tick vertical player motion,
 so the same interpolation alpha now moves the capsule and third-person target
-together while the camera's terrain-clearance probe remains presentation-only.
-Time-baseline resets collapse both interpolation intervals before resuming.
+together. CHR-003 adds camera-relative horizontal player motion using the
+newly advanced authoritative orbit basis; the camera's terrain-clearance probe
+remains presentation-only. Time-baseline resets collapse both interpolation
+intervals before resuming.
 See [the Character contract](CHARACTER.md) and
 [the simulation contract](SIMULATION.md). This component page
 no longer duplicates the rolling project

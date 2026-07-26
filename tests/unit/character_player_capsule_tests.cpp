@@ -56,6 +56,53 @@ constexpr float comparison_margin = 0.00001F;
     };
 }
 
+[[nodiscard]] shark::terrain::HeightTile make_wide_plane_tile(
+    const float slope_x = 0.0F)
+{
+    constexpr std::uint32_t sample_count = 17U;
+    std::vector<float> heights;
+    heights.reserve(
+        static_cast<std::size_t>(sample_count) * sample_count);
+    for (std::uint32_t z = 0U; z < sample_count; ++z) {
+        static_cast<void>(z);
+        for (std::uint32_t x = 0U; x < sample_count; ++x) {
+            heights.push_back(
+                slope_x *
+                (static_cast<float>(x) - 8.0F));
+        }
+    }
+    return {
+        .sample_columns = sample_count,
+        .sample_rows = sample_count,
+        .sample_spacing = 1.0F,
+        .origin = {-8.0F, 0.0F, -8.0F},
+        .height_offsets = std::move(heights),
+    };
+}
+
+[[nodiscard]] shark::terrain::HeightTile
+make_steep_barrier_tile()
+{
+    constexpr std::uint32_t columns = 7U;
+    constexpr std::uint32_t rows = 3U;
+    std::vector<float> heights;
+    heights.reserve(
+        static_cast<std::size_t>(columns) * rows);
+    for (std::uint32_t z = 0U; z < rows; ++z) {
+        static_cast<void>(z);
+        for (std::uint32_t x = 0U; x < columns; ++x) {
+            heights.push_back(x <= 3U ? 0.0F : 2.0F);
+        }
+    }
+    return {
+        .sample_columns = columns,
+        .sample_rows = rows,
+        .sample_spacing = 1.0F,
+        .origin = {-3.0F, 0.0F, -1.0F},
+        .height_offsets = std::move(heights),
+    };
+}
+
 [[nodiscard]] shark::terrain::HeightTileSurface make_surface(
     shark::terrain::HeightTile tile = make_plane_tile())
 {
@@ -98,6 +145,30 @@ make_simulation(
 [[nodiscard]] bool positive_zero(const float value) noexcept
 {
     return value == 0.0F && !std::signbit(value);
+}
+
+[[nodiscard]] shark::character::PlayerMovementFrame
+movement_frame_for_yaw(const float yaw)
+{
+    const auto cosine = static_cast<float>(
+        std::cos(static_cast<double>(yaw)));
+    const auto sine = static_cast<float>(
+        std::sin(static_cast<double>(yaw)));
+    const auto canonical = [](const float value) {
+        return value == 0.0F ? 0.0F : value;
+    };
+    return {
+        .right = {
+            canonical(cosine),
+            0.0F,
+            canonical(sine),
+        },
+        .forward = {
+            canonical(sine),
+            0.0F,
+            canonical(-cosine),
+        },
+    };
 }
 
 void require_float3(
@@ -182,6 +253,7 @@ struct ScheduleRun final {
             REQUIRE(character::advance_player_capsule(
                 player,
                 scripted_command(fixed_tick),
+                {},
                 surface,
                 clock.fixed_delta_seconds(),
                 fixed_tick));
@@ -231,6 +303,10 @@ TEST_CASE(
         {0.0F, 1.0F, 0.0F});
     REQUIRE(player.current.fixed_tick == 0U);
     REQUIRE(player.current.reset_generation == 0U);
+    REQUIRE(player.current.horizontal_velocity ==
+        math::Float3{});
+    REQUIRE(player.current.consumed_movement_frame ==
+        character::PlayerMovementFrame{});
 
     const auto airborne = character::create_player_capsule(
         test_config({0.0F, 2.0F, 0.0F}),
@@ -339,6 +415,63 @@ TEST_CASE(
         config.grounding.snap_distance = value;
         require_invalid(config);
     }
+
+    const std::array invalid_speed{
+        0.0F,
+        -1.0F,
+        nan,
+        infinity,
+        std::nextafter(
+            character::maximum_player_horizontal_speed,
+            infinity),
+    };
+    for (const auto value : invalid_speed) {
+        config = test_config();
+        config.ground_locomotion.walk_speed = value;
+        require_invalid(config);
+        config = test_config();
+        config.ground_locomotion.run_speed = value;
+        require_invalid(config);
+    }
+    config = test_config();
+    config.ground_locomotion.run_speed =
+        config.ground_locomotion.walk_speed - 0.01F;
+    require_invalid(config);
+
+    const std::array invalid_acceleration{
+        0.0F,
+        -1.0F,
+        nan,
+        infinity,
+        std::nextafter(
+            character::maximum_player_ground_acceleration,
+            infinity),
+    };
+    for (const auto value : invalid_acceleration) {
+        config = test_config();
+        config.ground_locomotion.acceleration = value;
+        require_invalid(config);
+        config = test_config();
+        config.ground_locomotion.braking_deceleration =
+            value;
+        require_invalid(config);
+    }
+    config = test_config();
+    config.ground_locomotion
+        .facing_turn_speed_radians_per_second = 0.0F;
+    require_invalid(config);
+    config = test_config();
+    config.ground_locomotion.maximum_probe_spacing =
+        std::nextafter(
+            character::minimum_player_probe_spacing,
+            0.0F);
+    require_invalid(config);
+    config = test_config();
+    config.ground_locomotion.maximum_probe_spacing =
+        std::nextafter(
+            character::maximum_player_probe_spacing,
+            infinity);
+    require_invalid(config);
 }
 
 TEST_CASE(
@@ -475,6 +608,461 @@ TEST_CASE(
 }
 
 TEST_CASE(
+    "player movement frames and locomotion settings are bounded",
+    "[character][player-capsule][locomotion][validation]")
+{
+    using namespace shark;
+
+    REQUIRE(character::is_valid(
+        character::PlayerGroundLocomotionSettings{}));
+    REQUIRE(character::is_valid(
+        character::PlayerMovementFrame{}));
+    for (const auto yaw :
+         std::array{0.0F, math::half_pi, -math::pi, 1.25F}) {
+        REQUIRE(character::is_valid(
+            movement_frame_for_yaw(yaw)));
+    }
+
+    auto frame = character::PlayerMovementFrame{};
+    frame.right.y = 0.01F;
+    REQUIRE_FALSE(character::is_valid(frame));
+    frame = {};
+    frame.forward = frame.right;
+    REQUIRE_FALSE(character::is_valid(frame));
+    frame = {};
+    frame.forward.z = 1.0F;
+    REQUIRE_FALSE(character::is_valid(frame));
+    frame = {};
+    frame.right.x = 0.5F;
+    REQUIRE_FALSE(character::is_valid(frame));
+    frame = {};
+    frame.forward.x =
+        std::numeric_limits<float>::quiet_NaN();
+    REQUIRE_FALSE(character::is_valid(frame));
+
+    frame = {};
+    frame.right.y = -0.0F;
+    frame.right.z = -0.0F;
+    frame.forward.x = -0.0F;
+    frame.forward.y = -0.0F;
+    REQUIRE(character::is_valid(frame));
+    const auto surface = make_surface();
+    auto player = make_simulation(surface);
+    REQUIRE(character::advance_player_capsule(
+        player,
+        {},
+        frame,
+        surface,
+        1.0F / 60.0F,
+        1U));
+    REQUIRE_FALSE(std::signbit(
+        player.current.consumed_movement_frame.right.y));
+    REQUIRE_FALSE(std::signbit(
+        player.current.consumed_movement_frame.right.z));
+    REQUIRE_FALSE(std::signbit(
+        player.current.consumed_movement_frame.forward.x));
+    REQUIRE_FALSE(std::signbit(
+        player.current.consumed_movement_frame.forward.y));
+}
+
+TEST_CASE(
+    "ground locomotion is camera relative and diagonal normalized",
+    "[character][player-capsule][locomotion][camera-relative]")
+{
+    using namespace shark;
+
+    const auto surface = make_surface(make_wide_plane_tile());
+
+    auto forward = make_simulation(surface);
+    REQUIRE(character::advance_player_capsule(
+        forward,
+        {.move_forward_held = true},
+        {},
+        surface,
+        0.25F,
+        1U));
+    require_float3(
+        forward.current.horizontal_velocity,
+        {0.0F, 0.0F, -4.0F});
+    require_float3(
+        forward.current.state.center_position,
+        {0.0F, 1.0F, -1.0F});
+    REQUIRE(positive_zero(
+        forward.current.state.facing_yaw_radians));
+
+    auto rotated = make_simulation(surface);
+    const character::PlayerMovementFrame quarter_turn{
+        .right = {0.0F, 0.0F, 1.0F},
+        .forward = {1.0F, 0.0F, 0.0F},
+    };
+    REQUIRE(character::advance_player_capsule(
+        rotated,
+        {.move_forward_held = true},
+        quarter_turn,
+        surface,
+        0.25F,
+        1U));
+    require_float3(
+        rotated.current.horizontal_velocity,
+        {4.0F, 0.0F, 0.0F});
+    require_float3(
+        rotated.current.state.center_position,
+        {1.0F, 1.0F, 0.0F});
+    REQUIRE(
+        rotated.current.state.facing_yaw_radians ==
+        Catch::Approx(math::half_pi).margin(0.000001F));
+    REQUIRE(
+        rotated.current.consumed_movement_frame ==
+        quarter_turn);
+
+    auto diagonal = make_simulation(surface);
+    REQUIRE(character::advance_player_capsule(
+        diagonal,
+        {
+            .move_forward_held = true,
+            .move_right_held = true,
+        },
+        {},
+        surface,
+        0.25F,
+        1U));
+    const auto diagonal_speed = std::sqrt(
+        static_cast<double>(
+            diagonal.current.horizontal_velocity.x) *
+            diagonal.current.horizontal_velocity.x +
+        static_cast<double>(
+            diagonal.current.horizontal_velocity.z) *
+            diagonal.current.horizontal_velocity.z);
+    REQUIRE(diagonal_speed ==
+        Catch::Approx(4.0).margin(0.000001));
+    REQUIRE(
+        diagonal.current.horizontal_velocity.x ==
+        Catch::Approx(
+            -diagonal.current.horizontal_velocity.z)
+            .margin(0.000001F));
+    const auto diagonal_distance = std::sqrt(
+        static_cast<double>(
+            diagonal.current.state.center_position.x) *
+            diagonal.current.state.center_position.x +
+        static_cast<double>(
+            diagonal.current.state.center_position.z) *
+            diagonal.current.state.center_position.z);
+    REQUIRE(diagonal_distance ==
+        Catch::Approx(1.0).margin(0.000001));
+
+    auto cancelled = make_simulation(surface);
+    REQUIRE(character::advance_player_capsule(
+        cancelled,
+        {
+            .move_forward_held = true,
+            .move_backward_held = true,
+            .move_left_held = true,
+            .move_right_held = true,
+        },
+        quarter_turn,
+        surface,
+        0.25F,
+        1U));
+    REQUIRE(cancelled.current.state.center_position ==
+        math::Float3{0.0F, 1.0F, 0.0F});
+    REQUIRE(cancelled.current.horizontal_velocity ==
+        math::Float3{});
+}
+
+TEST_CASE(
+    "ground velocity accelerates brakes and reverses deterministically",
+    "[character][player-capsule][locomotion][acceleration][braking]")
+{
+    using namespace shark;
+
+    const auto surface = make_surface(make_wide_plane_tile());
+    auto player = make_simulation(surface);
+    const character::PlayerActionCommand run_right{
+        .move_right_held = true,
+        .run_held = true,
+    };
+    REQUIRE(character::advance_player_capsule(
+        player,
+        run_right,
+        {},
+        surface,
+        0.25F,
+        1U));
+    REQUIRE(player.current.horizontal_velocity.x == 6.0F);
+    REQUIRE(player.current.state.center_position.x == 1.5F);
+    REQUIRE(character::advance_player_capsule(
+        player,
+        run_right,
+        {},
+        surface,
+        0.25F,
+        2U));
+    REQUIRE(player.current.horizontal_velocity.x == 7.0F);
+    REQUIRE(player.current.state.center_position.x == 3.25F);
+
+    REQUIRE(character::advance_player_capsule(
+        player,
+        {},
+        {},
+        surface,
+        0.125F,
+        3U));
+    REQUIRE(player.current.horizontal_velocity.x == 3.0F);
+    REQUIRE(player.current.state.center_position.x == 3.625F);
+    REQUIRE(character::advance_player_capsule(
+        player,
+        {},
+        {},
+        surface,
+        0.125F,
+        4U));
+    REQUIRE(player.current.horizontal_velocity ==
+        math::Float3{});
+    REQUIRE(player.current.state.center_position.x == 3.625F);
+
+    auto reversing = make_simulation(surface);
+    REQUIRE(character::advance_player_capsule(
+        reversing,
+        run_right,
+        {},
+        surface,
+        0.25F,
+        1U));
+    REQUIRE(character::advance_player_capsule(
+        reversing,
+        run_right,
+        {},
+        surface,
+        0.25F,
+        2U));
+    REQUIRE(character::advance_player_capsule(
+        reversing,
+        {
+            .move_left_held = true,
+            .run_held = true,
+        },
+        {},
+        surface,
+        0.25F,
+        3U));
+    REQUIRE(reversing.current.horizontal_velocity.x == -1.0F);
+    REQUIRE(reversing.current.state.center_position.x == 3.0F);
+    REQUIRE(
+        reversing.current.state.facing_yaw_radians ==
+        Catch::Approx(math::half_pi - 2.5F)
+            .margin(0.000001F));
+}
+
+TEST_CASE(
+    "ground traversal accepts a safe prefix and rejects steep terrain",
+    "[character][player-capsule][locomotion][terrain][slope]")
+{
+    using namespace shark;
+
+    const auto barrier =
+        make_surface(make_steep_barrier_tile());
+    auto player = make_simulation(
+        barrier,
+        test_config({-0.5F, 1.0F, 0.0F}));
+    REQUIRE(character::advance_player_capsule(
+        player,
+        {
+            .move_right_held = true,
+            .run_held = true,
+        },
+        {},
+        barrier,
+        0.25F,
+        1U));
+    REQUIRE(player.current.state.center_position.x == -0.25F);
+    REQUIRE(player.current.state.center_position.y == 1.0F);
+    REQUIRE(player.current.horizontal_velocity ==
+        math::Float3{});
+    REQUIRE(player.current.vertical.phase ==
+        character::PlayerGroundPhase::grounded);
+    REQUIRE(
+        player.current.state.facing_yaw_radians ==
+        Catch::Approx(math::half_pi).margin(0.000001F));
+
+    const auto blocked = player;
+    REQUIRE(character::advance_player_capsule(
+        player,
+        {
+            .move_right_held = true,
+            .run_held = true,
+        },
+        {},
+        barrier,
+        0.25F,
+        2U));
+    REQUIRE(player.current.state.center_position ==
+        blocked.current.state.center_position);
+    REQUIRE(player.current.horizontal_velocity ==
+        math::Float3{});
+
+    const auto gentle =
+        make_surface(make_wide_plane_tile(0.25F));
+    const auto support =
+        character::query_player_terrain_support(
+            {},
+            {},
+            gentle,
+            0.0F,
+            0.0F);
+    REQUIRE(support);
+    REQUIRE(support.value());
+    auto slope = make_simulation(
+        gentle,
+        test_config({
+            0.0F,
+            support.value()->center_position_y,
+            0.0F,
+        }));
+    REQUIRE(character::advance_player_capsule(
+        slope,
+        {.move_right_held = true},
+        {},
+        gentle,
+        0.25F,
+        1U));
+    const auto destination_support =
+        character::query_player_terrain_support(
+            slope.config.shape,
+            slope.config.grounding,
+            gentle,
+            1.0F,
+            0.0F);
+    REQUIRE(destination_support);
+    REQUIRE(destination_support.value());
+    REQUIRE(slope.current.state.center_position ==
+        math::Float3{
+            1.0F,
+            destination_support.value()->center_position_y,
+            0.0F,
+        });
+    REQUIRE(slope.current.vertical.support_normal ==
+        destination_support.value()->surface.normal);
+
+    auto bounded_config = test_config();
+    bounded_config.center_bounds.maximum.x = 0.6F;
+    const auto bounded_surface =
+        make_surface(make_wide_plane_tile());
+    auto bounded = make_simulation(
+        bounded_surface,
+        bounded_config);
+    REQUIRE(character::advance_player_capsule(
+        bounded,
+        {.move_right_held = true},
+        {},
+        bounded_surface,
+        0.25F,
+        1U));
+    REQUIRE(bounded.current.state.center_position.x == 0.5F);
+    REQUIRE(bounded.current.horizontal_velocity ==
+        math::Float3{});
+}
+
+TEST_CASE(
+    "ground facing follows the bounded shortest yaw arc",
+    "[character][player-capsule][locomotion][facing]")
+{
+    using namespace shark;
+
+    const auto surface = make_surface(make_wide_plane_tile());
+    auto config = test_config();
+    config.spawn_facing_yaw_radians = math::pi - 0.5F;
+    auto player = make_simulation(surface, config);
+    const auto initial_yaw =
+        player.current.state.facing_yaw_radians;
+    const auto desired_yaw = -math::pi + 0.5F;
+    REQUIRE(character::advance_player_capsule(
+        player,
+        {.move_forward_held = true},
+        movement_frame_for_yaw(desired_yaw),
+        surface,
+        0.01F,
+        1U));
+    const auto applied = std::remainder(
+        static_cast<double>(
+            player.current.state.facing_yaw_radians) -
+            initial_yaw,
+        static_cast<double>(math::two_pi));
+    REQUIRE(applied ==
+        Catch::Approx(0.1).margin(0.000001));
+    const auto remaining = std::remainder(
+        static_cast<double>(desired_yaw) -
+            player.current.state.facing_yaw_radians,
+        static_cast<double>(math::two_pi));
+    REQUIRE(remaining > 0.0);
+    REQUIRE(remaining ==
+        Catch::Approx(0.9).margin(0.000002));
+}
+
+TEST_CASE(
+    "falling and steep contact suppress horizontal control",
+    "[character][player-capsule][locomotion][falling][steep]")
+{
+    using namespace shark;
+
+    const auto flat = make_surface(make_wide_plane_tile());
+    auto falling = make_simulation(
+        flat,
+        test_config({0.0F, 3.0F, 0.0F}));
+    REQUIRE(character::advance_player_capsule(
+        falling,
+        {
+            .move_forward_held = true,
+            .move_right_held = true,
+            .run_held = true,
+        },
+        movement_frame_for_yaw(math::half_pi),
+        flat,
+        0.1F,
+        1U));
+    REQUIRE(falling.current.state.center_position.x == 0.0F);
+    REQUIRE(falling.current.state.center_position.z == 0.0F);
+    REQUIRE(falling.current.state.facing_yaw_radians == 0.0F);
+    REQUIRE(falling.current.horizontal_velocity ==
+        math::Float3{});
+
+    const auto steep_surface =
+        make_surface(make_wide_plane_tile(2.0F));
+    const auto support =
+        character::query_player_terrain_support(
+            {},
+            {},
+            steep_surface,
+            0.0F,
+            0.0F);
+    REQUIRE(support);
+    REQUIRE(support.value());
+    REQUIRE_FALSE(support.value()->walkable);
+    auto steep = make_simulation(
+        steep_surface,
+        test_config({
+            0.0F,
+            support.value()->center_position_y,
+            0.0F,
+        }));
+    REQUIRE(steep.current.vertical.phase ==
+        character::PlayerGroundPhase::steep_contact);
+    const auto before = steep.current.state;
+    REQUIRE(character::advance_player_capsule(
+        steep,
+        {
+            .move_forward_held = true,
+            .run_held = true,
+        },
+        movement_frame_for_yaw(math::half_pi),
+        steep_surface,
+        0.25F,
+        1U));
+    REQUIRE(steep.current.state == before);
+    REQUIRE(steep.current.horizontal_velocity ==
+        math::Float3{});
+}
+
+TEST_CASE(
     "grounded player remains exactly stable under gravity",
     "[character][player-capsule][grounded][stability]")
 {
@@ -484,12 +1072,12 @@ TEST_CASE(
     auto player = make_simulation(surface);
     for (std::uint64_t tick = 1U; tick <= 600U; ++tick) {
         const character::PlayerActionCommand command{
-            .move_forward_held = tick % 2U == 0U,
-            .run_held = tick % 3U == 0U,
+            .primary_action_pressed = tick % 2U == 0U,
         };
         REQUIRE(character::advance_player_capsule(
             player,
             command,
+            {},
             surface,
             1.0F / 60.0F,
             tick));
@@ -529,6 +1117,7 @@ TEST_CASE(
         REQUIRE(character::advance_player_capsule(
             player,
             {},
+            {},
             surface,
             delta_seconds,
             tick));
@@ -560,6 +1149,7 @@ TEST_CASE(
 
     REQUIRE(character::advance_player_capsule(
         player,
+        {.move_forward_held = true},
         {},
         surface,
         delta_seconds,
@@ -569,6 +1159,12 @@ TEST_CASE(
     REQUIRE(player.current.vertical.phase ==
         character::PlayerGroundPhase::grounded);
     REQUIRE(player.current.state.center_position.y == 1.0F);
+    REQUIRE(
+        player.current.horizontal_velocity.z ==
+        Catch::Approx(-2.4F).margin(0.000001F));
+    REQUIRE(
+        player.current.state.center_position.z ==
+        Catch::Approx(-0.24F).margin(0.000001F));
 }
 
 TEST_CASE(
@@ -600,6 +1196,7 @@ TEST_CASE(
             character::PlayerGroundPhase::grounded);
         REQUIRE(character::advance_player_capsule(
             player,
+            {},
             {},
             surface,
             1.0F / 60.0F,
@@ -636,6 +1233,7 @@ TEST_CASE(
         REQUIRE(character::advance_player_capsule(
             player,
             {},
+            {},
             surface,
             1.0F / 60.0F,
             1U));
@@ -652,6 +1250,7 @@ TEST_CASE(
             ++tick;
             REQUIRE(character::advance_player_capsule(
                 falling,
+                {},
                 {},
                 surface,
                 0.1F,
@@ -678,6 +1277,7 @@ TEST_CASE(
     REQUIRE(character::advance_player_capsule(
         player,
         {},
+        {},
         surface,
         1.0F / 60.0F,
         1U));
@@ -696,9 +1296,14 @@ TEST_CASE(
         .jump_pressed = true,
         .reset_pressed = true,
     };
+    const character::PlayerMovementFrame reset_frame{
+        .right = {0.0F, 0.0F, 1.0F},
+        .forward = {1.0F, 0.0F, 0.0F},
+    };
     REQUIRE(character::advance_player_capsule(
         player,
         reset,
+        reset_frame,
         surface,
         1.0F / 60.0F,
         2U));
@@ -706,6 +1311,10 @@ TEST_CASE(
         player.current.state);
     REQUIRE(player.previous.vertical ==
         player.current.vertical);
+    REQUIRE(player.previous.horizontal_velocity ==
+        math::Float3{});
+    REQUIRE(player.current.horizontal_velocity ==
+        math::Float3{});
     REQUIRE(player.current.state.center_position ==
         player.config.spawn_center_position);
     REQUIRE(player.current.vertical.phase ==
@@ -716,6 +1325,10 @@ TEST_CASE(
     REQUIRE(player.previous.consumed_command ==
         character::PlayerActionCommand{});
     REQUIRE(player.current.consumed_command == reset);
+    REQUIRE(player.previous.consumed_movement_frame ==
+        character::PlayerMovementFrame{});
+    REQUIRE(player.current.consumed_movement_frame ==
+        reset_frame);
 
     const auto middle =
         character::interpolate_player_capsule(
@@ -738,6 +1351,7 @@ TEST_CASE(
     REQUIRE(character::advance_player_capsule(
         player,
         {.move_forward_held = true},
+        {},
         surface,
         0.1F,
         1U));
@@ -770,6 +1384,28 @@ TEST_CASE(
         character::collapse_player_capsule_interpolation(
             invalid));
     REQUIRE(invalid == before);
+
+    const auto wide = make_surface(make_wide_plane_tile());
+    auto moving = make_simulation(wide);
+    REQUIRE(character::advance_player_capsule(
+        moving,
+        {.move_right_held = true},
+        {},
+        wide,
+        0.25F,
+        1U));
+    REQUIRE(moving.previous.horizontal_velocity !=
+        moving.current.horizontal_velocity);
+    auto moving_expected = moving;
+    moving_expected.previous.state =
+        moving_expected.current.state;
+    moving_expected.previous.vertical =
+        moving_expected.current.vertical;
+    moving_expected.previous.horizontal_velocity =
+        moving_expected.current.horizontal_velocity;
+    REQUIRE(character::collapse_player_capsule_interpolation(
+        moving));
+    REQUIRE(moving == moving_expected);
 }
 
 TEST_CASE(
@@ -795,6 +1431,7 @@ TEST_CASE(
             character::advance_player_capsule(
                 player,
                 {},
+                {},
                 surface,
                 delta,
                 1U);
@@ -809,6 +1446,7 @@ TEST_CASE(
         const auto before = player;
         REQUIRE_FALSE(character::advance_player_capsule(
             player,
+            {},
             {},
             surface,
             1.0F / 60.0F,
@@ -825,10 +1463,24 @@ TEST_CASE(
     REQUIRE_FALSE(character::advance_player_capsule(
         player,
         invalid_command,
+        {},
         surface,
         1.0F / 60.0F,
         1U));
     REQUIRE(player == command_before);
+
+    auto invalid_frame = character::PlayerMovementFrame{};
+    invalid_frame.forward.x =
+        std::numeric_limits<float>::quiet_NaN();
+    const auto frame_before = player;
+    REQUIRE_FALSE(character::advance_player_capsule(
+        player,
+        {},
+        invalid_frame,
+        surface,
+        1.0F / 60.0F,
+        1U));
+    REQUIRE(player == frame_before);
 
     auto malformed = player;
     malformed.current.vertical.phase =
@@ -839,14 +1491,29 @@ TEST_CASE(
     REQUIRE_FALSE(character::advance_player_capsule(
         malformed,
         {},
+        {},
         surface,
         1.0F / 60.0F,
         1U));
     REQUIRE(malformed == malformed_before);
 
+    auto malformed_horizontal = player;
+    malformed_horizontal.current.horizontal_velocity =
+        {1.0F, 0.0F, 0.0F};
+    const auto horizontal_before = malformed_horizontal;
+    REQUIRE_FALSE(character::advance_player_capsule(
+        malformed_horizontal,
+        {},
+        {},
+        surface,
+        1.0F / 60.0F,
+        1U));
+    REQUIRE(malformed_horizontal == horizontal_before);
+
     auto below = player;
     REQUIRE(character::advance_player_capsule(
         below,
+        {},
         {},
         surface,
         1.0F / 60.0F,
@@ -860,6 +1527,7 @@ TEST_CASE(
     const auto below_result =
         character::advance_player_capsule(
             below,
+            {},
             {},
             surface,
             1.0F / 60.0F,
@@ -877,6 +1545,7 @@ TEST_CASE(
     const auto bounded_result =
         character::advance_player_capsule(
             bounded,
+            {},
             {},
             surface,
             0.25F,
@@ -909,6 +1578,7 @@ TEST_CASE(
         character::advance_player_capsule(
             player,
             {.reset_pressed = true},
+            {},
             surface,
             1.0F / 60.0F,
             0U);
@@ -997,6 +1667,7 @@ TEST_CASE(
              std::nextafter(
                  math::pi,
                  -std::numeric_limits<float>::infinity())},
+        {},
         surface,
         1.0F / 60.0F,
         1U));

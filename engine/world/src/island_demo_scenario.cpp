@@ -113,6 +113,15 @@ inline constexpr character::PlayerGroundingSettings
         .snap_distance =
             character::default_player_ground_snap_distance,
     };
+inline constexpr character::PlayerGroundLocomotionSettings
+    island_demo_player_ground_locomotion{
+        .walk_speed = 4.0F,
+        .run_speed = 7.0F,
+        .acceleration = 24.0F,
+        .braking_deceleration = 32.0F,
+        .facing_turn_speed_radians_per_second = 10.0F,
+        .maximum_probe_spacing = 0.25F,
+    };
 inline constexpr float island_demo_player_minimum_center_y = -32.0F;
 inline constexpr float island_demo_player_maximum_center_y = 64.0F;
 inline constexpr ThirdPersonCameraConfig island_demo_player_camera{
@@ -140,7 +149,8 @@ inline constexpr float island_demo_isolated_body_height = 14.0F;
 inline constexpr float island_demo_far_plane = 1'500.0F;
 inline constexpr float minimum_spawn_clearance = 2.0F;
 inline constexpr float minimum_route_clearance = 0.5F;
-inline constexpr float route_sample_spacing = 2.0F;
+inline constexpr float route_sample_spacing =
+    island_demo_player_ground_locomotion.maximum_probe_spacing;
 inline constexpr float minimum_surface_normal_y = 0.8660254F;
 
 [[nodiscard]] core::Error scenario_error(std::string message)
@@ -321,6 +331,8 @@ core::Result<IslandDemoScenario> make_island_demo_scenario()
         },
         .spawn_facing_yaw_radians = 0.0F,
         .grounding = island_demo_player_grounding,
+        .ground_locomotion =
+            island_demo_player_ground_locomotion,
     };
     const auto player_result =
         character::create_player_capsule(
@@ -344,6 +356,8 @@ core::Result<IslandDemoScenario> make_island_demo_scenario()
         player_result.value().current.vertical.velocity_y != 0.0F ||
         std::signbit(
             player_result.value().current.vertical.velocity_y) ||
+        player_result.value().current.horizontal_velocity !=
+            math::Float3{} ||
         player_result.value().current.vertical.phase !=
             character::PlayerGroundPhase::grounded ||
         player_result.value().current.vertical.support_normal !=

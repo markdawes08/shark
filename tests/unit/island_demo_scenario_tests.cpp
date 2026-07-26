@@ -121,6 +121,15 @@ TEST_CASE(
             .snap_distance =
                 character::default_player_ground_snap_distance,
         });
+    REQUIRE(first.player_capsule.ground_locomotion ==
+        character::PlayerGroundLocomotionSettings{
+            .walk_speed = 4.0F,
+            .run_speed = 7.0F,
+            .acceleration = 24.0F,
+            .braking_deceleration = 32.0F,
+            .facing_turn_speed_radians_per_second = 10.0F,
+            .maximum_probe_spacing = 0.25F,
+        });
     const auto spawn_support_result =
         character::query_player_terrain_support(
             first.player_capsule.shape,
@@ -163,6 +172,8 @@ TEST_CASE(
     REQUIRE(player.current.vertical.velocity_y == 0.0F);
     REQUIRE_FALSE(std::signbit(
         player.current.vertical.velocity_y));
+    REQUIRE(player.current.horizontal_velocity ==
+        math::Float3{});
     REQUIRE(player.current.vertical.phase ==
         character::PlayerGroundPhase::grounded);
     REQUIRE(player.current.vertical.support_normal ==
@@ -391,6 +402,121 @@ TEST_CASE(
     }
     REQUIRE(route_length >= 500.0);
     REQUIRE(route_is_walkable);
+}
+
+TEST_CASE(
+    "Island Demo player traverses its complete authored loop on canonical terrain",
+    "[world][scenario][island-demo][route][character][locomotion]")
+{
+    using namespace shark;
+
+    const auto scenario_result =
+        world::make_island_demo_scenario();
+    REQUIRE(scenario_result);
+    const auto& scenario = scenario_result.value();
+    const auto surface_result =
+        terrain::HeightTileSurface::create(scenario.terrain);
+    REQUIRE(surface_result);
+    const auto& surface = surface_result.value();
+    const auto player_result =
+        character::create_player_capsule(
+            scenario.player_capsule,
+            surface);
+    REQUIRE(player_result);
+    auto player = player_result.value();
+
+    constexpr float fixed_delta_seconds = 1.0F / 60.0F;
+    constexpr float waypoint_radius = 0.2F;
+    constexpr std::uint64_t maximum_ticks = 12'000U;
+    std::size_t completed_segments = 0U;
+    std::uint64_t fixed_tick = 0U;
+    auto minimum_support_normal_y =
+        std::numeric_limits<float>::max();
+
+    while (completed_segments <
+               scenario.traversal_loop.size() &&
+           fixed_tick < maximum_ticks) {
+        const auto& target = scenario.traversal_loop[
+            (completed_segments + 1U) %
+            scenario.traversal_loop.size()];
+        const auto delta_x =
+            target.x - player.current.state.center_position.x;
+        const auto delta_z =
+            target.z - player.current.state.center_position.z;
+        const auto distance = std::hypot(delta_x, delta_z);
+        if (distance <= waypoint_radius) {
+            ++completed_segments;
+            continue;
+        }
+
+        const auto inverse_distance = 1.0F / distance;
+        const auto forward_x =
+            delta_x == 0.0F
+                ? 0.0F
+                : delta_x * inverse_distance;
+        const auto forward_z =
+            delta_z == 0.0F
+                ? 0.0F
+                : delta_z * inverse_distance;
+        const math::Float3 forward{
+            forward_x,
+            0.0F,
+            forward_z,
+        };
+        const character::PlayerMovementFrame movement_frame{
+            .right = {
+                forward.z == 0.0F ? 0.0F : -forward.z,
+                0.0F,
+                forward.x,
+            },
+            .forward = forward,
+        };
+        const character::PlayerActionCommand command{
+            .move_forward_held = true,
+            .run_held = true,
+        };
+        ++fixed_tick;
+        CAPTURE(completed_segments, fixed_tick, distance);
+        REQUIRE(character::advance_player_capsule(
+            player,
+            command,
+            movement_frame,
+            surface,
+            fixed_delta_seconds,
+            fixed_tick));
+
+        const auto support_result =
+            character::query_player_terrain_support(
+                scenario.player_capsule.shape,
+                scenario.player_capsule.grounding,
+                surface,
+                player.current.state.center_position.x,
+                player.current.state.center_position.z);
+        REQUIRE(support_result);
+        REQUIRE(support_result.value());
+        const auto& support = *support_result.value();
+        REQUIRE(support.walkable);
+        REQUIRE(player.current.vertical.phase ==
+            character::PlayerGroundPhase::grounded);
+        REQUIRE(player.current.state.center_position.y ==
+            support.center_position_y);
+        REQUIRE(player.current.vertical.support_normal ==
+            support.surface.normal);
+        REQUIRE(player.current.horizontal_velocity.y == 0.0F);
+        REQUIRE_FALSE(std::signbit(
+            player.current.horizontal_velocity.y));
+        REQUIRE(support.surface.position.y >=
+            scenario.water.gameplay_body.surface_height +
+                0.5F);
+        minimum_support_normal_y = std::min(
+            minimum_support_normal_y,
+            support.surface.normal.y);
+    }
+
+    REQUIRE(completed_segments ==
+        scenario.traversal_loop.size());
+    REQUIRE(fixed_tick < maximum_ticks);
+    REQUIRE(minimum_support_normal_y >= 0.8660254F);
 }
 
 TEST_CASE(

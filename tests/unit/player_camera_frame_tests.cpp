@@ -61,6 +61,36 @@ make_camera_rig(
     return std::move(result).value();
 }
 
+void advance_camera_and_player(
+    shark::world::ThirdPersonCameraRig& camera_rig,
+    shark::character::PlayerCapsuleSimulation& player,
+    const shark::character::PlayerActionCommand command,
+    const shark::world::ThirdPersonOrbitDelta camera_delta,
+    const shark::terrain::HeightTileSurface& surface,
+    const float fixed_delta_seconds,
+    const std::uint64_t fixed_tick)
+{
+    using namespace shark;
+
+    REQUIRE(world::advance_third_person_camera_rig(
+        camera_rig,
+        camera_delta,
+        fixed_tick));
+    const auto camera_basis = world::horizontal_camera_basis(
+        camera_rig.current.state.yaw_radians);
+    REQUIRE(camera_basis);
+    REQUIRE(character::advance_player_capsule(
+        player,
+        command,
+        character::PlayerMovementFrame{
+            .right = camera_basis.value().right,
+            .forward = camera_basis.value().forward,
+        },
+        surface,
+        fixed_delta_seconds,
+        fixed_tick));
+}
+
 [[nodiscard]] shark::sandbox::PlayerCameraFrame
 run_partition(
     const std::uint32_t render_rate_hz,
@@ -98,14 +128,12 @@ run_partition(
              step < frame_result.value().step_count;
              ++step) {
             const auto fixed_tick = first_fixed_tick + step;
-            REQUIRE(character::advance_player_capsule(
-                player,
-                {},
-                fixture.surface,
-                clock.fixed_delta_seconds(),
-                fixed_tick));
-            REQUIRE(world::advance_third_person_camera_rig(
+            advance_camera_and_player(
                 camera_rig,
+                player,
+                character::PlayerActionCommand{
+                    .move_forward_held = true,
+                },
                 world::ThirdPersonOrbitDelta{
                     .yaw_radians =
                         fixed_tick % 5U == 0U
@@ -120,7 +148,9 @@ run_partition(
                         ? -0.125F
                         : 0.015625F,
                 },
-                fixed_tick));
+                fixture.surface,
+                clock.fixed_delta_seconds(),
+                fixed_tick);
         }
     }
 
@@ -150,20 +180,25 @@ TEST_CASE(
         fixture.surface);
     auto camera_rig = make_camera_rig(fixture.scenario);
 
-    REQUIRE(character::advance_player_capsule(
-        player,
-        {},
-        fixture.surface,
-        1.0F / 60.0F,
-        1U));
-    REQUIRE(world::advance_third_person_camera_rig(
+    advance_camera_and_player(
         camera_rig,
+        player,
+        character::PlayerActionCommand{
+            .move_forward_held = true,
+        },
         world::ThirdPersonOrbitDelta{
             .yaw_radians = 0.2F,
             .pitch_radians = 0.1F,
             .boom_distance = -2.0F,
         },
-        1U));
+        fixture.surface,
+        1.0F / 60.0F,
+        1U);
+    REQUIRE(player.current.state.center_position.x >
+        player.previous.state.center_position.x);
+    REQUIRE(player.current.state.center_position.z <
+        player.previous.state.center_position.z);
+    REQUIRE(player.current.horizontal_velocity != math::Float3{});
 
     constexpr auto alpha = 0.25F;
     const auto expected_player =
@@ -247,16 +282,14 @@ TEST_CASE(
         character::PlayerGroundPhase::falling);
 
     auto camera_rig = make_camera_rig(fixture.scenario);
-    REQUIRE(character::advance_player_capsule(
+    advance_camera_and_player(
+        camera_rig,
         player,
+        {},
         {},
         fixture.surface,
         1.0F / 60.0F,
-        1U));
-    REQUIRE(world::advance_third_person_camera_rig(
-        camera_rig,
-        {},
-        1U));
+        1U);
     REQUIRE(player.current.vertical.phase ==
         character::PlayerGroundPhase::falling);
     REQUIRE(player.current.vertical.velocity_y < 0.0F);
@@ -304,20 +337,18 @@ TEST_CASE(
         fixture.scenario,
         fixture.surface);
     auto camera_rig = make_camera_rig(fixture.scenario);
-    REQUIRE(character::advance_player_capsule(
+    advance_camera_and_player(
+        camera_rig,
         player,
         {},
-        fixture.surface,
-        1.0F / 60.0F,
-        1U));
-    REQUIRE(world::advance_third_person_camera_rig(
-        camera_rig,
         world::ThirdPersonOrbitDelta{
             .pitch_radians =
                 camera_rig.config.maximum_pitch_radians -
                 camera_rig.current.state.pitch_radians,
         },
-        1U));
+        fixture.surface,
+        1.0F / 60.0F,
+        1U);
 
     const auto frame = sandbox::build_player_camera_frame(
         player,

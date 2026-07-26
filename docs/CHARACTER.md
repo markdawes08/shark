@@ -1,16 +1,17 @@
 # Character Contract
 
-- **Completed through:** `CHR-002`
+- **Completed through:** `CHR-003`
 - **Camera integration verified through:** `CAM-001`
 - **Last verified:** July 26, 2026
 
-CHR-002 turns the Island Demo's single bounded player capsule into a
-deterministic vertical character controller. Standard gravity, canonical
-terrain support, walkable-slope classification, falling, one-tick landing, and
-stable grounded state now advance at the fixed simulation rate.
+CHR-003 turns the Island Demo's single bounded player capsule into a
+deterministic grounded character controller. Camera-relative walk/run intent,
+authoritative horizontal velocity, acceleration, braking, facing, bounded
+terrain traversal, gravity, falling, landing, and stable support all advance
+at the fixed simulation rate.
 
-Horizontal locomotion, jumping, water movement, obstacle stepping, arbitrary
-world collision, an entity registry, and final avatar art remain outside this
+Jumping, airborne control, water movement, obstacle stepping, arbitrary world
+collision, an entity registry, and final avatar art remain outside this
 increment.
 
 ## Ownership and data flow
@@ -24,17 +25,22 @@ visual LOD, D3D12 resource, camera, or gameplay-water result.
 Platform events
   -> sandbox PlayerCommandSource
   -> one PlayerActionCommand per emitted 60 Hz tick
-  -> Character queries canonical LOD0 terrain at player X/Z
+  -> World advances the authoritative orbit and publishes a horizontal basis
+  -> Character maps intent, velocity, facing, and canonical terrain probes
   -> Character previous/current snapshots
   -> presentation-only player interpolation
   -> renderer DebugCapsuleProxy
   -> World third-person target (read-only sibling consumer)
 ```
 
-The sandbox advances Character first on each emitted fixed tick, then the
-third-person orbit rig on the same tick number, followed by the retained
-dynamic sphere simulation. Free-fly camera mode neutralizes character actions
-but does not suspend gravity or grounding.
+The sandbox advances the third-person orbit first on each emitted fixed tick,
+derives a Character-owned movement frame from that tick's new yaw, advances
+Character on the same tick number, and then advances the retained dynamic
+sphere simulation. A simultaneous look-and-move command therefore uses the
+new heading without a one-tick lag. Character does not depend on World; the
+composition root copies World's basis into `PlayerMovementFrame`. Free-fly
+camera mode neutralizes character actions but does not suspend gravity or
+grounding.
 
 ## Capsule and support model
 
@@ -55,10 +61,12 @@ using only `p.y + h + r` would penetrate a sloped face. The sample retains
 Terrain's fixed triangle split and inclusive maximum-edge ownership. Render
 normals and coarse terrain never participate.
 
-This is deliberately a one-X/Z-sample heightfield controller. It does not yet
-perform a swept capsule query against side features, overhangs, props, or
-arbitrary obstacles. Horizontal sweep, bounded slope traversal, and movement
-rejection belong to `CHR-003`.
+This remains deliberately a heightfield controller. CHR-003 samples the
+horizontal path at bounded intervals, but does not perform an exact
+crossed-triangle or swept-capsule query against side features, overhangs,
+props, or arbitrary obstacles. A sufficiently narrow or corner-grazed
+non-walkable face on a different terrain topology can fall between samples;
+the Island Demo's authored topology and route are verified separately.
 
 ## Grounding policy and states
 
@@ -99,6 +107,44 @@ publishes the exact support height and positive-zero velocity. The crossing
 test prevents discrete downward tunneling through the selected heightfield
 sample. A non-walkable crossing publishes `steep_contact`, not `grounded`.
 
+## Ground locomotion
+
+The Island Demo publishes this bounded `PlayerGroundLocomotionSettings`
+record:
+
+| Setting | Island Demo value |
+|---|---:|
+| walk target | `4 m/s` |
+| run target | `7 m/s` |
+| acceleration | `24 m/s^2` |
+| braking deceleration | `32 m/s^2` |
+| facing turn speed | `10 rad/s` |
+| maximum terrain-probe spacing | `0.25 m` |
+
+Each fixed tick cancels opposing held directions, combines the signed
+forward/right axes through the current camera-relative movement frame, and
+normalizes a nonzero diagonal. This prevents diagonal input from exceeding
+the selected walk or run target.
+
+The authoritative horizontal velocity moves toward the requested vector by a
+bounded amount. Acceleration is used while gaining speed; braking is used
+with no intent, while reversing, or while dropping toward a lower target.
+Braking snaps exactly to positive zero rather than oscillating across rest.
+Facing turns toward meaningful input through the shortest wrapped yaw arc,
+bounded by the authored turn speed. Facing is retained when input is neutral.
+
+Ground displacement uses the new velocity semi-implicitly. Character divides
+the requested path into deterministic probes no farther apart than the
+authored maximum. Every accepted probe must have a walkable canonical LOD0
+support sample and a slope-correct center inside the configured bounds. A
+steep, missing, or out-of-bounds probe stops traversal, retains the last safe
+probe, and zeros horizontal velocity. This is sampled rejection rather than a
+continuous sweep.
+
+Only `grounded` and `landing` source states receive horizontal control.
+`falling` and `steep_contact` publish positive-zero horizontal velocity until
+CHR-004 defines airborne launch/control and recovery policy.
+
 ## Spawn, reset, and interpolation
 
 Creation validates and canonicalizes shape, bounds, grounding policy, signed
@@ -117,8 +163,9 @@ the complete candidate before committing. A rejected call leaves the whole
 simulation unchanged.
 
 `R` re-queries and restores the canonical authored spawn, increments the reset
-generation, and collapses previous/current pose and vertical state. Reset
-never emits a synthetic landing pulse or interpolates through the teleport.
+generation, zeros horizontal velocity, and collapses previous/current pose
+and motion state. Reset never emits a synthetic landing pulse or interpolates
+through the teleport.
 
 `interpolate_player_capsule` remains presentation-only: position is linear and
 yaw follows the shortest wrapped arc. Vertical phase and velocity stay
@@ -144,8 +191,8 @@ Held actions repeat on emitted fixed ticks. Jump, primary action, reset, and
 accumulated look are one-tick pulses. Zero-tick render frames do not consume
 pending input; catch-up frames sample separately for each emitted tick.
 
-CHR-002 consumes reset and always advances vertical grounding. Horizontal,
-run, jump, and primary-action fields remain deterministic command data for
+CHR-003 consumes horizontal movement, run, and reset while always advancing
+grounding. Jump and primary action remain deterministic command data for
 later increments.
 
 ## Temporary presentation proxy
@@ -165,6 +212,12 @@ Character. `F7` retains the independent free-fly diagnostic camera.
 
 Permanent tests cover:
 
+- camera-relative walk/run caps, diagonal normalization, opposing-input
+  cancellation, acceleration, braking, exact rest, and reversal;
+- bounded shortest-arc facing and same-tick look-plus-move behavior;
+- gentle-slope traversal with exact support, safe-prefix rejection at steep
+  terrain and center bounds, and the complete eight-point dry Island loop;
+- suppressed falling/steep horizontal control and landing-to-ground movement;
 - flat support over hundreds of ticks with exact positive-zero velocity;
 - analytic semi-implicit falling, exactly one landing tick, and stable
   grounded recovery;
@@ -174,20 +227,24 @@ Permanent tests cover:
 - airborne and supported reset behavior plus interpolation-history collapse;
 - malformed settings, delta, state, tick, overflow, bounds, and source-terrain
   disagreement with transactional rollback;
-- exact command, pose, velocity, phase, support, and reset transcripts across
-  30, 60, 120, and 144 Hz render partitions;
-- vertical player/camera presentation composition; and
+- exact command, camera basis, pose, horizontal/vertical velocity, phase,
+  support, and reset transcripts across 30, 60, 120, and 144 Hz render
+  partitions;
+- moving player/camera presentation composition; and
 - unchanged render-graph, resource, and one-capsule-draw smoke accounting.
 
-The complete Debug and Release suites each pass 506,735 assertions across 378
+The complete Debug and Release suites each pass 560,277 assertions across 385
 cases. The final 1,000-frame Debug RTX 4070 presentation smoke records 1,000
-canonically grounded player ticks, 1,000 capsule draws, 5,000 unchanged graph
-passes, zero D3D12 corruption/errors, and zero live D3D12 child objects.
+canonically grounded neutral player ticks, 1,000 capsule draws, 5,000
+unchanged graph passes, zero D3D12 corruption/errors, and zero live D3D12
+child objects. The packaged-WARP path passes the corresponding 600-frame,
+600-grounded-tick, and 3,000-pass contract.
 
 Launch `out\build\windows-vs2026\bin\Debug\SharkSandbox.exe` to inspect the
-grounded capsule. Press `F5` to resume/pause fixed-tick simulation, `F6` to
-single-step while paused, right-drag/wheel to orbit and zoom, `F7` for
-free-fly diagnostics, and `R` for a canonical grounded reset.
+grounded capsule. Press `F5` to resume/pause fixed-tick simulation, use
+`W`/`A`/`S`/`D` to walk and either `Shift` to run, `F6` to single-step while
+paused, right-drag/wheel to orbit and zoom, `F7` for free-fly diagnostics, and
+`R` for a canonical grounded reset.
 
-The next increment is `CHR-003`: fixed-tick walk/run acceleration, braking,
-facing, and bounded terrain-slope traversal from camera-relative commands.
+The next increment is `CHR-004`: grounded jump launch, deterministic airborne
+control, landing, and recovery.

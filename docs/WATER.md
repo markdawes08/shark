@@ -86,10 +86,11 @@ state, buoyancy, water displacement, dynamic waves, GPU readback, fluid
 coupling, or renderer change. A later simulated-water adapter may provide the
 same query information without changing character policy.
 
-CHR-002 grounds one bounded capsule at the proven dry spawn but still does not
-query water during fixed-tick advancement or own immersion policy. CAM-001
-changes only its presentation camera. The active queue is `CHR-003`, grounded
-locomotion; WQ-001 first enters Character policy at `CHR-005` for wading. The
-authoritative increment order remains in
+CHR-003 moves one bounded capsule across canonical terrain but still does not
+query water during fixed-tick advancement or own immersion policy. It can
+therefore continue along submerged terrain as a temporary limitation.
+CAM-001 changes only its presentation camera. The active queue is `CHR-004`,
+jumping and landing; WQ-001 first enters Character policy at `CHR-005` for
+wading. The authoritative increment order remains in
 [ENGINE_PLAN.md](ENGINE_PLAN.md), and the player contract is in
 [CHARACTER.md](CHARACTER.md).

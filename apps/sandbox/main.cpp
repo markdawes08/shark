@@ -14,6 +14,7 @@
 #include <shark/simulation/fixed_step_clock.hpp>
 #include <shark/terrain/height_tile.hpp>
 #include <shark/terrain/material_palette.hpp>
+#include <shark/water/gameplay_water.hpp>
 #include <shark/world/camera.hpp>
 #include <shark/world/island_demo_scenario.hpp>
 
@@ -1304,11 +1305,30 @@ void log_platform_event(const shark::platform::Event& event)
         },
     };
     const auto& island_water = island_scenario.water;
-    const auto& island_footprint = island_water.footprint;
+    const auto& gameplay_water = island_water.gameplay_body;
+    const auto& island_footprint = gameplay_water.footprint;
+    auto renderer_water_support =
+        renderer::WaterSurfaceSupport::inside_warped_footprint;
+    switch (gameplay_water.support_side) {
+    case water::CalmWaterSupportSide::inside_warped_footprint:
+        renderer_water_support =
+            renderer::WaterSurfaceSupport::inside_warped_footprint;
+        break;
+    case water::CalmWaterSupportSide::outside_warped_footprint:
+        renderer_water_support =
+            renderer::WaterSurfaceSupport::outside_warped_footprint;
+        break;
+    default:
+        return core::Result<void>::failure(core::Error{
+            core::ErrorCategory::simulation,
+            core::ErrorCode::invalid_state,
+            "Island Demo published an unknown water support side",
+        });
+    }
     renderer_config.water_surface = {
         .center = {
             island_footprint.center_x,
-            island_water.waterline_y,
+            gameplay_water.surface_height,
             island_footprint.center_z,
         },
         .semi_axis_x = island_footprint.semi_axis_x,
@@ -1324,9 +1344,7 @@ void log_platform_event(const shark::platform::Event& event)
             island_water.render_half_extent_x,
         .render_half_extent_z =
             island_water.render_half_extent_z,
-        .support =
-            renderer::WaterSurfaceSupport::
-                outside_warped_footprint,
+        .support = renderer_water_support,
     };
     renderer_config.synchronize_to_vertical_refresh = !smoke_mode;
     auto renderer_result = renderer::Renderer::create(

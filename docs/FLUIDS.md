@@ -196,10 +196,12 @@ resource, descriptor, draw, or D3D12 path.
 
 ## Next boundary
 
-ISL-001 completed the playable-island scenario without changing this numerical
-core. `WQ-001` is active and adds CPU gameplay-water queries over authored calm
-water and canonical terrain; it does not advance or consume this solver.
+WQ-001 completed a separate CPU gameplay-water boundary over authored calm
+water and canonical LOD0 terrain. It does not advance or consume this numerical
+solver, and the solver owns no character immersion policy. The shared future
+adapter shape is surface height, bed height, nonnegative depth, and optional
+horizontal flow; see [WATER.md](WATER.md).
 `W-005` may later port fixed-step batches to D3D12 ping-pong compute resources
 and must match this CPU oracle within documented tolerances. GPU
 simulated-water rendering, rain coupling, and hydrology remain approved
-deferred specializations.
+deferred specializations. The active queue is `CHR-001`.

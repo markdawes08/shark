@@ -33,6 +33,15 @@ inline constexpr terrain::IslandShape island_demo_shape{
     .deep_water_depth = 9.0F,
     .deep_water_end_radius_squared = 2.25,
 };
+inline constexpr water::CalmWaterBody island_demo_gameplay_water{
+    .footprint = island_demo_shape.footprint,
+    .support_side =
+        water::CalmWaterSupportSide::outside_warped_footprint,
+    .surface_height = island_demo_shape.waterline_y,
+    .shoreline_depth_tolerance =
+        water::default_shoreline_depth_tolerance,
+    .flow_velocity = water::HorizontalFlow{},
+};
 inline constexpr std::array<
     std::array<float, 2>,
     island_demo_route_point_count>
@@ -294,6 +303,37 @@ core::Result<IslandDemoScenario> make_island_demo_scenario()
                 "land through shallow and swimmable depths"));
     }
 
+    for (std::size_t index = 0;
+         index < shore_positions.size();
+         ++index) {
+        const auto query_result = water::query_gameplay_water(
+            island_demo_gameplay_water,
+            surface,
+            shore_positions[index].x,
+            shore_positions[index].z);
+        if (!query_result) {
+            return core::Result<IslandDemoScenario>::failure(
+                query_result.error());
+        }
+        const auto expected_disposition =
+            index == 0U
+                ? water::GameplayWaterDisposition::no_water
+                : water::GameplayWaterDisposition::water;
+        if (query_result.value().disposition !=
+                expected_disposition ||
+            (index == 0U &&
+             query_result.value().depth != 0.0F) ||
+            (index > 0U &&
+             query_result.value().depth !=
+                 island_demo_shape.waterline_y -
+                     shore_positions[index].y)) {
+            return core::Result<IslandDemoScenario>::failure(
+                scenario_error(
+                    "Island Demo gameplay-water query disagrees with "
+                    "the authored shore transect"));
+        }
+    }
+
     std::array<
         float,
         island_demo_sphere_body_count>
@@ -366,8 +406,7 @@ core::Result<IslandDemoScenario> make_island_demo_scenario()
             .terrain = std::move(shaped_terrain),
             .island = island_demo_shape,
             .water = {
-                .footprint = island_demo_shape.footprint,
-                .waterline_y = island_demo_shape.waterline_y,
+                .gameplay_body = island_demo_gameplay_water,
                 .depth_proxy = island_demo_shape.deep_water_depth,
                 .render_half_extent_x =
                     island_demo_water_render_half_extent_x,

@@ -1140,10 +1140,12 @@ does not read a render mesh or coarse terrain LOD. W-004 now permits exact-dry
 cells and retained films while preserving a partially wet uneven-bed
 lake-at-rest shoreline over that same simulation-owned bed. It does not snap
 water depth to the terrain or derive collision from a visual LOD. ISL-001 adds
-the separate playable-island fixture described below. The active queue is
-`WQ-001`, CPU gameplay-water queries. `W-005`, the GPU shallow-water solver,
-remains an approved deferred specialization in
-[ENGINE_PLAN.md](ENGINE_PLAN.md).
+the separate playable-island fixture described below. WQ-001 now obtains bed
+height only through `HeightTileSurface::sample_lod0_surface`; it never reads a
+coarse/render mesh and never mutates terrain. The active queue is `CHR-001`,
+bounded player-capsule state. `W-005`, the GPU shallow-water solver, remains an
+approved deferred specialization in [ENGINE_PLAN.md](ENGINE_PLAN.md); gameplay
+query invariants are in [WATER.md](WATER.md).
 
 ## ISL-001 playable island
 

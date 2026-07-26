@@ -52,6 +52,7 @@ add_executable(SharkTests
     unit/terrain_island_tests.cpp
     unit/terrain_lake_basin_tests.cpp
     unit/terrain_material_palette_tests.cpp
+    unit/water_gameplay_water_tests.cpp
     unit/environment_lab_scenario_tests.cpp
     unit/windows_application_tests.cpp
 )

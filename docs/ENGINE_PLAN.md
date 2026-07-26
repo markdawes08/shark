@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 25, 2026
-- **Latest completed:** `ISL-001` - deterministic playable-island scenario
-- **Next increment:** `WQ-001` - CPU gameplay-water queries
+- **Latest completed:** `WQ-001` - CPU gameplay-water query boundary
+- **Next increment:** `CHR-001` - bounded player-capsule state
 
 ## 1. Project direction
 
@@ -364,10 +364,10 @@ without changing canonical terrain.
    integration. It uses canonical CPU collision queries and never reads a
    render mesh.
 4. Character water behavior consumes a platform-independent `WaterQuery`
-   result containing support containment, surface height, local depth, and
-   optional flow. It never samples a renderer texture or waits for GPU
-   readback. The first adapter is analytic calm water; simulated water may
-   provide a later adapter.
+   result containing support containment, surface height, canonical bed
+   height, local depth, and optional flow. It never samples a renderer texture
+   or waits for GPU readback. The first adapter is analytic calm water;
+   simulated water may provide a later adapter.
 5. Visual rain particles and physical rainfall share `WeatherState`, but particle
    count never determines water volume.
 6. The fluid solver owns water state. Rendering receives a read-only snapshot or
@@ -398,12 +398,12 @@ Poll input and platform events
   -> record, submit, present
 ```
 
-Island Demo 0.1 uses an analytic calm-water query entirely on the CPU. When the
-GPU solver resumes, its normal path remains asynchronous: catch-up ticks reuse
-the latest completed compact query and never stall for water. A synchronized
-mode exists only for focused verification. This staggered order avoids an
-unstable circular solve; iterative two-way coupling remains a later
-specialization.
+Island Demo 0.1's gameplay-water source is the WQ-001 analytic calm-water query
+entirely on the CPU. When the GPU solver resumes, its normal path remains
+asynchronous: catch-up ticks reuse the latest completed compact query and never
+stall for water. A synchronized mode exists only for focused verification.
+This staggered order avoids an unstable circular solve; iterative two-way
+coupling remains a later specialization.
 
 ## 7. Direct3D 12 renderer design
 
@@ -844,7 +844,7 @@ coupling are outside this first playable path.
 | ID | Level | Increment and acceptance gate | Suggested commit |
 |---|---:|---|---|
 | `ISL-001` | V | Complete: retain the Environment Lab and numerical fixtures while adding a separate Q8 island over the existing `241x241` topology; lock checksum `0x53DD2821AE9ACDEA`, one connected dry component, a dry spawn and continuously walkable loop, a fully submerged perimeter, and a dry/shallow/transition/swim transect; make it the no-argument sandbox scenario and extend the existing 20-DWORD, six-vertex water path with a validated outside-footprint support mode that adds no pass, texture, descriptor, resource, or simulated state | `feat(terrain): add playable island scenario` |
-| `WQ-001` | - | Add a geometry-neutral CPU-authoritative calm-water query for support containment, surface height, bed height, local depth, and optional flow; agree with the visible equilibrium surface and never access a GPU resource or wait on readback | `feat(water): add gameplay water queries` |
+| `WQ-001` | - | Complete: add a `Water -> Core/Terrain` CPU boundary with scenario-authored inside/outside warped-footprint support, equilibrium surface height, strict positive `1/256`-meter shoreline depth tolerance, optional horizontal flow, and explicit out-of-terrain/no-water/water results; sample only canonical LOD0 triangle bed height, return checked nonnegative depth, map the neutral support side to the unchanged renderer at the composition root, and prove invalid input, inclusive footprint boundaries, tolerance-adjacent terrain, Island Demo depth bands, terrain edges, and deterministic repeats without GPU access or character policy | `feat(water): add gameplay water queries` |
 | `CHR-001` | S | Add one bounded player-capsule state, named keyboard/mouse action commands sampled at fixed-tick boundaries, previous/current snapshots, spawn/reset behavior, and an inspectable temporary proxy; do not add a general entity system or locomotion yet | `feat(character): add player capsule state` |
 | `CAM-001` | V | Add an interpolated third-person follow/orbit camera, camera-relative movement basis, bounded pitch/distance, and a canonical-terrain obstruction probe without changing character authority | `feat(camera): add third-person follow camera` |
 | `CHR-002` | S | Add gravity, canonical-terrain capsule grounding, walkable-slope classification, stable support, falling, and landing; prove fixed-rate invariance and transactional invalid-state handling before horizontal control | `feat(character): add terrain grounding` |
@@ -910,14 +910,14 @@ M7.
 
 `W-005` and `W-006` remain the next numerical-fluid increments when that track
 resumes. They are a Shark specialization rather than proof required for
-character swimming. WQ-001 begins with calm analytic water and preserves an
-adapter boundary so simulated water can replace its surface/flow source later
-without changing character policy.
+character swimming. WQ-001 established the calm analytic adapter boundary so
+simulated water can replace its surface/flow source later without changing
+character policy.
 
 ### Deferred visual-weather track
 
 The owner deferred these effects on July 19, 2026. They remain approved but
-have no position on the active `WQ-001` path. Resuming one requires a small plan
+have no position on the active `CHR-001` path. Resuming one requires a small plan
 update; skipping them does not remove the numerical precipitation rate used by
 later hydrology.
 
@@ -1019,24 +1019,19 @@ members, and zone serialization wait until measured needs after the demo.
 
 ## 14. Immediate next increment
 
-With ISL-001 completed, implement only `WQ-001`:
+With WQ-001 completed, implement only `CHR-001`:
 
-- add a platform- and renderer-independent calm-water body/query boundary under
-  `engine/water`, using the Island Demo's authored footprint, support side,
-  surface height, and optional zero flow;
-- combine that authored body with canonical `HeightTileSurface` samples to
-  report containment, surface height, bed height, and nonnegative local depth;
-  water containment requires both authored horizontal support and canonical
-  bed below the surface, with an explicit shoreline tolerance policy so
-  gameplay cannot disagree with triangle-interpolated visible terrain;
-- return explicit no-water/out-of-terrain results and reject nonfinite or
-  internally inconsistent inputs transactionally;
-- prove agreement at the Island Demo's dry, shallow, transition, swim,
-  tolerance-adjacent shoreline, and terrain-boundary cases, plus deterministic
-  repeated queries;
-  and
-- stop before capsule immersion policy, movement-mode thresholds, character
-  state, GPU readback, dynamic waves, fluid coupling, or renderer changes.
+- add one bounded kinematic player-capsule state under `engine/character`, with
+  stable scenario ownership and no general entity/ECS layer;
+- define named keyboard/mouse action commands sampled only at fixed-tick
+  boundaries, without letting platform key codes cross into Character;
+- publish previous/current authoritative snapshots for later interpolation and
+  deterministic dry-spawn/reset behavior;
+- render one inspectable temporary capsule proxy without claiming final avatar
+  art or animation; and
+- prove invalid-state rollback, command sampling, snapshot order, spawn/reset,
+  and 30/60/120/144 Hz render-partition invariance, then stop before gravity,
+  grounding, locomotion, camera follow, jumping, wading, or swimming.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -1294,7 +1289,20 @@ zero D3D12 corruption/errors and zero live child objects; the Island Demo smoke
 locks `93 -> 72 -> 61` visible chunks, a `0.501953125`-meter maximum coarse
 error, and one water draw per submitted frame.
 
-The active queue is `WQ-001`, CPU gameplay-water queries.
+WQ-001 adds `shark::water::CalmWaterBody` and one checked CPU query over the
+exact canonical LOD0 terrain sample. The Island Demo authors exterior support,
+surface height `-4`, a strict `1/256`-meter shoreline tolerance, and present
+zero horizontal flow. Its four permanent transect queries report dry depth
+zero followed by `0.33984375`, `1.359375`, and `5.734375` meters. Renderer
+mapping remains at the sandbox composition root; no shader, pass, resource,
+descriptor, draw, physics state, or fluid state changed. See
+[WATER.md](WATER.md) for the exact result invariants.
+Debug and Release each pass the 362-assertion, eight-case focused contract and
+the 492,868-assertion, 335-case complete suite. The 1,000-frame RTX 4070
+presentation smoke retains one water draw per frame, zero D3D12
+corruption/errors, and zero live child objects.
+
+The active queue is `CHR-001`, bounded player-capsule state.
 `W-005`, `W-006`, `R-001` through `R-004`, and coupled hydrology remain
 approved but deferred from the Island Demo 0.1 critical path.
 

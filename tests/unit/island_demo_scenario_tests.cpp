@@ -1,5 +1,6 @@
 #include <shark/terrain/height_tile.hpp>
 #include <shark/terrain/island.hpp>
+#include <shark/water/gameplay_water.hpp>
 #include <shark/world/camera.hpp>
 #include <shark/world/island_demo_scenario.hpp>
 
@@ -67,8 +68,16 @@ TEST_CASE(
         terrain::large_capacity_tile_sample_spacing);
     REQUIRE(first.terrain.origin ==
         terrain::large_capacity_tile_origin);
-    REQUIRE(first.water.footprint == first.island.footprint);
-    REQUIRE(first.water.waterline_y == first.island.waterline_y);
+    REQUIRE(first.water.gameplay_body.footprint ==
+        first.island.footprint);
+    REQUIRE(first.water.gameplay_body.support_side ==
+        water::CalmWaterSupportSide::outside_warped_footprint);
+    REQUIRE(first.water.gameplay_body.surface_height ==
+        first.island.waterline_y);
+    REQUIRE(first.water.gameplay_body.shoreline_depth_tolerance ==
+        water::default_shoreline_depth_tolerance);
+    REQUIRE(first.water.gameplay_body.flow_velocity ==
+        water::HorizontalFlow{});
     REQUIRE(first.water.depth_proxy ==
         first.island.deep_water_depth);
     REQUIRE(first.water.render_half_extent_x ==
@@ -87,7 +96,7 @@ TEST_CASE(
     REQUIRE(spawn_sample->position ==
         first.spawn_ground_position);
     REQUIRE(first.spawn_ground_position.y >=
-        first.water.waterline_y + 2.0F);
+        first.water.gameplay_body.surface_height + 2.0F);
     REQUIRE(first.spawn_camera.transform.position ==
         math::Float3{
             first.spawn_ground_position.x,
@@ -142,7 +151,8 @@ TEST_CASE(
                 tile.sample_columns);
             const auto world_height =
                 tile.origin.y + tile.height_offsets[index];
-            if (world_height > scenario.water.waterline_y) {
+            if (world_height >
+                scenario.water.gameplay_body.surface_height) {
                 dry[index] = 1U;
                 dry_perimeter =
                     dry_perimeter ||
@@ -157,7 +167,8 @@ TEST_CASE(
                 z + 1U == tile.sample_rows) {
                 minimum_perimeter_depth = std::min(
                     minimum_perimeter_depth,
-                    scenario.water.waterline_y - world_height);
+                    scenario.water.gameplay_body.surface_height -
+                        world_height);
             }
         }
     }
@@ -257,7 +268,8 @@ TEST_CASE(
                 route_is_walkable &&
                 sample.has_value() &&
                 sample->position.y >=
-                    scenario.water.waterline_y + 0.5F &&
+                    scenario.water.gameplay_body.surface_height +
+                        0.5F &&
                 sample->normal.y >= 0.8660254F;
         }
     }
@@ -277,7 +289,8 @@ TEST_CASE(
     const auto& scenario = scenario_result.value();
     const auto& samples = scenario.shore_entry_samples;
     const auto depth = [&scenario](const math::Float3 point) {
-        return scenario.water.waterline_y - point.y;
+        return scenario.water.gameplay_body.surface_height -
+            point.y;
     };
 
     REQUIRE(depth(samples[0]) ==
@@ -306,7 +319,7 @@ TEST_CASE(
     const math::Float3 toward_center{
         scenario.island.footprint.center_x -
             scenario.spawn_camera.transform.position.x,
-        scenario.water.waterline_y -
+        scenario.water.gameplay_body.surface_height -
             scenario.spawn_camera.transform.position.y,
         scenario.island.footprint.center_z -
             scenario.spawn_camera.transform.position.z,

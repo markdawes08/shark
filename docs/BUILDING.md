@@ -1,7 +1,7 @@
 # Building Shark
 
-- **Completed through:** `PHY-010`
-- **Last verified:** July 22, 2026
+- **Completed through:** `WQ-001`
+- **Last verified:** July 25, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
 14.50 LTS toolset, CMake 4.2 or newer, and Windows SDK 10.0.26100 exactly.
@@ -736,9 +736,32 @@ cases. The hardware, normal WARP, and focused 120-frame GPU-validated WARP
 presentation smokes retain one water draw per frame, zero D3D12
 corruption/errors, and zero live child objects.
 
-The next increment is `WQ-001`: add geometry-neutral CPU gameplay-water
-queries that agree with the visible island water and canonical terrain.
-W-005 remains an approved deferred fluid specialization.
+WQ-001 adds the renderer-independent CPU gameplay-water boundary. Run its
+focused contract in both configurations with:
+
+```powershell
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[water][gameplay]"
+& .\out\build\windows-vs2026\bin\Release\SharkTests.exe "[water][gameplay]"
+```
+
+The focused Debug and Release contracts each pass 362 assertions across eight
+cases. They cover inside/outside warped support, exact and adjacent footprint
+boundaries, strict `1/256`-meter depth tolerance, absent/zero/nonzero flow,
+malformed and out-of-range input, terrain edges/misses, signed-zero
+canonicalization, and the Island Demo dry/shallow/transition/swim transect.
+Both complete configurations pass 492,868 assertions across 335 cases.
+
+The neutral body is authored by the scenario and mapped to the unchanged
+visual surface only at the sandbox composition root. A 1,000-frame Debug
+presentation smoke on the NVIDIA GeForce RTX 4070 Laptop GPU passes with one
+water draw per frame, zero D3D12 corruption/errors, and zero live child
+objects. WQ-001 adds no shader, pass, GPU resource, descriptor, draw, physics
+state, or simulated-fluid state.
+
+The next increment is `CHR-001`: add one bounded player-capsule state,
+fixed-tick action commands, previous/current snapshots, deterministic
+spawn/reset, and an inspectable temporary proxy. W-005 remains an approved
+deferred fluid specialization.
 
 ## Visual Studio
 

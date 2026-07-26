@@ -790,10 +790,13 @@ heightfield. It is not closest-feature sphere/triangle collision and can still
 tunnel under sufficiently large discrete motion. The visible lake remains
 W-001 presentation-only water, and `R-001` through `R-004` remain deferred.
 W-004 adds no sandbox or GPU fluid integration. ISL-001 now supplies the
-deterministic playable-island scenario while retaining this fixture. The active
-queue is `WQ-001`, CPU gameplay-water queries. W-005 remains an approved
-deferred fluid specialization; the queue is centralized in
-[ENGINE_PLAN.md](ENGINE_PLAN.md).
+deterministic playable-island scenario while retaining this fixture. WQ-001
+adds a stateless CPU water query over authored support plus the canonical
+triangle-interpolated bed; it changes no fixed-step state or ordering. The
+active queue is `CHR-001`, bounded player-capsule state. W-005 remains an
+approved deferred fluid specialization; the queue is centralized in
+[ENGINE_PLAN.md](ENGINE_PLAN.md), and the query contract is in
+[WATER.md](WATER.md).
 
 ISL-001 keeps the four-sphere runtime diagnostics while moving them onto the
 playable island. The 1,000-frame hardware smoke records exact broad-phase

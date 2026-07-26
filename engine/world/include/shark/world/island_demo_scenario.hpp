@@ -3,6 +3,7 @@
 #include <shark/core/result.hpp>
 #include <shark/terrain/height_tile.hpp>
 #include <shark/terrain/island.hpp>
+#include <shark/water/gameplay_water.hpp>
 #include <shark/world/camera.hpp>
 
 #include <array>
@@ -28,8 +29,7 @@ inline constexpr std::uint64_t
         0x53DD'2821'AE9A'CDEAULL;
 
 struct IslandDemoWaterSurface final {
-    terrain::IslandFootprint footprint;
-    float waterline_y{};
+    water::CalmWaterBody gameplay_body;
     float depth_proxy{};
     float render_half_extent_x{};
     float render_half_extent_z{};

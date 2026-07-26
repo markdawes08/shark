@@ -90,6 +90,8 @@ add_library(SharkEngine STATIC
     terrain/src/island.cpp
     terrain/src/lake_basin.cpp
     terrain/src/material_palette.cpp
+    water/include/shark/water/gameplay_water.hpp
+    water/src/gameplay_water.cpp
     world/include/shark/world/camera.hpp
     world/include/shark/world/environment_lab_scenario.hpp
     world/include/shark/world/island_demo_scenario.hpp
@@ -110,6 +112,7 @@ target_include_directories(SharkEngine
         "${CMAKE_CURRENT_SOURCE_DIR}/rhi/d3d12/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/simulation/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/terrain/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/water/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/world/include"
     PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/rhi/d3d12/src"

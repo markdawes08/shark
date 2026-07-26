@@ -122,6 +122,11 @@ inline constexpr character::PlayerGroundLocomotionSettings
         .facing_turn_speed_radians_per_second = 10.0F,
         .maximum_probe_spacing = 0.25F,
     };
+inline constexpr character::PlayerAirLocomotionSettings
+    island_demo_player_air_locomotion{
+        .jump_launch_speed = 6.5F,
+        .control_acceleration = 12.0F,
+    };
 inline constexpr float island_demo_player_minimum_center_y = -32.0F;
 inline constexpr float island_demo_player_maximum_center_y = 64.0F;
 inline constexpr ThirdPersonCameraConfig island_demo_player_camera{
@@ -333,6 +338,8 @@ core::Result<IslandDemoScenario> make_island_demo_scenario()
         .grounding = island_demo_player_grounding,
         .ground_locomotion =
             island_demo_player_ground_locomotion,
+        .air_locomotion =
+            island_demo_player_air_locomotion,
     };
     const auto player_result =
         character::create_player_capsule(

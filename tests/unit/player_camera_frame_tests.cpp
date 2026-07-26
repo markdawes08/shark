@@ -133,6 +133,7 @@ run_partition(
                 player,
                 character::PlayerActionCommand{
                     .move_forward_held = true,
+                    .jump_pressed = fixed_tick == 1U,
                 },
                 world::ThirdPersonOrbitDelta{
                     .yaw_radians =
@@ -156,6 +157,12 @@ run_partition(
 
     REQUIRE(previous_timestamp == std::chrono::seconds{1});
     REQUIRE(clock.total_step_count() == 60U);
+    REQUIRE(player.previous.vertical.phase ==
+        shark::character::PlayerGroundPhase::falling);
+    REQUIRE(player.current.vertical.phase ==
+        shark::character::PlayerGroundPhase::falling);
+    REQUIRE(player.current.state.center_position.y >
+        fixture.scenario.player_capsule.spawn_center_position.y);
     auto composed = sandbox::build_player_camera_frame(
         player,
         camera_rig,
@@ -163,6 +170,13 @@ run_partition(
         fixture.scenario.player_camera_lens,
         fixture.surface);
     REQUIRE(composed);
+    REQUIRE(
+        composed.value().interpolated_player.center_position.y >
+        fixture.scenario.player_capsule.spawn_center_position.y);
+    REQUIRE(
+        composed.value().camera_placement.target_position.y >
+        fixture.scenario.player_capsule.spawn_center_position.y +
+            camera_rig.config.target_height_offset);
     return std::move(composed).value();
 }
 
@@ -185,6 +199,7 @@ TEST_CASE(
         player,
         character::PlayerActionCommand{
             .move_forward_held = true,
+            .jump_pressed = true,
         },
         world::ThirdPersonOrbitDelta{
             .yaw_radians = 0.2F,
@@ -198,7 +213,12 @@ TEST_CASE(
         player.previous.state.center_position.x);
     REQUIRE(player.current.state.center_position.z <
         player.previous.state.center_position.z);
+    REQUIRE(player.current.state.center_position.y >
+        player.previous.state.center_position.y);
     REQUIRE(player.current.horizontal_velocity != math::Float3{});
+    REQUIRE(player.current.vertical.phase ==
+        character::PlayerGroundPhase::rising);
+    REQUIRE(player.current.vertical.velocity_y > 0.0F);
 
     constexpr auto alpha = 0.25F;
     const auto expected_player =
@@ -243,6 +263,15 @@ TEST_CASE(
                 camera_rig.config.target_height_offset,
             expected_player.value().center_position.z,
         });
+    REQUIRE(
+        frame.value().interpolated_player.center_position.x >
+        player.previous.state.center_position.x);
+    REQUIRE(
+        frame.value().interpolated_player.center_position.y >
+        player.previous.state.center_position.y);
+    REQUIRE(
+        frame.value().interpolated_player.center_position.z <
+        player.previous.state.center_position.z);
     REQUIRE(frame.value().camera_placement.camera.lens
             .vertical_fov_radians ==
         lens_before.vertical_fov_radians);
@@ -414,7 +443,7 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "player camera final frame is exact across render partitions",
+    "player camera final airborne frame is exact across render partitions",
     "[sandbox][player-camera-frame][fixed-step][invariance]")
 {
     const auto fixture = make_island_fixture();

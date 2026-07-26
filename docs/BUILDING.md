@@ -1,6 +1,6 @@
 # Building Shark
 
-- **Completed through:** `CHR-002`
+- **Completed through:** `CHR-004`
 - **Last verified:** July 26, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
@@ -150,10 +150,11 @@ The same events also feed the fixed-tick player-command boundary: WASD and
 Shift are held movement/run actions, Space is a one-shot jump action, left
 mouse is primary action, right-mouse drag supplies bounded look deltas, and
 `R` resets the capsule. CAM-001 maps those look deltas to the fixed-tick orbit
-and consumes wheel zoom at the same boundary. CHR-003 advances that orbit
-first, derives the current horizontal basis, and then applies walk/run,
-acceleration, braking, facing, and sampled canonical-terrain traversal to the
-player on the same fixed tick. Space and primary action remain deferred.
+and consumes wheel zoom at the same boundary. CHR-004 advances that orbit
+first, derives the current horizontal basis, and then applies walk/run, jump,
+weaker airborne control, gravity, facing, and sampled canonical-terrain
+traversal to the player on the same fixed tick. Primary action remains
+deferred.
 
 ## Shader build contract
 
@@ -821,7 +822,7 @@ camera and exact `93 -> 72 -> 61` visibility schedule. It records 5,000 graph
 passes, 1,000 capsule draws, zero D3D12 corruption/errors, and zero live D3D12
 child objects.
 
-CHR-003 focused verification is:
+CHR-004 focused verification is:
 
 ```powershell
 & .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[character][player-capsule]"
@@ -831,33 +832,36 @@ CHR-003 focused verification is:
 & .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe --present-smoke
 ```
 
-These checks cover camera-relative walk/run targets, acceleration, braking,
-reversal, facing, stable flat and sloped support, sampled steep/bounds
-rejection, semi-implicit falling and one-tick landing, edge ownership,
-reset/collapse, transactional invalid input, moving camera following, the
-complete dry Island route, and exact 30/60/120/144 Hz transcripts. The
-presentation smokes additionally require every neutral player tick to remain
-grounded at the canonical Island spawn while all GPU accounting remains
-unchanged.
+These checks cover camera-relative walk/run targets, `6.5 m/s` jump launch,
+weaker `12 m/s^2` airborne steering, exact neutral horizontal momentum,
+rising/apex/falling phases, ignored airborne jump pulses, sampled
+three-dimensional terrain paths, one-tick landing, terrain-edge and rising
+intrusion handling, reset/fall recovery, transactional invalid input, moving
+camera following, the complete dry Island route, and exact 30/60/120/144 Hz
+transcripts. The Debug and Release focused suites pass. The neutral
+presentation smoke also retains the existing grounded-player, capsule-draw,
+graph-pass, clean-debug-layer, and clean-live-object contracts; jumping adds
+no render pass or GPU resource.
 
-The complete Debug and Release suites each pass 560,277 assertions across 385
-cases. The 1,000-frame Debug RTX 4070 presentation smoke records
-`player-grounded-ticks=1000`, 1,000 capsule draws, 5,000 graph passes, zero
-D3D12 corruption/errors, and zero live D3D12 child objects. Packaged WARP
-passes 600 grounded ticks, 600 capsule draws, and 3,000 graph passes with the
-same clean validation state.
+The complete Debug and Release suites each pass 564,929 assertions across 392
+cases. The final 1,000-frame Debug RTX 4070 presentation smoke records 1,000
+grounded neutral player ticks, 1,000 capsule draws, and 5,000 graph passes.
+Packaged WARP passes the corresponding 600-frame, 600-grounded-tick,
+600-capsule-draw, and 3,000-pass contract. Both finish with zero D3D12
+corruption/errors and zero live D3D12 child objects.
 
 Launch `SharkSandbox.exe` to inspect the blue capsule through the default
 third-person camera. Press `F5`, then use WASD to walk, either Shift to run,
-right-mouse drag to steer/orbit, and the wheel to zoom; `F6` can advance input
-one tick while paused. `F7` toggles the diagnostic free-fly camera. `R` resets
-the capsule on the next tick. Gravity, grounding, and horizontal locomotion
-always advance with Character; Space and left mouse already produce bounded
-fixed-tick commands but remain deferred. See [CHARACTER.md](CHARACTER.md).
+`Space` to jump, right-mouse drag to steer/orbit, and the wheel to zoom; `F6`
+can advance input one tick while paused. `F7` toggles the diagnostic free-fly
+camera. `R` resets the capsule on the next tick. Gravity, grounding, horizontal
+locomotion, jumping, airborne momentum, landing, and recovery always advance
+with Character; left mouse still produces a bounded fixed-tick command but
+remains deferred. See [CHARACTER.md](CHARACTER.md).
 
-The next increment is `CHR-004`: add jumping, airborne control, landing, and
-deterministic recovery. W-005 remains an approved deferred fluid
-specialization.
+The next increment is `CHR-005`: add shallow-water wading through the existing
+CPU WQ-001 boundary. Until then, water remains non-authoritative to Character.
+W-005 remains an approved deferred fluid specialization.
 
 ## Visual Studio
 

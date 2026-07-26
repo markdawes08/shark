@@ -1594,10 +1594,11 @@ void log_platform_event(const shark::platform::Event& event)
               "resumes/pauses the "
               "fixed 60 Hz sphere simulation and F6 advances one "
               "tick while paused; F7 toggles third-person/free-fly; "
-              "WASD moves the blue capsule, Shift runs, RMB orbits, "
-              "and the wheel zooms the fixed-tick third-person "
-              "camera; standard gravity and canonical terrain "
-              "grounding advance per tick, and R resets the player");
+              "WASD moves the blue capsule, Shift runs, Space jumps, "
+              "RMB orbits, and the wheel zooms the fixed-tick "
+              "third-person camera; standard gravity and canonical "
+              "terrain grounding advance per tick, and R resets the "
+              "player");
 
     auto simulation_clock_result =
         simulation::FixedStepClock::create(
@@ -1913,8 +1914,8 @@ void log_platform_event(const shark::platform::Event& event)
                             ? "Camera mode: free-fly (WASD, RMB, "
                               "Shift)"
                             : "Camera mode: third-person (WASD, "
-                              "Shift, RMB orbit, wheel zoom; F5/F6 "
-                              "advance input)");
+                              "Shift, Space, RMB orbit, wheel zoom; "
+                              "F5/F6 advance input)");
                 }
             }
             player_command_source.handle_event(event);

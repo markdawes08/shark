@@ -1,7 +1,7 @@
 # Fixed-Step Rigid-Body and Contact Contract
 
 - **Completed through:** `PHY-010`
-- **Character integration verified through:** `CHR-002`
+- **Character integration verified through:** `CHR-004`
 - **Camera integration verified through:** `CAM-001`
 - **Last verified:** July 26, 2026
 
@@ -811,16 +811,19 @@ it neither enters the rigid-body arrays nor changes their solver order.
 CAM-001 adds a separate presentation-only orbit rig on those same fixed ticks
 and never mutates Character.
 
-CHR-003 advances the authoritative orbit first on every emitted tick, derives
-its horizontal camera basis, advances Character with that movement frame on
-the same tick, and then runs the unchanged dynamic-sphere path. Character owns
-bounded walk/run acceleration, braking, facing, horizontal velocity, gravity,
-landing, support, and sampled terrain traversal; all failures remain
-transactional. The controller is kinematic and separate from dynamic Physics.
-A time-baseline discontinuity collapses player and camera presentation history
-before accumulated time is discarded.
+CHR-004 preserves the fixed-tick order: sample one command, advance the
+authoritative orbit, derive its horizontal camera basis, advance Character
+with that movement frame, and then run the unchanged dynamic-sphere path.
+Character owns bounded walk/run and weaker airborne acceleration, neutral
+airborne momentum, facing, horizontal velocity, jump launch, gravity,
+rising/falling/landing phases, support, recovery, and sampled
+three-dimensional terrain traversal; all failures remain transactional.
+Free-fly supplies neutral Character action, but an already-airborne player
+continues gravity and horizontal momentum. The controller remains kinematic
+and separate from dynamic Physics. A time-baseline discontinuity collapses
+player and camera presentation history before accumulated time is discarded.
 
-The active queue is `CHR-004`, jumping and landing. W-005 remains an approved
+The active queue is `CHR-005`, shallow-water wading. W-005 remains an approved
 deferred fluid specialization; the queue is centralized in
 [ENGINE_PLAN.md](ENGINE_PLAN.md), and the query contract is in
 [WATER.md](WATER.md). The player contract is in

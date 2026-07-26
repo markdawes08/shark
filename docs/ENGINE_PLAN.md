@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 26, 2026
-- **Latest completed:** `CHR-003` - grounded locomotion
-- **Next increment:** `CHR-004` - jumping and landing
+- **Latest completed:** `CHR-004` - jumping and landing
+- **Next increment:** `CHR-005` - shallow-water wading
 
 ## 1. Project direction
 
@@ -850,7 +850,7 @@ coupling are outside this first playable path.
 | `CAM-001` | V | Complete: add an interpolated fixed-tick third-person follow/orbit rig with camera-relative horizontal basis, bounded pitch/distance, once-per-tick wheel zoom, and a canonical-LOD0 clearance probe that shortens only the presentation boom; retain the exact scripted smoke camera and expose the former free-fly controller through `F7` without changing character authority | `feat(camera): add third-person follow camera` |
 | `CHR-002` | S | Complete: add standard gravity, exact canonical-face support with slope-correct upright-capsule clearance, inclusive walkable-slope classification, stable grounded and steep-contact states, falling, one-tick landing, terrain-aware spawn/reset, and lifecycle interpolation collapse; prove edge ownership, rollback, camera follow, and exact 30/60/120/144 Hz transcripts without horizontal control | `feat(character): add terrain grounding` |
 | `CHR-003` | S | Complete: add authoritative fixed-tick horizontal velocity, `4/7 m/s` walk/run targets, `24 m/s²` acceleration, `32 m/s²` braking, bounded shortest-arc facing, and camera-relative intent from the newly advanced orbit yaw; traverse canonical terrain with deterministic probes no farther than `0.25 m` apart, retain the safe prefix and stop at steep/missing/out-of-bounds support, and prove the complete eight-point island loop plus exact 30/60/120/144 Hz transcripts without claiming an exact swept capsule | `feat(character): add grounded locomotion` |
-| `CHR-004` | S | Add jump launch, airborne control, landing, and deterministic recovery to the dry spawn; exclude ledge grabs, ladders, wall climbing, and arbitrary obstacle stepping | `feat(character): add jumping and landing` |
+| `CHR-004` | S | Complete: add a `6.5 m/s` pre-gravity jump launch, `12 m/s^2` camera-relative airborne control weaker than ground acceleration, exact neutral momentum preservation, explicit rising/falling phases, ignored airborne jump pulses, sampled three-dimensional canonical-terrain contacts, one-tick landing, and canonical dry-spawn recovery; prove apex, no double jump, landing, reset/fall recovery, camera follow, terrain bounds, and exact 30/60/120/144 Hz transcripts without claiming exact continuous collision detection | `feat(character): add jumping and landing` |
 | `CHR-005` | S | Add dry-to-wading transitions from WQ-001, immersion hysteresis, depth-scaled movement, and reliable shore exit without changing water volume | `feat(character): add shallow-water wading` |
 | `CHR-006` | S | Add surface-swim entry/exit, buoyant surface positioning, directional movement, and recovery to grounded motion; underwater free-swimming and combat remain later | `feat(character): add surface swimming` |
 | `AVT-001` | V | Replace the diagnostic capsule with one project-owned low-poly placeholder and bounded idle/walk/run/jump/wade/swim presentation states; retain controller motion as authority and defer a general skeletal asset pipeline | `feat(character): render placeholder avatar` |
@@ -1020,17 +1020,20 @@ members, and zone serialization wait until measured needs after the demo.
 
 ## 14. Immediate next increment
 
-With CHR-003 completed, implement only `CHR-004`:
+With CHR-004 completed, implement only `CHR-005`:
 
-- add a bounded grounded jump launch and explicit airborne state transition;
-- add deterministic horizontal airborne control without bypassing the
-  authoritative fixed-tick Character boundary;
-- land once on walkable canonical terrain and recover cleanly to grounded
-  locomotion;
-- prove jump apex, landing, reset, terrain-edge behavior, and exact
-  30/60/120/144 Hz outcomes; and
-- stop before wading, swimming, obstacle stepping, ledge grabs, ladders, wall
-  climbing, arbitrary props, gamepad input, animation, or final avatar art.
+- query WQ-001 at the authoritative capsule position on each fixed tick through
+  the existing CPU-only Water boundary;
+- classify dry and wading states with explicit depth thresholds and hysteresis;
+- add bounded depth-scaled wading locomotion and reliable dry/wading
+  transitions at the shoreline;
+- preserve Character's jump, airborne, canonical-terrain, reset, and recovery
+  authority without mutating water volume or waiting for GPU data;
+- prove threshold-adjacent stability, shallow-depth speed, shore entry/exit,
+  reset, and exact 30/60/120/144 Hz outcomes; and
+- stop before surface swimming, underwater movement, water combat, buoyancy,
+  displacement, dynamic waves, GPU readback, gamepad input, animation, or
+  final avatar art.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -1358,7 +1361,22 @@ each pass 560,277 assertions across 385 cases. The 1,000-frame RTX 4070 and
 unchanged graph/draw accounting, zero D3D12 corruption/errors, and zero live
 child objects.
 
-The active queue is `CHR-004`, jumping and landing.
+CHR-004 adds a `6.5 m/s` pre-gravity launch, explicit rising/falling phases,
+and camera-relative airborne steering limited to `12 m/s^2`, while neutral
+airborne input preserves horizontal momentum exactly. Airborne jump pulses
+cannot double jump. The controller samples the full three-dimensional center
+path no farther than `0.25 m` apart, lands once at exact canonical support,
+and recovers below the configured minimum Y through the same collapsed
+dry-spawn reset path. This remains deterministic sampled heightfield
+collision, not exact continuous collision detection or a swept capsule.
+Focused Debug/Release verification, exact 30/60/120/144 Hz transcripts, and
+the unchanged neutral presentation smoke contract pass without adding a
+render pass or GPU resource. The complete Debug and Release suites each pass
+564,929 assertions across 392 cases. The final RTX 4070 and packaged-WARP
+presentation smokes pass 1,000 and 600 grounded frames respectively, with
+zero D3D12 corruption/errors and zero live child objects.
+
+The active queue is `CHR-005`, shallow-water wading.
 `W-005`, `W-006`, `R-001` through `R-004`, and coupled hydrology remain
 approved but deferred from the Island Demo 0.1 critical path.
 

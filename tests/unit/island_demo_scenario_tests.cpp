@@ -130,6 +130,11 @@ TEST_CASE(
             .facing_turn_speed_radians_per_second = 10.0F,
             .maximum_probe_spacing = 0.25F,
         });
+    REQUIRE(first.player_capsule.air_locomotion ==
+        character::PlayerAirLocomotionSettings{
+            .jump_launch_speed = 6.5F,
+            .control_acceleration = 12.0F,
+        });
     const auto spawn_support_result =
         character::query_player_terrain_support(
             first.player_capsule.shape,
@@ -517,6 +522,194 @@ TEST_CASE(
         scenario.traversal_loop.size());
     REQUIRE(fixed_tick < maximum_ticks);
     REQUIRE(minimum_support_normal_y >= 0.8660254F);
+}
+
+TEST_CASE(
+    "Island Demo player completes one deterministic dry-spawn jump",
+    "[world][scenario][island-demo][character][jump][landing]")
+{
+    using namespace shark;
+
+    const auto scenario_result =
+        world::make_island_demo_scenario();
+    REQUIRE(scenario_result);
+    const auto& scenario = scenario_result.value();
+    const auto surface_result =
+        terrain::HeightTileSurface::create(scenario.terrain);
+    REQUIRE(surface_result);
+    const auto& surface = surface_result.value();
+    const auto player_result =
+        character::create_player_capsule(
+            scenario.player_capsule,
+            surface);
+    REQUIRE(player_result);
+    auto player = player_result.value();
+
+    constexpr float fixed_delta_seconds = 1.0F / 60.0F;
+    constexpr std::uint64_t maximum_ticks = 240U;
+    const auto spawn_position =
+        scenario.player_capsule.spawn_center_position;
+    REQUIRE(character::advance_player_capsule(
+        player,
+        {.jump_pressed = true},
+        {},
+        surface,
+        fixed_delta_seconds,
+        1U));
+    REQUIRE(player.current.vertical.phase ==
+        character::PlayerGroundPhase::rising);
+    REQUIRE(player.current.vertical.velocity_y ==
+        Catch::Approx(
+            scenario.player_capsule.air_locomotion
+                .jump_launch_speed -
+            scenario.player_capsule.grounding
+                .gravity_magnitude *
+                fixed_delta_seconds)
+            .margin(0.000001F));
+    REQUIRE(player.current.state.center_position.y >
+        spawn_position.y);
+    const auto first_jump_velocity =
+        player.current.vertical.velocity_y;
+    const auto first_jump_height =
+        player.current.state.center_position.y;
+
+    // A second pulse while rising must not restart the launch impulse.
+    REQUIRE(character::advance_player_capsule(
+        player,
+        {.jump_pressed = true},
+        {},
+        surface,
+        fixed_delta_seconds,
+        2U));
+    REQUIRE(player.current.vertical.phase ==
+        character::PlayerGroundPhase::rising);
+    REQUIRE(player.current.vertical.velocity_y ==
+        Catch::Approx(
+            first_jump_velocity -
+            scenario.player_capsule.grounding
+                .gravity_magnitude *
+                fixed_delta_seconds)
+            .margin(0.000001F));
+    REQUIRE(player.current.vertical.velocity_y <
+        first_jump_velocity);
+    REQUIRE(player.current.state.center_position.y >
+        first_jump_height);
+
+    auto maximum_center_y =
+        player.current.state.center_position.y;
+    std::uint64_t landing_count = 0U;
+    bool observed_falling = false;
+    bool observed_grounded_recovery = false;
+    for (std::uint64_t fixed_tick = 3U;
+         fixed_tick <= maximum_ticks;
+         ++fixed_tick) {
+        REQUIRE(character::advance_player_capsule(
+            player,
+            {},
+            {},
+            surface,
+            fixed_delta_seconds,
+            fixed_tick));
+
+        const auto& position =
+            player.current.state.center_position;
+        maximum_center_y = std::max(
+            maximum_center_y,
+            position.y);
+        REQUIRE(position.x >=
+            scenario.player_capsule.center_bounds.minimum.x);
+        REQUIRE(position.y >=
+            scenario.player_capsule.center_bounds.minimum.y);
+        REQUIRE(position.z >=
+            scenario.player_capsule.center_bounds.minimum.z);
+        REQUIRE(position.x <=
+            scenario.player_capsule.center_bounds.maximum.x);
+        REQUIRE(position.y <=
+            scenario.player_capsule.center_bounds.maximum.y);
+        REQUIRE(position.z <=
+            scenario.player_capsule.center_bounds.maximum.z);
+        REQUIRE(position.x == spawn_position.x);
+        REQUIRE(position.z == spawn_position.z);
+        REQUIRE(player.current.horizontal_velocity ==
+            math::Float3{});
+
+        const auto support_result =
+            character::query_player_terrain_support(
+                scenario.player_capsule.shape,
+                scenario.player_capsule.grounding,
+                surface,
+                position.x,
+                position.z);
+        REQUIRE(support_result);
+        REQUIRE(support_result.value());
+        const auto& support = *support_result.value();
+        REQUIRE(support.walkable);
+        REQUIRE(support.surface.position ==
+            scenario.spawn_ground_position);
+        REQUIRE(support.surface.position.y >=
+            scenario.water.gameplay_body.surface_height +
+                2.0F);
+        const auto water_result =
+            water::query_gameplay_water(
+                scenario.water.gameplay_body,
+                surface,
+                position.x,
+                position.z);
+        REQUIRE(water_result);
+        REQUIRE(water_result.value().disposition ==
+            water::GameplayWaterDisposition::no_water);
+
+        switch (player.current.vertical.phase) {
+        case character::PlayerGroundPhase::rising:
+            REQUIRE(player.current.vertical.velocity_y > 0.0F);
+            REQUIRE(player.current.vertical.support_normal ==
+                math::Float3{});
+            REQUIRE(position.y > support.center_position_y);
+            break;
+        case character::PlayerGroundPhase::falling:
+            observed_falling = true;
+            REQUIRE(player.current.vertical.velocity_y <= 0.0F);
+            REQUIRE(player.current.vertical.support_normal ==
+                math::Float3{});
+            REQUIRE(position.y > support.center_position_y);
+            break;
+        case character::PlayerGroundPhase::landing:
+            ++landing_count;
+            REQUIRE(player.current.vertical.velocity_y == 0.0F);
+            REQUIRE_FALSE(std::signbit(
+                player.current.vertical.velocity_y));
+            REQUIRE(position.y == support.center_position_y);
+            REQUIRE(player.current.vertical.support_normal ==
+                support.surface.normal);
+            break;
+        case character::PlayerGroundPhase::grounded:
+            REQUIRE(landing_count == 1U);
+            REQUIRE(position.y == support.center_position_y);
+            REQUIRE(player.current.vertical.support_normal ==
+                support.surface.normal);
+            observed_grounded_recovery = true;
+            break;
+        case character::PlayerGroundPhase::steep_contact:
+            FAIL("Dry-spawn jump reached steep terrain");
+            break;
+        default:
+            FAIL("Dry-spawn jump published an unknown phase");
+            break;
+        }
+
+        if (observed_grounded_recovery) {
+            break;
+        }
+    }
+
+    REQUIRE(observed_falling);
+    REQUIRE(landing_count == 1U);
+    REQUIRE(observed_grounded_recovery);
+    REQUIRE(maximum_center_y > spawn_position.y + 2.0F);
+    REQUIRE(player.current.state.center_position ==
+        spawn_position);
+    REQUIRE(player.current.vertical.phase ==
+        character::PlayerGroundPhase::grounded);
 }
 
 TEST_CASE(

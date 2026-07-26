@@ -13,6 +13,7 @@ namespace shark::character {
 namespace {
 
 inline constexpr double terrain_contact_tolerance = 0.00001;
+inline constexpr std::uint32_t maximum_airborne_probe_count = 4'096U;
 
 struct SpawnClassification final {
     float center_position_y{};
@@ -120,6 +121,19 @@ struct HorizontalIntent final {
         value.z <= bounds.maximum.z;
 }
 
+[[nodiscard]] bool contains_horizontal(
+    const PlayerCapsuleCenterBounds& bounds,
+    const float x,
+    const float z) noexcept
+{
+    return std::isfinite(x) &&
+        std::isfinite(z) &&
+        x >= bounds.minimum.x &&
+        x <= bounds.maximum.x &&
+        z >= bounds.minimum.z &&
+        z <= bounds.maximum.z;
+}
+
 [[nodiscard]] bool canonical_yaw(const float yaw) noexcept
 {
     return std::isfinite(yaw) &&
@@ -172,6 +186,9 @@ struct HorizontalIntent final {
             valid_surface_normal(vertical.support_normal) &&
             vertical.support_normal.y >=
                 settings.minimum_walkable_normal_y;
+    case PlayerGroundPhase::rising:
+        return vertical.velocity_y > 0.0F &&
+            canonical_zero_vector(vertical.support_normal);
     case PlayerGroundPhase::steep_contact:
         return positive_zero(vertical.velocity_y) &&
             valid_surface_normal(vertical.support_normal) &&
@@ -203,8 +220,7 @@ struct HorizontalIntent final {
             maximum_speed * maximum_speed + 0.00001) {
         return false;
     }
-    if (phase == PlayerGroundPhase::falling ||
-        phase == PlayerGroundPhase::steep_contact) {
+    if (phase == PlayerGroundPhase::steep_contact) {
         return canonical_zero_vector(velocity);
     }
     return true;
@@ -247,7 +263,8 @@ struct HorizontalIntent final {
             config.spawn_center_position) &&
         canonical_yaw(config.spawn_facing_yaw_radians) &&
         is_valid(config.grounding) &&
-        is_valid(config.ground_locomotion);
+        is_valid(config.ground_locomotion) &&
+        is_valid(config.air_locomotion);
 }
 
 [[nodiscard]] PlayerCapsuleState spawn_state(
@@ -281,6 +298,18 @@ struct HorizontalIntent final {
     return {
         .velocity_y = canonical_zero(velocity_y),
         .phase = PlayerGroundPhase::falling,
+        .support_normal = {},
+    };
+}
+
+[[nodiscard]] PlayerVerticalState airborne_vertical_state(
+    const float velocity_y) noexcept
+{
+    return {
+        .velocity_y = canonical_zero(velocity_y),
+        .phase = velocity_y > 0.0F
+            ? PlayerGroundPhase::rising
+            : PlayerGroundPhase::falling,
         .support_normal = {},
     };
 }
@@ -409,6 +438,66 @@ move_horizontal_velocity_toward(
         }));
 }
 
+[[nodiscard]] core::Result<math::Float3>
+move_air_horizontal_velocity_toward(
+    const math::Float3 current,
+    const HorizontalIntent& intent,
+    const PlayerAirLocomotionSettings& settings,
+    const float fixed_delta_seconds)
+{
+    if (!intent.active) {
+        return core::Result<math::Float3>::success(current);
+    }
+
+    const auto target_x =
+        static_cast<double>(intent.direction.x) *
+        intent.target_speed;
+    const auto target_z =
+        static_cast<double>(intent.direction.z) *
+        intent.target_speed;
+    const auto delta_x =
+        target_x - static_cast<double>(current.x);
+    const auto delta_z =
+        target_z - static_cast<double>(current.z);
+    const auto delta_length =
+        std::sqrt(delta_x * delta_x + delta_z * delta_z);
+    if (!std::isfinite(delta_length)) {
+        return core::Result<math::Float3>::failure(
+            character_error(
+                core::ErrorCode::unavailable,
+                "Player airborne velocity target exceeded finite "
+                "range"));
+    }
+    if (delta_length == 0.0) {
+        return core::Result<math::Float3>::success(current);
+    }
+
+    const auto maximum_delta =
+        static_cast<double>(settings.control_acceleration) *
+        static_cast<double>(fixed_delta_seconds);
+    const auto scale = std::min(
+        1.0,
+        maximum_delta / delta_length);
+    const auto next_x =
+        static_cast<double>(current.x) + delta_x * scale;
+    const auto next_z =
+        static_cast<double>(current.z) + delta_z * scale;
+    if (!representable_float(next_x) ||
+        !representable_float(next_z)) {
+        return core::Result<math::Float3>::failure(
+            character_error(
+                core::ErrorCode::unavailable,
+                "Player airborne horizontal integration exceeded "
+                "finite range"));
+    }
+    return core::Result<math::Float3>::success(
+        canonical_zero({
+            static_cast<float>(next_x),
+            0.0F,
+            static_cast<float>(next_z),
+        }));
+}
+
 [[nodiscard]] core::Result<float> turn_facing_toward_intent(
     const float current_yaw,
     const HorizontalIntent& intent,
@@ -493,6 +582,56 @@ classify_spawn(
     });
 }
 
+[[nodiscard]] core::Result<PlayerCapsuleSimulation>
+build_spawn_discontinuity(
+    const PlayerCapsuleSimulation& simulation,
+    const PlayerActionCommand& command,
+    const PlayerMovementFrame& movement_frame,
+    const terrain::HeightTileSurface& terrain_surface,
+    const std::uint64_t fixed_tick)
+{
+    if (simulation.current.reset_generation ==
+        std::numeric_limits<std::uint64_t>::max()) {
+        return core::Result<PlayerCapsuleSimulation>::failure(
+            character_error(
+                core::ErrorCode::unavailable,
+                "Player-capsule reset generation would overflow"));
+    }
+    auto spawn_result = classify_spawn(
+        simulation.config,
+        terrain_surface,
+        core::ErrorCode::invalid_state);
+    if (!spawn_result) {
+        return core::Result<PlayerCapsuleSimulation>::failure(
+            spawn_result.error());
+    }
+
+    const auto generation =
+        simulation.current.reset_generation + 1U;
+    auto spawn = spawn_state(simulation.config);
+    spawn.center_position.y =
+        spawn_result.value().center_position_y;
+    auto candidate = simulation;
+    candidate.previous = PlayerCapsuleSnapshot{
+        .state = spawn,
+        .vertical = spawn_result.value().vertical,
+        .horizontal_velocity = {},
+        .consumed_movement_frame = {},
+        .fixed_tick = fixed_tick - 1U,
+        .reset_generation = generation,
+    };
+    candidate.current = PlayerCapsuleSnapshot{
+        .state = spawn,
+        .vertical = spawn_result.value().vertical,
+        .horizontal_velocity = {},
+        .consumed_command = command,
+        .consumed_movement_frame = movement_frame,
+        .fixed_tick = fixed_tick,
+        .reset_generation = generation,
+    };
+    return core::Result<PlayerCapsuleSimulation>::success(candidate);
+}
+
 [[nodiscard]] core::Result<void> validate_source_support(
     const PlayerCapsuleSimulation& simulation,
     const std::optional<PlayerTerrainSupport>& support)
@@ -500,7 +639,8 @@ classify_spawn(
     const auto& state = simulation.current.state;
     const auto& vertical = simulation.current.vertical;
     if (!support) {
-        if (vertical.phase != PlayerGroundPhase::falling) {
+        if (vertical.phase != PlayerGroundPhase::rising &&
+            vertical.phase != PlayerGroundPhase::falling) {
             return core::Result<void>::failure(character_error(
                 core::ErrorCode::invalid_state,
                 "Supported player state has no canonical terrain "
@@ -518,7 +658,8 @@ classify_spawn(
             "Player center begins below canonical terrain support"));
     }
 
-    if (vertical.phase == PlayerGroundPhase::falling) {
+    if (vertical.phase == PlayerGroundPhase::rising ||
+        vertical.phase == PlayerGroundPhase::falling) {
         return core::Result<void>::success();
     }
 
@@ -661,6 +802,290 @@ traverse_walkable_ground(
     return core::Result<GroundTraversal>::success(traversal);
 }
 
+struct AirTraversal final {
+    math::Float3 center_position{};
+    PlayerVerticalState vertical;
+    math::Float3 horizontal_velocity{};
+    bool requires_recovery{};
+};
+
+// This is a deterministic sampled center trajectory. It deliberately does
+// not claim continuous swept-capsule collision against terrain.
+[[nodiscard]] core::Result<AirTraversal>
+traverse_airborne(
+    const PlayerCapsuleSimulation& simulation,
+    const math::Float3 requested_horizontal_velocity,
+    const float starting_velocity_y,
+    const terrain::HeightTileSurface& terrain_surface,
+    const float fixed_delta_seconds)
+{
+    const auto next_velocity_y =
+        static_cast<double>(starting_velocity_y) -
+        static_cast<double>(
+            simulation.config.grounding.gravity_magnitude) *
+            static_cast<double>(fixed_delta_seconds);
+    const auto displacement_x =
+        static_cast<double>(requested_horizontal_velocity.x) *
+        static_cast<double>(fixed_delta_seconds);
+    const auto displacement_y =
+        next_velocity_y *
+        static_cast<double>(fixed_delta_seconds);
+    const auto displacement_z =
+        static_cast<double>(requested_horizontal_velocity.z) *
+        static_cast<double>(fixed_delta_seconds);
+    const auto displacement_length = std::sqrt(
+        displacement_x * displacement_x +
+        displacement_y * displacement_y +
+        displacement_z * displacement_z);
+    const auto target_y =
+        static_cast<double>(
+            simulation.current.state.center_position.y) +
+        displacement_y;
+    if (!representable_float(next_velocity_y) ||
+        !representable_float(displacement_x) ||
+        !representable_float(displacement_y) ||
+        !representable_float(displacement_z) ||
+        !std::isfinite(displacement_length) ||
+        !representable_float(target_y)) {
+        return core::Result<AirTraversal>::failure(
+            character_error(
+                core::ErrorCode::unavailable,
+                "Player airborne integration exceeded finite "
+                "range"));
+    }
+    if (target_y >
+        static_cast<double>(
+            simulation.config.center_bounds.maximum.y)) {
+        return core::Result<AirTraversal>::failure(
+            character_error(
+                core::ErrorCode::unavailable,
+                "Player airborne integration exceeded its maximum "
+                "center bound"));
+    }
+
+    const auto source =
+        simulation.current.state.center_position;
+    const auto minimum_y = static_cast<double>(
+        simulation.config.center_bounds.minimum.y);
+    const auto crosses_minimum_y = target_y < minimum_y;
+    auto traversal_fraction = 1.0;
+    if (crosses_minimum_y) {
+        const auto vertical_distance =
+            static_cast<double>(source.y) - target_y;
+        if (!std::isfinite(vertical_distance) ||
+            vertical_distance <= 0.0) {
+            return core::Result<AirTraversal>::failure(
+                character_error(
+                    core::ErrorCode::unavailable,
+                    "Player airborne lower-bound traversal "
+                    "exceeded finite range"));
+        }
+        traversal_fraction = std::clamp(
+            (static_cast<double>(source.y) - minimum_y) /
+                vertical_distance,
+            0.0,
+            1.0);
+    }
+    const auto traversal_displacement_x =
+        displacement_x * traversal_fraction;
+    const auto traversal_displacement_y =
+        displacement_y * traversal_fraction;
+    const auto traversal_displacement_z =
+        displacement_z * traversal_fraction;
+    const auto traversal_displacement_length = std::sqrt(
+        traversal_displacement_x * traversal_displacement_x +
+        traversal_displacement_y * traversal_displacement_y +
+        traversal_displacement_z * traversal_displacement_z);
+    const auto probe_count_value = std::max(
+        1.0,
+        std::ceil(
+            traversal_displacement_length /
+            static_cast<double>(
+                simulation.config.ground_locomotion
+                    .maximum_probe_spacing)));
+    if (!std::isfinite(probe_count_value) ||
+        probe_count_value >
+            static_cast<double>(
+                maximum_airborne_probe_count)) {
+        return core::Result<AirTraversal>::failure(
+            character_error(
+                core::ErrorCode::unavailable,
+                "Player airborne probe count exceeded its bounded "
+                "range"));
+    }
+    const auto probe_count =
+        static_cast<std::uint32_t>(probe_count_value);
+    auto safe_x = source.x;
+    auto safe_z = source.z;
+    auto horizontal_blocked = false;
+    const auto descending = next_velocity_y <= 0.0;
+    auto published_horizontal_velocity =
+        requested_horizontal_velocity;
+
+    for (std::uint32_t probe_index = 0U;
+         probe_index < probe_count;
+         ++probe_index) {
+        const auto fraction = traversal_fraction *
+            static_cast<double>(probe_index + 1U) /
+            static_cast<double>(probe_count);
+        const auto proposed_x =
+            static_cast<double>(source.x) +
+            displacement_x * fraction;
+        const auto proposed_y =
+            static_cast<double>(source.y) +
+            displacement_y * fraction;
+        const auto proposed_z =
+            static_cast<double>(source.z) +
+            displacement_z * fraction;
+        if (!representable_float(proposed_x) ||
+            !representable_float(proposed_y) ||
+            !representable_float(proposed_z)) {
+            return core::Result<AirTraversal>::failure(
+                character_error(
+                    core::ErrorCode::unavailable,
+                    "Player airborne probe exceeded finite world "
+                    "coordinates"));
+        }
+
+        auto probe_x = safe_x;
+        auto probe_z = safe_z;
+        if (!horizontal_blocked) {
+            const auto candidate_x =
+                canonical_zero(static_cast<float>(proposed_x));
+            const auto candidate_z =
+                canonical_zero(static_cast<float>(proposed_z));
+            if (contains_horizontal(
+                    simulation.config.center_bounds,
+                    candidate_x,
+                    candidate_z)) {
+                probe_x = candidate_x;
+                probe_z = candidate_z;
+            }
+            else {
+                horizontal_blocked = true;
+                published_horizontal_velocity = {};
+            }
+        }
+
+        auto support_result = query_player_terrain_support(
+            simulation.config.shape,
+            simulation.config.grounding,
+            terrain_surface,
+            probe_x,
+            probe_z);
+        if (!support_result) {
+            return core::Result<AirTraversal>::failure(
+                support_result.error());
+        }
+        auto support = support_result.value();
+
+        if (support) {
+            const auto& terrain_support = *support;
+            const auto intrudes =
+                static_cast<double>(
+                    terrain_support.center_position_y) >
+                proposed_y + terrain_contact_tolerance;
+            const auto rises_above_source =
+                static_cast<double>(
+                    terrain_support.center_position_y) >
+                static_cast<double>(source.y) +
+                    static_cast<double>(
+                        simulation.config.grounding.snap_distance);
+            if (intrudes &&
+                (!descending || rises_above_source) &&
+                !horizontal_blocked &&
+                (probe_x != safe_x || probe_z != safe_z)) {
+                horizontal_blocked = true;
+                published_horizontal_velocity = {};
+                probe_x = safe_x;
+                probe_z = safe_z;
+                auto safe_support_result =
+                    query_player_terrain_support(
+                    simulation.config.shape,
+                    simulation.config.grounding,
+                    terrain_surface,
+                    probe_x,
+                    probe_z);
+                if (!safe_support_result) {
+                    return core::Result<AirTraversal>::failure(
+                        safe_support_result.error());
+                }
+                support = safe_support_result.value();
+            }
+        }
+
+        if (descending && support &&
+            proposed_y <=
+                static_cast<double>(
+                    support->center_position_y) +
+                    static_cast<double>(
+                        simulation.config.grounding.snap_distance)) {
+            const auto& terrain_support = *support;
+            const math::Float3 contact_position{
+                probe_x,
+                terrain_support.center_position_y,
+                probe_z,
+            };
+            if (!contains(
+                    simulation.config.center_bounds,
+                    contact_position)) {
+                if (contact_position.y <
+                    simulation.config.center_bounds.minimum.y) {
+                    return core::Result<AirTraversal>::success({
+                        .requires_recovery = true,
+                    });
+                }
+                return core::Result<AirTraversal>::failure(
+                    character_error(
+                        core::ErrorCode::unavailable,
+                        "Player airborne contact lies outside its "
+                        "center bounds"));
+            }
+            return core::Result<AirTraversal>::success({
+                .center_position = contact_position,
+                .vertical = supported_vertical_state(
+                    terrain_support,
+                    true),
+                .horizontal_velocity = terrain_support.walkable
+                    ? published_horizontal_velocity
+                    : math::Float3{},
+            });
+        }
+
+        if (!horizontal_blocked) {
+            safe_x = probe_x;
+            safe_z = probe_z;
+        }
+    }
+
+    if (crosses_minimum_y) {
+        return core::Result<AirTraversal>::success({
+            .requires_recovery = true,
+        });
+    }
+    const math::Float3 target_position{
+        safe_x,
+        canonical_zero(static_cast<float>(target_y)),
+        safe_z,
+    };
+    if (!contains(
+            simulation.config.center_bounds,
+            target_position)) {
+        return core::Result<AirTraversal>::failure(
+            character_error(
+                core::ErrorCode::unavailable,
+                "Player airborne target lies outside its center "
+                "bounds"));
+    }
+    return core::Result<AirTraversal>::success({
+        .center_position = target_position,
+        .vertical = airborne_vertical_state(
+            static_cast<float>(next_velocity_y)),
+        .horizontal_velocity =
+            published_horizontal_velocity,
+    });
+}
+
 [[nodiscard]] core::Result<float> interpolate_component(
     const float previous,
     const float current,
@@ -742,6 +1167,19 @@ bool is_valid(
             minimum_player_probe_spacing &&
         settings.maximum_probe_spacing <=
             maximum_player_probe_spacing;
+}
+
+bool is_valid(
+    const PlayerAirLocomotionSettings& settings) noexcept
+{
+    return std::isfinite(settings.jump_launch_speed) &&
+        settings.jump_launch_speed > 0.0F &&
+        settings.jump_launch_speed <=
+            maximum_player_jump_launch_speed &&
+        std::isfinite(settings.control_acceleration) &&
+        settings.control_acceleration > 0.0F &&
+        settings.control_acceleration <=
+            maximum_player_air_control_acceleration;
 }
 
 bool is_valid(const PlayerMovementFrame& frame) noexcept
@@ -926,13 +1364,14 @@ create_player_capsule(
         !math::is_finite(config.spawn_center_position) ||
         !std::isfinite(config.spawn_facing_yaw_radians) ||
         !is_valid(config.grounding) ||
-        !is_valid(config.ground_locomotion)) {
+        !is_valid(config.ground_locomotion) ||
+        !is_valid(config.air_locomotion)) {
         return core::Result<PlayerCapsuleSimulation>::failure(
             character_error(
                 core::ErrorCode::invalid_argument,
                 "Player capsule requires finite bounded shape, "
-                "center bounds, spawn pose, grounding, and ground "
-                "locomotion settings"));
+                "center bounds, spawn pose, grounding, ground "
+                "locomotion, and air locomotion settings"));
     }
 
     config.center_bounds.minimum =
@@ -1061,36 +1500,17 @@ core::Result<void> advance_player_capsule(
 
     auto candidate = simulation;
     if (command.reset_pressed) {
-        auto spawn_result = classify_spawn(
-            simulation.config,
+        auto spawn_result = build_spawn_discontinuity(
+            simulation,
+            command,
+            movement_frame,
             terrain_surface,
-            core::ErrorCode::invalid_state);
+            fixed_tick);
         if (!spawn_result) {
             return core::Result<void>::failure(
                 spawn_result.error());
         }
-        const auto generation =
-            simulation.current.reset_generation + 1U;
-        auto spawn = spawn_state(simulation.config);
-        spawn.center_position.y =
-            spawn_result.value().center_position_y;
-        candidate.previous = PlayerCapsuleSnapshot{
-            .state = spawn,
-            .vertical = spawn_result.value().vertical,
-            .horizontal_velocity = {},
-            .consumed_movement_frame = {},
-            .fixed_tick = fixed_tick - 1U,
-            .reset_generation = generation,
-        };
-        candidate.current = PlayerCapsuleSnapshot{
-            .state = spawn,
-            .vertical = spawn_result.value().vertical,
-            .horizontal_velocity = {},
-            .consumed_command = command,
-            .consumed_movement_frame = movement_frame,
-            .fixed_tick = fixed_tick,
-            .reset_generation = generation,
-        };
+        candidate = spawn_result.value();
     }
     else {
         candidate.previous = simulation.current;
@@ -1100,11 +1520,17 @@ core::Result<void> advance_player_capsule(
             movement_frame;
         candidate.current.fixed_tick = fixed_tick;
 
-        if (simulation.current.vertical.phase ==
+        const auto supported =
+            simulation.current.vertical.phase ==
                 PlayerGroundPhase::grounded ||
             simulation.current.vertical.phase ==
-                PlayerGroundPhase::landing) {
-            const auto& support = *support_result.value();
+                PlayerGroundPhase::landing;
+        const auto airborne =
+            simulation.current.vertical.phase ==
+                PlayerGroundPhase::rising ||
+            simulation.current.vertical.phase ==
+                PlayerGroundPhase::falling;
+        if (supported || airborne) {
             auto intent_result = build_horizontal_intent(
                 command,
                 movement_frame,
@@ -1112,16 +1538,6 @@ core::Result<void> advance_player_capsule(
             if (!intent_result) {
                 return core::Result<void>::failure(
                     intent_result.error());
-            }
-            auto velocity_result =
-                move_horizontal_velocity_toward(
-                    simulation.current.horizontal_velocity,
-                    intent_result.value(),
-                    simulation.config.ground_locomotion,
-                    fixed_delta_seconds);
-            if (!velocity_result) {
-                return core::Result<void>::failure(
-                    velocity_result.error());
             }
             auto facing_result = turn_facing_toward_intent(
                 simulation.current.state.facing_yaw_radians,
@@ -1132,73 +1548,91 @@ core::Result<void> advance_player_capsule(
                 return core::Result<void>::failure(
                     facing_result.error());
             }
-            auto traversal_result = traverse_walkable_ground(
-                simulation,
-                support,
-                velocity_result.value(),
-                terrain_surface,
-                fixed_delta_seconds);
-            if (!traversal_result) {
-                return core::Result<void>::failure(
-                    traversal_result.error());
-            }
-            candidate.current.state.center_position =
-                traversal_result.value().center_position;
-            candidate.current.state.facing_yaw_radians =
-                facing_result.value();
-            candidate.current.vertical =
-                supported_vertical_state(
-                    traversal_result.value().support,
-                    false);
-            candidate.current.horizontal_velocity =
-                traversal_result.value().horizontal_velocity;
-        }
-        else if (simulation.current.vertical.phase ==
-                 PlayerGroundPhase::falling) {
-            candidate.current.horizontal_velocity = {};
-            const auto velocity_y =
-                static_cast<double>(
-                    simulation.current.vertical.velocity_y) -
-                static_cast<double>(
-                    simulation.config.grounding.gravity_magnitude) *
-                    static_cast<double>(fixed_delta_seconds);
-            const auto position_y =
-                static_cast<double>(
-                    simulation.current.state.center_position.y) +
-                velocity_y *
-                    static_cast<double>(fixed_delta_seconds);
-            if (!representable_float(velocity_y) ||
-                !representable_float(position_y)) {
-                return core::Result<void>::failure(
-                    character_error(
-                        core::ErrorCode::unavailable,
-                        "Player vertical integration exceeded finite "
-                        "float range"));
-            }
 
-            if (support_result.value() &&
-                position_y <=
-                    static_cast<double>(
-                        support_result.value()->
-                            center_position_y) +
-                    static_cast<double>(
-                        simulation.config.grounding.snap_distance)) {
-                const auto& support =
-                    *support_result.value();
-                candidate.current.state.center_position.y =
-                    support.center_position_y;
+            if (supported && !command.jump_pressed) {
+                const auto& support = *support_result.value();
+                auto velocity_result =
+                    move_horizontal_velocity_toward(
+                        simulation.current.horizontal_velocity,
+                        intent_result.value(),
+                        simulation.config.ground_locomotion,
+                        fixed_delta_seconds);
+                if (!velocity_result) {
+                    return core::Result<void>::failure(
+                        velocity_result.error());
+                }
+                auto traversal_result = traverse_walkable_ground(
+                    simulation,
+                    support,
+                    velocity_result.value(),
+                    terrain_surface,
+                    fixed_delta_seconds);
+                if (!traversal_result) {
+                    return core::Result<void>::failure(
+                        traversal_result.error());
+                }
+                candidate.current.state.center_position =
+                    traversal_result.value().center_position;
+                candidate.current.state.facing_yaw_radians =
+                    facing_result.value();
                 candidate.current.vertical =
                     supported_vertical_state(
-                        support,
-                        true);
+                        traversal_result.value().support,
+                        false);
+                candidate.current.horizontal_velocity =
+                    traversal_result.value().horizontal_velocity;
             }
             else {
-                candidate.current.state.center_position.y =
-                    canonical_zero(
-                        static_cast<float>(position_y));
-                candidate.current.vertical =
-                    falling_vertical_state(
-                        static_cast<float>(velocity_y));
+                auto velocity_result =
+                    move_air_horizontal_velocity_toward(
+                        simulation.current.horizontal_velocity,
+                        intent_result.value(),
+                        simulation.config.air_locomotion,
+                        fixed_delta_seconds);
+                if (!velocity_result) {
+                    return core::Result<void>::failure(
+                        velocity_result.error());
+                }
+                const auto starting_velocity_y = supported
+                    ? simulation.config.air_locomotion
+                        .jump_launch_speed
+                    : simulation.current.vertical.velocity_y;
+                auto traversal_result = traverse_airborne(
+                    simulation,
+                    velocity_result.value(),
+                    starting_velocity_y,
+                    terrain_surface,
+                    fixed_delta_seconds);
+                if (!traversal_result) {
+                    return core::Result<void>::failure(
+                        traversal_result.error());
+                }
+                if (traversal_result.value().requires_recovery) {
+                    auto recovery_result =
+                        build_spawn_discontinuity(
+                            simulation,
+                            command,
+                            movement_frame,
+                            terrain_surface,
+                            fixed_tick);
+                    if (!recovery_result) {
+                        return core::Result<void>::failure(
+                            recovery_result.error());
+                    }
+                    candidate = recovery_result.value();
+                }
+                else {
+                    candidate.current.state.center_position =
+                        traversal_result.value()
+                            .center_position;
+                    candidate.current.state.facing_yaw_radians =
+                        facing_result.value();
+                    candidate.current.vertical =
+                        traversal_result.value().vertical;
+                    candidate.current.horizontal_velocity =
+                        traversal_result.value()
+                            .horizontal_velocity;
+                }
             }
         }
         else {

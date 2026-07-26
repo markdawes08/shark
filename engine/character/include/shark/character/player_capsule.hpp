@@ -34,6 +34,12 @@ inline constexpr float maximum_player_horizontal_speed = 32.0F;
 inline constexpr float maximum_player_ground_acceleration = 256.0F;
 inline constexpr float
     maximum_player_facing_turn_speed_radians_per_second = 32.0F;
+inline constexpr float default_player_jump_launch_speed = 6.5F;
+inline constexpr float maximum_player_jump_launch_speed = 32.0F;
+inline constexpr float
+    default_player_air_control_acceleration = 12.0F;
+inline constexpr float
+    maximum_player_air_control_acceleration = 256.0F;
 inline constexpr float minimum_player_probe_spacing = 0.01F;
 inline constexpr float maximum_player_probe_spacing = 1.0F;
 inline constexpr float maximum_player_fixed_delta_seconds = 0.25F;
@@ -65,6 +71,16 @@ struct PlayerGroundLocomotionSettings final {
         const PlayerGroundLocomotionSettings&) noexcept = default;
 };
 
+struct PlayerAirLocomotionSettings final {
+    float jump_launch_speed{default_player_jump_launch_speed};
+    float control_acceleration{
+        default_player_air_control_acceleration};
+
+    [[nodiscard]] friend bool operator==(
+        const PlayerAirLocomotionSettings&,
+        const PlayerAirLocomotionSettings&) noexcept = default;
+};
+
 // Character-owned, device-neutral horizontal frame supplied once per fixed
 // tick. At camera yaw zero, right is +X and forward is -Z.
 struct PlayerMovementFrame final {
@@ -78,6 +94,7 @@ struct PlayerMovementFrame final {
 
 enum class PlayerGroundPhase : std::uint8_t {
     grounded = 1,
+    rising,
     falling,
     landing,
     steep_contact,
@@ -121,6 +138,7 @@ struct PlayerCapsuleConfig final {
     float spawn_facing_yaw_radians{};
     PlayerGroundingSettings grounding;
     PlayerGroundLocomotionSettings ground_locomotion;
+    PlayerAirLocomotionSettings air_locomotion;
 
     [[nodiscard]] friend bool operator==(
         const PlayerCapsuleConfig&,
@@ -138,9 +156,9 @@ struct PlayerCapsuleState final {
 
 // Device-neutral actions sampled once for an emitted fixed tick. Held values
 // may repeat on consecutive ticks; the three *_pressed values are one-tick
-// pulses supplied by the platform-facing sampler. Ground locomotion consumes
-// the four directional holds and run; later increments own the remaining
-// action policy.
+// pulses supplied by the platform-facing sampler. Character consumes the
+// directional holds, run, jump, and reset; the camera consumes look deltas.
+// Primary action policy remains deferred.
 struct PlayerActionCommand final {
     bool move_forward_held{};
     bool move_backward_held{};
@@ -192,6 +210,9 @@ static_assert(
     std::is_standard_layout_v<PlayerGroundLocomotionSettings>);
 static_assert(
     std::is_trivially_copyable_v<PlayerGroundLocomotionSettings>);
+static_assert(std::is_standard_layout_v<PlayerAirLocomotionSettings>);
+static_assert(
+    std::is_trivially_copyable_v<PlayerAirLocomotionSettings>);
 static_assert(std::is_standard_layout_v<PlayerMovementFrame>);
 static_assert(std::is_trivially_copyable_v<PlayerMovementFrame>);
 static_assert(std::is_standard_layout_v<PlayerVerticalState>);
@@ -217,6 +238,9 @@ static_assert(std::is_trivially_copyable_v<PlayerCapsuleSimulation>);
 
 [[nodiscard]] bool is_valid(
     const PlayerGroundLocomotionSettings& settings) noexcept;
+
+[[nodiscard]] bool is_valid(
+    const PlayerAirLocomotionSettings& settings) noexcept;
 
 [[nodiscard]] bool is_valid(
     const PlayerMovementFrame& frame) noexcept;
@@ -257,10 +281,11 @@ create_player_capsule(
     PlayerCapsuleConfig config,
     const terrain::HeightTileSurface& terrain_surface);
 
-// fixed_tick must be exactly current.fixed_tick + 1. Grounded movement uses
-// the supplied frame, bounded canonical terrain probes, and the longest
-// walkable prefix. The operation validates source terrain consistency and its
-// complete candidate before committing.
+// fixed_tick must be exactly current.fixed_tick + 1. Grounded and airborne
+// movement use the supplied frame plus bounded canonical terrain probes.
+// Airborne collision is a deterministic sampled center path, not exact
+// continuous capsule collision. The operation validates source terrain
+// consistency and its complete candidate before committing.
 [[nodiscard]] core::Result<void> advance_player_capsule(
     PlayerCapsuleSimulation& simulation,
     PlayerActionCommand command,

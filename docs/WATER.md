@@ -1,7 +1,7 @@
 # Gameplay Water Query Contract
 
 - **Completed through:** `WQ-001`
-- **Character integration observed through:** `CHR-002`
+- **Character integration observed through:** `CHR-004`
 - **Last verified:** July 26, 2026
 
 WQ-001 adds a small platform- and renderer-independent `shark::water` boundary
@@ -86,11 +86,12 @@ state, buoyancy, water displacement, dynamic waves, GPU readback, fluid
 coupling, or renderer change. A later simulated-water adapter may provide the
 same query information without changing character policy.
 
-CHR-003 moves one bounded capsule across canonical terrain but still does not
-query water during fixed-tick advancement or own immersion policy. It can
-therefore continue along submerged terrain as a temporary limitation.
-CAM-001 changes only its presentation camera. The active queue is `CHR-004`,
-jumping and landing; WQ-001 first enters Character policy at `CHR-005` for
-wading. The authoritative increment order remains in
+CHR-004 lets one bounded capsule walk, jump, steer in air, land, and recover
+against canonical terrain but still does not query water during fixed-tick
+advancement or own immersion policy. It can therefore continue along, jump
+over, or land on submerged terrain as a temporary limitation. No Character
+action mutates water volume. CAM-001 changes only its presentation camera.
+The active queue is `CHR-005`, where WQ-001 first enters Character policy for
+shallow-water wading. The authoritative increment order remains in
 [ENGINE_PLAN.md](ENGINE_PLAN.md), and the player contract is in
 [CHARACTER.md](CHARACTER.md).

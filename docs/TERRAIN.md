@@ -1,7 +1,7 @@
 # Canonical Terrain-Tile Contract
 
 - **Completed through:** `ISL-001`
-- **Character integration verified through:** `CHR-002`
+- **Character integration verified through:** `CHR-004`
 - **Last verified:** July 26, 2026
 
 ISL-001 retains the T-007 rolling-height source and all historical T-008 basin
@@ -1153,17 +1153,21 @@ lake-at-rest shoreline over that same simulation-owned bed. It does not snap
 water depth to the terrain or derive collision from a visual LOD. ISL-001 adds
 the separate playable-island fixture described below. WQ-001 now obtains bed
 height only through `HeightTileSurface::sample_lod0_surface`; it never reads a
-coarse/render mesh and never mutates terrain. CHR-003 uses that same exact
-face sample for slope-correct support and probes horizontal displacement no
-farther than `0.25 m` apart. Every accepted probe must remain walkable and
-inside the player bounds; rejection retains the last safe point and zeros
-velocity. This is a sampled heightfield controller, not an exact
-crossed-triangle or swept-capsule query, so arbitrary narrow/corner-grazed
+coarse/render mesh and never mutates terrain. CHR-004 uses that same exact
+face sample for slope-correct support and probes the full three-dimensional
+capsule-center path no farther than `0.25 m` apart. The first descending
+walkable crossing lands at exact support. A rising terrain intrusion, steep
+contact, or rejected X/Z bound retains the last safe horizontal prefix and
+zeros horizontal velocity while vertical motion continues where applicable.
+Missing support is legal while airborne; falling below the configured minimum
+Y recovers to the canonical dry spawn. This is a sampled heightfield
+controller, explicitly not exact continuous collision detection, an exact
+crossed-triangle query, or a swept capsule, so arbitrary narrow/corner-grazed
 features and obstacle collision are not claimed. CAM-001 continues to use the
 canonical LOD0 segment query only for presentation obstruction and never
 changes Character authority.
 
-The active queue is `CHR-004`, jumping and landing. `W-005`, the GPU
+The active queue is `CHR-005`, shallow-water wading. `W-005`, the GPU
 shallow-water solver, remains an approved deferred specialization in
 [ENGINE_PLAN.md](ENGINE_PLAN.md); gameplay query invariants are in
 [WATER.md](WATER.md), and the player contract is in

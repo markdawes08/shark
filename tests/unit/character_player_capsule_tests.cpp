@@ -7,12 +7,14 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -216,10 +218,10 @@ struct ScheduleRun final {
 {
     using namespace shark;
 
-    const auto surface = make_surface();
+    const auto surface =
+        make_surface(make_wide_plane_tile());
     auto player = make_simulation(
-        surface,
-        test_config({0.0F, 5.0F, 0.0F}));
+        surface);
     auto clock_result = simulation::FixedStepClock::create(
         simulation::FixedStepClockConfig{
             .initially_paused = false,
@@ -472,6 +474,48 @@ TEST_CASE(
             character::maximum_player_probe_spacing,
             infinity);
     require_invalid(config);
+
+    REQUIRE(character::PlayerAirLocomotionSettings{} ==
+        character::PlayerAirLocomotionSettings{
+            .jump_launch_speed = 6.5F,
+            .control_acceleration = 12.0F,
+        });
+    const std::array invalid_jump_speed{
+        0.0F,
+        -1.0F,
+        nan,
+        infinity,
+        std::nextafter(
+            character::maximum_player_jump_launch_speed,
+            infinity),
+    };
+    for (const auto value : invalid_jump_speed) {
+        config = test_config();
+        config.air_locomotion.jump_launch_speed = value;
+        require_invalid(config);
+    }
+    const std::array invalid_air_acceleration{
+        0.0F,
+        -1.0F,
+        nan,
+        infinity,
+        std::nextafter(
+            character::maximum_player_air_control_acceleration,
+            infinity),
+    };
+    for (const auto value : invalid_air_acceleration) {
+        config = test_config();
+        config.air_locomotion.control_acceleration = value;
+        require_invalid(config);
+    }
+    REQUIRE(character::is_valid(
+        character::PlayerAirLocomotionSettings{
+            .jump_launch_speed =
+                character::maximum_player_jump_launch_speed,
+            .control_acceleration =
+                character::
+                    maximum_player_air_control_acceleration,
+        }));
 }
 
 TEST_CASE(
@@ -999,8 +1043,8 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "falling and steep contact suppress horizontal control",
-    "[character][player-capsule][locomotion][falling][steep]")
+    "falling accepts air control while steep contact remains stable",
+    "[character][player-capsule][locomotion][airborne][steep]")
 {
     using namespace shark;
 
@@ -1019,11 +1063,23 @@ TEST_CASE(
         flat,
         0.1F,
         1U));
-    REQUIRE(falling.current.state.center_position.x == 0.0F);
-    REQUIRE(falling.current.state.center_position.z == 0.0F);
-    REQUIRE(falling.current.state.facing_yaw_radians == 0.0F);
-    REQUIRE(falling.current.horizontal_velocity ==
-        math::Float3{});
+    const auto controlled_component =
+        static_cast<float>(1.2 / std::sqrt(2.0));
+    REQUIRE(falling.current.state.center_position.x ==
+        Catch::Approx(controlled_component * 0.1F)
+            .margin(0.000001F));
+    REQUIRE(falling.current.state.center_position.z ==
+        Catch::Approx(controlled_component * 0.1F)
+            .margin(0.000001F));
+    REQUIRE(falling.current.state.facing_yaw_radians ==
+        Catch::Approx(1.0F).margin(0.000001F));
+    require_float3(
+        falling.current.horizontal_velocity,
+        {
+            controlled_component,
+            0.0F,
+            controlled_component,
+        });
 
     const auto steep_surface =
         make_surface(make_wide_plane_tile(2.0F));
@@ -1092,6 +1148,487 @@ TEST_CASE(
         REQUIRE(player.current.consumed_command == command);
     }
     REQUIRE(character::is_valid(player));
+}
+
+TEST_CASE(
+    "grounded jump reaches one apex lands once and ignores air pulses",
+    "[character][player-capsule][jump][apex][landing]")
+{
+    using namespace shark;
+
+    const auto surface = make_surface(make_wide_plane_tile());
+    auto player = make_simulation(surface);
+    constexpr auto delta_seconds = 1.0F / 60.0F;
+    auto expected_y = 1.0;
+    auto expected_velocity =
+        static_cast<double>(
+            character::default_player_jump_launch_speed);
+    std::uint64_t first_falling_tick = 0U;
+    std::uint64_t landing_tick = 0U;
+    std::uint32_t landing_count = 0U;
+    auto highest_y = player.current.state.center_position.y;
+
+    for (std::uint64_t tick = 1U; tick <= 120U; ++tick) {
+        expected_velocity -=
+            static_cast<double>(
+                character::default_player_gravity_magnitude) *
+            delta_seconds;
+        expected_y += expected_velocity * delta_seconds;
+        const character::PlayerActionCommand command{
+            .jump_pressed = tick == 1U || tick == 5U,
+        };
+        REQUIRE(character::advance_player_capsule(
+            player,
+            command,
+            {},
+            surface,
+            delta_seconds,
+            tick));
+
+        highest_y = std::max(
+            highest_y,
+            player.current.state.center_position.y);
+        if (player.current.vertical.phase ==
+            character::PlayerGroundPhase::landing) {
+            ++landing_count;
+            landing_tick = tick;
+            REQUIRE(player.previous.vertical.phase ==
+                character::PlayerGroundPhase::falling);
+            REQUIRE(player.current.state.center_position ==
+                math::Float3{0.0F, 1.0F, 0.0F});
+            REQUIRE(positive_zero(
+                player.current.vertical.velocity_y));
+            REQUIRE(player.current.horizontal_velocity ==
+                math::Float3{});
+            break;
+        }
+
+        const auto expected_phase = expected_velocity > 0.0
+            ? character::PlayerGroundPhase::rising
+            : character::PlayerGroundPhase::falling;
+        REQUIRE(player.current.vertical.phase == expected_phase);
+        if (expected_phase ==
+                character::PlayerGroundPhase::falling &&
+            first_falling_tick == 0U) {
+            first_falling_tick = tick;
+            REQUIRE(player.previous.vertical.phase ==
+                character::PlayerGroundPhase::rising);
+        }
+        REQUIRE(player.current.vertical.velocity_y ==
+            Catch::Approx(
+                static_cast<float>(expected_velocity))
+                .margin(0.00001F));
+        REQUIRE(player.current.state.center_position.y ==
+            Catch::Approx(static_cast<float>(expected_y))
+                .margin(0.00001F));
+        REQUIRE(player.current.vertical.support_normal ==
+            math::Float3{});
+    }
+
+    REQUIRE(first_falling_tick == 40U);
+    REQUIRE(landing_tick == 79U);
+    REQUIRE(landing_count == 1U);
+    REQUIRE(highest_y ==
+        Catch::Approx(3.0995F).margin(0.00002F));
+    REQUIRE(character::advance_player_capsule(
+        player,
+        {},
+        {},
+        surface,
+        delta_seconds,
+        landing_tick + 1U));
+    REQUIRE(player.previous.vertical.phase ==
+        character::PlayerGroundPhase::landing);
+    REQUIRE(player.current.vertical.phase ==
+        character::PlayerGroundPhase::grounded);
+}
+
+TEST_CASE(
+    "air control is camera relative capped and preserves neutral momentum",
+    "[character][player-capsule][jump][air-control][facing]")
+{
+    using namespace shark;
+
+    const auto surface = make_surface(make_wide_plane_tile());
+    auto player = make_simulation(
+        surface,
+        test_config({0.0F, 20.0F, 0.0F}));
+    const auto frame = movement_frame_for_yaw(math::half_pi);
+    constexpr auto delta_seconds = 0.05F;
+    const character::PlayerActionCommand controlled{
+        .move_forward_held = true,
+        .run_held = true,
+    };
+    for (std::uint64_t tick = 1U; tick <= 12U; ++tick) {
+        REQUIRE(character::advance_player_capsule(
+            player,
+            controlled,
+            frame,
+            surface,
+            delta_seconds,
+            tick));
+        REQUIRE(player.current.vertical.phase ==
+            character::PlayerGroundPhase::falling);
+    }
+    require_float3(
+        player.current.horizontal_velocity,
+        {7.0F, 0.0F, 0.0F});
+    REQUIRE(player.current.state.facing_yaw_radians ==
+        Catch::Approx(math::half_pi).margin(0.000001F));
+
+    const auto before_neutral = player.current;
+    REQUIRE(character::advance_player_capsule(
+        player,
+        {.jump_pressed = true},
+        {},
+        surface,
+        delta_seconds,
+        13U));
+    REQUIRE(player.current.horizontal_velocity ==
+        before_neutral.horizontal_velocity);
+    REQUIRE(player.current.state.center_position.x ==
+        Catch::Approx(
+            before_neutral.state.center_position.x +
+                7.0F * delta_seconds)
+            .margin(0.000001F));
+    REQUIRE(player.current.vertical.velocity_y <
+        before_neutral.vertical.velocity_y);
+    REQUIRE(player.current.vertical.phase ==
+        character::PlayerGroundPhase::falling);
+}
+
+TEST_CASE(
+    "air trajectory blocks rising terrain and horizontal bounds",
+    "[character][player-capsule][jump][terrain][bounds]")
+{
+    using namespace shark;
+
+    SECTION("rising terrain intrusion")
+    {
+        const auto surface =
+            make_surface(make_steep_barrier_tile());
+        auto player = make_simulation(
+            surface,
+            test_config({-0.5F, 1.0F, 0.0F}));
+        REQUIRE(character::advance_player_capsule(
+            player,
+            {
+                .move_right_held = true,
+                .run_held = true,
+                .jump_pressed = true,
+            },
+            {},
+            surface,
+            0.25F,
+            1U));
+        REQUIRE(player.current.vertical.phase ==
+            character::PlayerGroundPhase::rising);
+        REQUIRE(player.current.state.center_position.x >= -0.5F);
+        REQUIRE(player.current.state.center_position.x <= 0.0F);
+        REQUIRE(player.current.state.center_position.y ==
+            Catch::Approx(2.011875F).margin(0.00001F));
+        REQUIRE(player.current.horizontal_velocity ==
+            math::Float3{});
+    }
+
+    SECTION("inclusive horizontal center bound")
+    {
+        const auto surface =
+            make_surface(make_wide_plane_tile());
+        auto config = test_config();
+        config.center_bounds.maximum.x = 0.3F;
+        auto player = make_simulation(surface, config);
+        REQUIRE(character::advance_player_capsule(
+            player,
+            {
+                .move_right_held = true,
+                .run_held = true,
+                .jump_pressed = true,
+            },
+            {},
+            surface,
+            0.25F,
+            1U));
+        REQUIRE(player.current.vertical.phase ==
+            character::PlayerGroundPhase::rising);
+        REQUIRE(player.current.state.center_position.x > 0.0F);
+        REQUIRE(player.current.state.center_position.x <= 0.3F);
+        REQUIRE(player.current.horizontal_velocity ==
+            math::Float3{});
+        REQUIRE(player.current.state.center_position.y ==
+            Catch::Approx(2.011875F).margin(0.00001F));
+    }
+}
+
+TEST_CASE(
+    "descending sampled path lands on an intermediate raised band",
+    "[character][player-capsule][airborne][terrain][landing]")
+{
+    using namespace shark;
+
+    constexpr std::uint32_t columns = 17U;
+    constexpr std::uint32_t rows = 5U;
+    std::vector<float> heights;
+    heights.reserve(
+        static_cast<std::size_t>(columns) * rows);
+    for (std::uint32_t z = 0U; z < rows; ++z) {
+        static_cast<void>(z);
+        for (std::uint32_t x = 0U; x < columns; ++x) {
+            heights.push_back(
+                x >= 7U && x <= 10U ? 1.0F : 0.0F);
+        }
+    }
+    const auto surface = make_surface({
+        .sample_columns = columns,
+        .sample_rows = rows,
+        .sample_spacing = 0.25F,
+        .origin = {-2.0F, 0.0F, -0.5F},
+        .height_offsets = std::move(heights),
+    });
+    auto player = make_simulation(
+        surface,
+        test_config({-1.0F, 1.0F, 0.0F}));
+    constexpr auto delta_seconds = 0.25F;
+    REQUIRE(character::advance_player_capsule(
+        player,
+        {},
+        {},
+        surface,
+        1.0F / 60.0F,
+        1U));
+    player.current.state.center_position.y = 5.0F;
+    player.current.vertical = {
+        .velocity_y = -13.1475F,
+        .phase = character::PlayerGroundPhase::falling,
+    };
+    player.current.horizontal_velocity = {7.0F, 0.0F, 0.0F};
+    REQUIRE(character::is_valid(player));
+
+    const auto endpoint_x =
+        player.current.state.center_position.x +
+        player.current.horizontal_velocity.x * delta_seconds;
+    const auto endpoint_y =
+        player.current.state.center_position.y +
+        (player.current.vertical.velocity_y -
+            character::default_player_gravity_magnitude *
+                delta_seconds) *
+            delta_seconds;
+    const auto endpoint_support =
+        character::query_player_terrain_support(
+            player.config.shape,
+            player.config.grounding,
+            surface,
+            endpoint_x,
+            0.0F);
+    REQUIRE(endpoint_support);
+    REQUIRE(endpoint_support.value());
+    REQUIRE(endpoint_support.value()->center_position_y == 1.0F);
+    REQUIRE(endpoint_y >
+        endpoint_support.value()->center_position_y +
+            player.config.grounding.snap_distance);
+
+    REQUIRE(character::advance_player_capsule(
+        player,
+        {},
+        {},
+        surface,
+        delta_seconds,
+        2U));
+    REQUIRE(player.previous.vertical.phase ==
+        character::PlayerGroundPhase::falling);
+    REQUIRE(player.current.vertical.phase ==
+        character::PlayerGroundPhase::landing);
+    REQUIRE(player.current.state.center_position.x >= -0.25F);
+    REQUIRE(player.current.state.center_position.x <= 0.5F);
+    REQUIRE(player.current.state.center_position.x < endpoint_x);
+    REQUIRE(player.current.state.center_position.y == 2.0F);
+    require_float3(
+        player.current.horizontal_velocity,
+        {7.0F, 0.0F, 0.0F});
+    REQUIRE(player.current.vertical.support_normal ==
+        math::Float3{0.0F, 1.0F, 0.0F});
+}
+
+TEST_CASE(
+    "missing terrain fall recovers atomically to authored spawn",
+    "[character][player-capsule][jump][recovery][terrain-edge]")
+{
+    using namespace shark;
+
+    const auto surface = make_surface();
+    auto config = test_config({1.75F, 1.0F, 0.0F});
+    config.center_bounds.minimum.y = 0.0F;
+    auto player = make_simulation(surface, config);
+    REQUIRE(character::advance_player_capsule(
+        player,
+        {
+            .move_right_held = true,
+            .run_held = true,
+            .jump_pressed = true,
+        },
+        {},
+        surface,
+        0.25F,
+        1U));
+    REQUIRE(player.current.vertical.phase ==
+        character::PlayerGroundPhase::rising);
+    REQUIRE(player.current.state.center_position.x > 2.0F);
+    REQUIRE(player.current.horizontal_velocity.x == 3.0F);
+
+    std::uint64_t recovery_tick = 0U;
+    for (std::uint64_t tick = 2U; tick <= 40U; ++tick) {
+        const auto result = character::advance_player_capsule(
+            player,
+            {},
+            {},
+            surface,
+            0.1F,
+            tick);
+        const auto error_message = result
+            ? std::string{}
+            : std::string{result.error().message()};
+        CAPTURE(tick, error_message);
+        REQUIRE(result);
+        if (player.current.reset_generation == 1U) {
+            recovery_tick = tick;
+            break;
+        }
+    }
+    REQUIRE(recovery_tick > 1U);
+    REQUIRE_FALSE(
+        player.current.consumed_command.reset_pressed);
+    REQUIRE(player.previous.state == player.current.state);
+    REQUIRE(player.previous.vertical == player.current.vertical);
+    REQUIRE(player.previous.horizontal_velocity ==
+        math::Float3{});
+    REQUIRE(player.current.horizontal_velocity ==
+        math::Float3{});
+    REQUIRE(player.current.state.center_position ==
+        player.config.spawn_center_position);
+    REQUIRE(player.current.vertical.phase ==
+        character::PlayerGroundPhase::grounded);
+    REQUIRE(player.previous.fixed_tick == recovery_tick - 1U);
+    REQUIRE(player.current.fixed_tick == recovery_tick);
+
+    REQUIRE(character::advance_player_capsule(
+        player,
+        {.jump_pressed = true},
+        {},
+        surface,
+        1.0F / 60.0F,
+        recovery_tick + 1U));
+    REQUIRE(player.current.vertical.phase ==
+        character::PlayerGroundPhase::rising);
+    REQUIRE(player.current.reset_generation == 1U);
+}
+
+TEST_CASE(
+    "airborne traversal bounds probe work before publication",
+    "[character][player-capsule][airborne][bounds][rollback]")
+{
+    using namespace shark;
+
+    const auto surface = make_surface(make_wide_plane_tile());
+
+    SECTION("deep fall lands before crossing the recovery bound")
+    {
+        auto player = make_simulation(surface);
+        REQUIRE(character::advance_player_capsule(
+            player,
+            {},
+            {},
+            surface,
+            1.0F / 60.0F,
+            1U));
+        player.current.state.center_position.y = 2.0F;
+        player.current.vertical = {
+            .velocity_y = -1.0e20F,
+            .phase = character::PlayerGroundPhase::falling,
+        };
+        REQUIRE(character::is_valid(player));
+
+        REQUIRE(character::advance_player_capsule(
+            player,
+            {},
+            {},
+            surface,
+            0.25F,
+            2U));
+        REQUIRE(player.current.reset_generation == 0U);
+        REQUIRE(player.previous.state.center_position.y == 2.0F);
+        REQUIRE(player.current.state.center_position ==
+            math::Float3{0.0F, 1.0F, 0.0F});
+        REQUIRE(player.current.vertical.phase ==
+            character::PlayerGroundPhase::landing);
+    }
+
+    SECTION("deep unsupported fall recovers after bounded probing")
+    {
+        auto player = make_simulation(surface);
+        REQUIRE(character::advance_player_capsule(
+            player,
+            {},
+            {},
+            surface,
+            1.0F / 60.0F,
+            1U));
+        player.current.state.center_position =
+            {12.0F, 2.0F, 0.0F};
+        player.current.vertical = {
+            .velocity_y = -1.0e20F,
+            .phase = character::PlayerGroundPhase::falling,
+        };
+        REQUIRE(character::is_valid(player));
+
+        REQUIRE(character::advance_player_capsule(
+            player,
+            {},
+            {},
+            surface,
+            0.25F,
+            2U));
+        REQUIRE(player.current.reset_generation == 1U);
+        REQUIRE(player.previous.state == player.current.state);
+        REQUIRE(player.current.state.center_position ==
+            player.config.spawn_center_position);
+        REQUIRE(player.current.vertical.phase ==
+            character::PlayerGroundPhase::grounded);
+    }
+
+    SECTION("within-bounds path exceeding probe budget rolls back")
+    {
+        auto config = test_config();
+        config.center_bounds.minimum.y = -100.0F;
+        config.center_bounds.maximum.y = 100.0F;
+        config.ground_locomotion.maximum_probe_spacing = 0.01F;
+        auto player = make_simulation(surface, config);
+        REQUIRE(character::advance_player_capsule(
+            player,
+            {},
+            {},
+            surface,
+            1.0F / 60.0F,
+            1U));
+        player.current.state.center_position.y = 80.0F;
+        player.current.vertical = {
+            .velocity_y = -200.0F,
+            .phase = character::PlayerGroundPhase::falling,
+        };
+        REQUIRE(character::is_valid(player));
+        const auto before = player;
+
+        const auto result = character::advance_player_capsule(
+            player,
+            {},
+            {},
+            surface,
+            0.25F,
+            2U);
+        REQUIRE_FALSE(result);
+        REQUIRE(result.error().code() ==
+            core::ErrorCode::unavailable);
+        REQUIRE(player == before);
+    }
 }
 
 TEST_CASE(
@@ -1255,6 +1792,11 @@ TEST_CASE(
                 surface,
                 0.1F,
                 tick));
+            if (tick == 1U) {
+                falling.current.horizontal_velocity =
+                    {0.0F, 0.0F, -1.0F};
+                REQUIRE(character::is_valid(falling));
+            }
         } while (
             falling.current.vertical.phase ==
                 character::PlayerGroundPhase::falling &&
@@ -1263,6 +1805,8 @@ TEST_CASE(
             character::PlayerGroundPhase::steep_contact);
         REQUIRE(falling.current.state.center_position.y ==
             support.value()->center_position_y);
+        REQUIRE(falling.current.horizontal_velocity ==
+            math::Float3{});
     }
 }
 
@@ -1363,6 +1907,8 @@ TEST_CASE(
     expected.previous.state = expected.current.state;
     expected.previous.vertical =
         expected.current.vertical;
+    expected.previous.horizontal_velocity =
+        expected.current.horizontal_velocity;
     REQUIRE(character::collapse_player_capsule_interpolation(
         player));
     REQUIRE(player == expected);
@@ -1497,6 +2043,36 @@ TEST_CASE(
         1U));
     REQUIRE(malformed == malformed_before);
 
+    auto malformed_rising = player;
+    malformed_rising.current.vertical = {
+        .velocity_y = 0.0F,
+        .phase = character::PlayerGroundPhase::rising,
+    };
+    const auto rising_before = malformed_rising;
+    REQUIRE_FALSE(character::advance_player_capsule(
+        malformed_rising,
+        {},
+        {},
+        surface,
+        1.0F / 60.0F,
+        1U));
+    REQUIRE(malformed_rising == rising_before);
+
+    auto malformed_falling = player;
+    malformed_falling.current.vertical = {
+        .velocity_y = 1.0F,
+        .phase = character::PlayerGroundPhase::falling,
+    };
+    const auto falling_before = malformed_falling;
+    REQUIRE_FALSE(character::advance_player_capsule(
+        malformed_falling,
+        {},
+        {},
+        surface,
+        1.0F / 60.0F,
+        1U));
+    REQUIRE(malformed_falling == falling_before);
+
     auto malformed_horizontal = player;
     malformed_horizontal.current.horizontal_velocity =
         {1.0F, 0.0F, 0.0F};
@@ -1509,6 +2085,33 @@ TEST_CASE(
         1.0F / 60.0F,
         1U));
     REQUIRE(malformed_horizontal == horizontal_before);
+
+    auto excessive_air_speed = make_simulation(
+        surface,
+        test_config({0.0F, 3.0F, 0.0F}));
+    REQUIRE(character::advance_player_capsule(
+        excessive_air_speed,
+        {},
+        {},
+        surface,
+        1.0F / 60.0F,
+        1U));
+    excessive_air_speed.current.horizontal_velocity =
+        {
+            excessive_air_speed.config.ground_locomotion.run_speed +
+                0.01F,
+            0.0F,
+            0.0F,
+        };
+    const auto excessive_before = excessive_air_speed;
+    REQUIRE_FALSE(character::advance_player_capsule(
+        excessive_air_speed,
+        {},
+        {},
+        surface,
+        1.0F / 60.0F,
+        2U));
+    REQUIRE(excessive_air_speed == excessive_before);
 
     auto below = player;
     REQUIRE(character::advance_player_capsule(
@@ -1537,10 +2140,21 @@ TEST_CASE(
         core::ErrorCode::invalid_state);
     REQUIRE(below == below_before);
 
-    auto bounded = make_simulation(
+    auto bounded = make_simulation(surface);
+    REQUIRE(character::advance_player_capsule(
+        bounded,
+        {},
+        {},
         surface,
-        test_config({0.0F, 2.0F, 0.0F}));
-    bounded.config.center_bounds.minimum.y = 1.999F;
+        1.0F / 60.0F,
+        1U));
+    bounded.config.center_bounds.maximum.y = 2.0F;
+    bounded.current.state.center_position.y = 1.9F;
+    bounded.current.vertical = {
+        .velocity_y = 6.5F,
+        .phase = character::PlayerGroundPhase::rising,
+    };
+    REQUIRE(character::is_valid(bounded));
     const auto bounded_before = bounded;
     const auto bounded_result =
         character::advance_player_capsule(
@@ -1549,7 +2163,7 @@ TEST_CASE(
             {},
             surface,
             0.25F,
-            1U);
+            2U);
     REQUIRE_FALSE(bounded_result);
     REQUIRE(bounded_result.error().code() ==
         core::ErrorCode::unavailable);
@@ -1687,6 +2301,16 @@ TEST_CASE(
     REQUIRE(baseline.simulation.current.fixed_tick == 120U);
     REQUIRE(
         baseline.simulation.current.reset_generation == 1U);
+    REQUIRE(baseline.trace[22].consumed_command.jump_pressed);
+    REQUIRE(baseline.trace[22].vertical.phase ==
+        shark::character::PlayerGroundPhase::rising);
+    REQUIRE(baseline.trace[22].vertical.velocity_y > 0.0F);
+    REQUIRE(baseline.trace[61].vertical.phase ==
+        shark::character::PlayerGroundPhase::falling);
+    REQUIRE(baseline.trace[61].vertical.velocity_y <= 0.0F);
+    REQUIRE(baseline.trace[74].consumed_command.reset_pressed);
+    REQUIRE(baseline.trace[74].vertical.phase ==
+        shark::character::PlayerGroundPhase::grounded);
 
     for (const auto render_rate : render_rates) {
         CAPTURE(render_rate);

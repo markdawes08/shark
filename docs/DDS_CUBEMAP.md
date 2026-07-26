@@ -1,8 +1,8 @@
 # DDS Cubemap Asset and Upload Contract
 
 - **DDS capability completed through:** `S-001`
-- **Renderer integration verified through:** `W-001`
-- **Last verified:** July 19, 2026
+- **Renderer integration verified through:** `CHR-001`
+- **Last verified:** July 25, 2026
 
 S-001 establishes Shark's first file-backed texture asset. It loads one
 project-owned DDS cubemap into CPU-owned engine records, preserves explicit
@@ -175,16 +175,18 @@ The startup path remains exactly one static submission, one
 frame graph now has 15 imports, five ordered
 `Terrain`/`TexturedCube`/`Skybox`/`Water`/`ToneMap` passes, five dependencies,
 six transitions, 34 elisions, five texture-table binds, and 12 timestamps per
-frame. With `V` visible terrain chunks it contains `V + 6` indexed terrain/
-four-sphere/cube/sky draws plus procedural water and tone-map draws; `F4` optionally
-adds `V` chunk bounds and one query marker. Each visible terrain draw selects
+frame. With `V` visible terrain chunks it contains `V + 7` indexed
+terrain/four-sphere/player-capsule/cube/sky draws plus procedural water and
+tone-map draws; `F4` optionally adds `V` chunk bounds and one query marker.
+Each visible terrain draw selects
 its 1,536-index LOD0 or 864-index coarse range. T-008 retains T-006's 540,000
 surface indices, chunk bounds, query marker, and S-003 material sphere in the
 existing terrain buffers, preserving four total geometry buffers. The
 DDS-backed cube/sky draw and upload counts do not vary with terrain visibility,
 LOD, diagnostics, or water.
-T-008's unchanged final smoke-only near pose selects one LOD0 and 60 coarse chunks
-(`1/60`) so both terrain ranges are exercised without changing any cubemap
+The Island Demo's final smoke-only near pose selects 61 coarse chunks (`0/61`);
+the preceding overview selects one LOD0 and 71 coarse chunks, so both terrain
+ranges are exercised without changing any cubemap
 work.
 Cubemap creation/upload counters remain startup invariants, but there is no
 per-frame cubemap read or binding to count.

@@ -1,8 +1,8 @@
 # Minimal Render-Graph Contract
 
 - **Completed through:** `W-001`
-- **Renderer integration verified through:** `PHY-004`
-- **Last updated:** July 21, 2026
+- **Renderer integration verified through:** `CHR-001`
+- **Last updated:** July 25, 2026
 
 Shark's render graph is a small platform-independent planner with a Direct3D
 12 legacy-barrier executor. W-001 keeps the frame-local, whole-resource HDR
@@ -168,16 +168,17 @@ uploads and per-frame diagnostic `CopyBufferRegion` remain outside the graph.
 The graph pass callbacks own commands, not graph policy:
 
 - `Terrain` clears scene/depth and issues one selected LOD0/coarse surface per
-  visible chunk plus four material-sphere draws; default-off `F4` diagnostics add one
-  magenta-bounds draw per visible chunk and the query marker;
+  visible chunk, four material-sphere draws, and the CHR-001 blue capsule draw;
+  default-off `F4` diagnostics add one magenta-bounds draw per visible chunk
+  and the query marker;
 - `TexturedCube` issues one checker-cube indexed draw;
 - `Skybox` binds read-only depth and issues one far-depth indexed draw;
 - `Water` issues one premultiplied six-vertex procedural draw with read-only
   depth; and
 - `ToneMap` issues one non-indexed fullscreen-triangle draw.
 
-If `V` of the 225 chunks are visible, normal `Terrain` contains `V + 4`
-indexed draws and the frame contains `V + 6` indexed draws plus the water and
+If `V` of the 225 chunks are visible, normal `Terrain` contains `V + 5`
+indexed draws and the frame contains `V + 7` indexed draws plus the water and
 tone-map non-indexed draws. `F4` adds `V + 1` diagnostic draws without
 changing the graph. The
 initial/resized and scripted-overview smoke poses expose 93 and 72 chunks;

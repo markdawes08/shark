@@ -1,6 +1,6 @@
 # Building Shark
 
-- **Completed through:** `WQ-001`
+- **Completed through:** `CHR-001`
 - **Last verified:** July 25, 2026
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
@@ -114,8 +114,8 @@ local development and testing only and must never enter a packaged product.
 With no arguments, `SharkSandbox` initializes the highest-priority eligible
 hardware device, creates the validated canonical `HeightTileSurface`, and
 continuously draws its deterministic terrain with bounded distance-selected
-LOD, four material spheres, procedural-checker cube, and HDR environment through
-named
+LOD, four material spheres, one blue player-capsule proxy,
+procedural-checker cube, and HDR environment through named
 `Terrain`, `TexturedCube`, `Skybox`, `Water`, and `ToneMap` graph passes. The
 first four render into a resize-owned `R16G16B16A16_FLOAT` scene target;
 `ToneMap` writes the final back buffer. The triple frame-resource lifecycle
@@ -141,6 +141,12 @@ to move faster, and hold the right mouse button while dragging to look around.
 window to exercise the projection, swap-chain, depth, frame-local graph
 imports, and fence-delayed timing reuse, then close the title bar or press
 Alt+F4 to exit cleanly.
+
+The same events also feed the fixed-tick player-command boundary: WASD and
+Shift are held movement/run actions, Space is a one-shot jump action, left
+mouse is primary action, right-mouse drag supplies bounded look deltas, and
+`R` resets the capsule. CHR-001 records all of them, but only reset changes the
+player pose until later character increments.
 
 ## Shader build contract
 
@@ -179,8 +185,9 @@ For the visual acceptance check, run `SharkSandbox.exe` without arguments. A sol
 height tile must show tiled ground and rock materials blended by slope and
 height, mapped surface detail, and direct-sun plus environment response. The
 four glossy neutral material spheres must reflect the same environment used by
-the terrain. The interactive camera starts at the Island Demo's scenario-owned
-eye `(0,2.890625,112)` with pitch `-0.12`, standing on the dry island. The
+the terrain, and the blue capsule must be visible at the dry spawn. The
+interactive camera starts at the Island Demo's scenario-owned preview position
+`(0,4.890625,122)` with pitch `-0.28`, looking toward the capsule. The
 surface must surround the one island footprint, meet the terrain naturally at
 its depth-tested shoreline, transmit and tint the underlying seabed, reflect
 the active environment more strongly at grazing angles, and show subtle
@@ -364,14 +371,15 @@ Every submitted frame records one outer `Frame` event with nested `Terrain`,
 15 imports, five passes, five dependencies, six recorded transitions, and 34 elided
 transitions. With `V0` visible LOD0 chunks, `Vc` visible coarse chunks, and
 `V=V0+Vc`, it issues `V0` 1,536-index terrain surfaces, `Vc` 864-index terrain
-surfaces, four draws of the 1,584-index material sphere, one 36-index textured
-cube, one 36-index skybox, and one non-indexed six-vertex water quad.
+surfaces, four draws of the 1,584-index material sphere, one 1,584-index blue
+capsule draw, one 36-index textured cube, one 36-index skybox, and one
+non-indexed six-vertex water quad.
 `F4` additionally enables `V` matching 24-index chunk bounds and the six-index
 query marker; those diagnostics are off by default. One non-indexed
 fullscreen-triangle tone-map draw follows. The initial and resized smoke poses
-show 93 chunks at `V0/Vc=0/93`; the turned overview shows 72 at `0/72` from
+show 93 chunks at `V0/Vc=0/93`; the turned overview shows 72 at `1/71` from
 three quarters through seven eighths; and the final eighth moves only the smoke
-camera to `(16, -1, 0)` with the same yaw/pitch, exposing 61 chunks at `1/60`.
+camera to `(16, -1, 0)` with the same yaw/pitch, exposing 61 chunks at `0/61`.
 Those smoke-only poses do not replace T-008's scenario-owned interactive
 spawn. The frame retains five
 texture-table bindings and one reversed-Z depth clear. Terrain owns the clear,
@@ -758,10 +766,35 @@ water draw per frame, zero D3D12 corruption/errors, and zero live child
 objects. WQ-001 adds no shader, pass, GPU resource, descriptor, draw, physics
 state, or simulated-fluid state.
 
-The next increment is `CHR-001`: add one bounded player-capsule state,
-fixed-tick action commands, previous/current snapshots, deterministic
-spawn/reset, and an inspectable temporary proxy. W-005 remains an approved
-deferred fluid specialization.
+CHR-001 adds the first visible player authority. Focused verification is:
+
+```powershell
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[character]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[sandbox][player-command]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[renderer][d3d12][environment]"
+```
+
+The Character core passes 1,565 assertions across eight cases, the platform
+translation boundary passes 68 assertions across five cases, and the combined
+command/clock/snapshot pipeline passes 3,236 assertions in one case. The
+pipeline records the exact same 120 authoritative ticks at 30, 60, 120, and
+144 Hz. The environment/proxy contract passes 2,772 assertions across three
+cases.
+
+The complete Debug and Release suites each pass 497,863 assertions across 351
+cases. A 1,000-frame Debug presentation smoke on the NVIDIA GeForce RTX 4070
+Laptop GPU records 5,000 unchanged graph-pass executions, 1,000 separately
+counted capsule draws, zero D3D12 corruption/errors, and zero live D3D12 child
+objects.
+
+Launch `SharkSandbox.exe` to inspect the blue capsule at the dry spawn. `R`
+resets it. WASD, Shift, Space, left mouse, and right-mouse look already produce
+bounded fixed-tick commands, but only reset changes pose until locomotion
+increments arrive. See [CHARACTER.md](CHARACTER.md).
+
+The next increment is `CAM-001`: add the interpolated third-person
+follow/orbit camera and canonical-terrain obstruction probe. W-005 remains an
+approved deferred fluid specialization.
 
 ## Visual Studio
 

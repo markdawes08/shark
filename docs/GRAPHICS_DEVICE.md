@@ -1,8 +1,8 @@
 # Direct3D 12 Device Contract
 
 - **Device capability completed through:** `G-001`
-- **Renderer integration verified through:** `W-001`
-- **Last verified:** July 19, 2026
+- **Renderer integration verified through:** `CHR-001`
+- **Last verified:** July 25, 2026
 
 G-001 establishes adapter discovery, diagnostics, capability reporting, and
 device ownership independently of frame submission. It intentionally creates
@@ -112,12 +112,13 @@ Selection rules are strict:
 verification. `--present-smoke` accepts the normal GPU selectors and optional
 GPU-based validation, creates a real window, presents exactly 1,000 successful
 frames normally or 120 in the focused GPU-validation mode, containing the
-visible indexed terrain chunks, matching magenta chunk bounds, four material spheres,
-cyan terrain-query marker, cube, skybox, visual water, and final tone mapping,
-verifies
+visible indexed terrain chunks, matching magenta chunk bounds, four material
+spheres, one blue player capsule, cyan terrain-query marker, cube, skybox,
+visual water, and final tone mapping, verifies
 camera/depth/HDR/resource/graph lifecycles, and exits. The default interactive
 path keeps the device alive while the free-fly camera, IBL-lit terrain and
-query-normal pin, four material spheres, textured cube, HDR sky, and visual lake run
+query-normal pin, four material spheres, blue player capsule, textured cube,
+HDR sky, and visual lake run
 as `Terrain`, `TexturedCube`, `Skybox`, `Water`, and `ToneMap` passes. `F3`
 retains the procedural-daylight fallback. The startup DDS cubemap remains an
 asset/upload proof and is not imported, bound, or sampled per frame.

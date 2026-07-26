@@ -18,6 +18,8 @@ add_executable(SharkSandbox
     main.cpp
     options.cpp
     options.hpp
+    player_command_source.cpp
+    player_command_source.hpp
 )
 
 add_dependencies(

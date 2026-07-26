@@ -1,8 +1,8 @@
 # Camera, Reversed-Z Depth, Cube, and Skybox Contract
 
 - **Camera/cube capability completed through:** `G-005`
-- **Renderer integration verified through:** `PHY-004`
-- **Last verified:** July 21, 2026
+- **Renderer integration verified through:** `CHR-001`
+- **Last verified:** July 25, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
 engine-owned free-fly camera drives a resource-bound cube pipeline, a finite
@@ -198,12 +198,15 @@ procedural fallback. Cube, sky, terrain, and sphere write linear color to the
 ACES-fitted curve and explicit linear-to-sRGB transfer to the UNORM back
 buffer.
 
-PHY-004's current material-sphere `b2` contract contains seven 32-bit values:
-a unit quaternion followed by world position. The sandbox interpolates
-immutable previous/current rigid snapshots and passes each transform through
-`RenderFrameData`. The material-sphere vertex shader rotates authored-center-
-relative positions and normals before the existing `view_projection`; camera
-matrices, geometry buffers, descriptors, and draw count remain unchanged.
+CHR-001's shared environment-proxy `b2` contract contains nine 32-bit values:
+a unit quaternion, world position, radius, and vertical half-segment. Existing
+material spheres bind radius `1` and half-segment `0`, preserving their exact
+sphere branch. The player binds its bounded capsule dimensions; the same
+vertex shader deforms the existing sphere parameterization into a capsule and
+applies a blue diagnostic material. The sandbox interpolates immutable
+previous/current authoritative snapshots and passes each transform through
+`RenderFrameData`. Camera matrices, geometry buffers, descriptors, and pass
+count remain unchanged; the enabled capsule adds one indexed draw.
 
 The focused cube and sky root signatures plus immutable cube/skybox PSOs are
 created synchronously from pinned build-time DXIL. They survive swap-chain
@@ -250,9 +253,10 @@ with GPU-based validation. Hardware and normal WARP change from `1280x720` to
 `960x600`; focused GPU validation alone uses `640x360 -> 480x300`. Both
 sequences intentionally change aspect from `16:9` to `1.6`, and each applies
 `1.25` radians of scripted yaw at three quarters.
-The interactive camera starts at ISL-001's scenario-owned
-`(0,2.890625,112)` eye with pitch `-0.12` radians and a 1,500-meter far plane,
-standing on the dry island. Presentation smoke deliberately retains the
+The CHR-001 interactive preview camera starts at the scenario-owned
+`(0,4.890625,122)` position with pitch `-0.28` radians and a 1,500-meter far
+plane, looking toward the blue capsule at the dry spawn. It remains a free-fly
+camera until CAM-001. Presentation smoke deliberately retains the
 separate deterministic `(0,28,112)` start with pitch `-0.25`. Its initial and
 resized views expose 93 terrain chunks at a `0/93`
 LOD0/coarse split. The turned overview exposes 72 at `1/71` from three quarters
@@ -267,7 +271,8 @@ The permanent accounting contract requires:
 
 - with `V0` visible LOD0 chunks and `Vc` visible coarse chunks, `V0`
   1,536-index and `Vc` 864-index terrain draws, four 1,584-index material
-  spheres, one 36-index cube, and one 36-index skybox; `F4` optionally adds
+  spheres, one 1,584-index blue player-capsule proxy, one 36-index cube, and
+  one 36-index skybox; `F4` optionally adds
   `V0+Vc` 24-index magenta chunk-bounds draws and one six-index cyan query
   marker; plus one six-vertex water draw, one fullscreen tone-map draw, five
   texture-table bindings, one frame-constant upload, and one depth clear;
@@ -339,8 +344,9 @@ atmospheric scattering, cloud, automatic exposure, time of day, terrain
 streaming, additional LOD levels, or content database.
 
 The support-sample marker, CPU chunk culling, stateless LOD choice, F4
-diagnostic gate, and PHY-001 through PHY-004 sphere transforms add no camera matrix,
-GPU resource, PSO, graph pass, dependency, barrier, PIX event, or timestamp.
+diagnostic gate, PHY-001 through PHY-004 sphere transforms, and CHR-001
+capsule proxy add no camera matrix, GPU resource, PSO, graph pass, dependency,
+barrier, PIX event, or timestamp.
 W-001 retains 15 imports, five passes, five dependencies, six barriers, 34
 elisions, four geometry buffers, and 12 timestamps as the current exact
 contract.
@@ -348,8 +354,8 @@ contract.
 It also adds no general mesh/resource/descriptor manager, typed GPU handles,
 placed-resource pool, copy queue, deferred uploader, shader reflection, runtime
 shader compilation, hot reload, PSO cache, scene graph, ECS,
-multiple cameras, controllable entity, general scene entities, angular contact
-dynamics, animation, shadows, MSAA,
+multiple cameras, general scene entities, angular contact dynamics, animation,
+shadows, MSAA,
 additional terrain LOD levels, LOD hysteresis/morphing, instancing, raw mouse
 input, cursor lock, configurable action map, gamepad support, pixel readback,
 or golden-image testing.
@@ -376,7 +382,11 @@ cube geometry, sky motion, depth, input, or the deterministic smoke schedule.
 `W-001` adds only presentation-time water input and preserves those camera and
 cube contracts. `PHY-004` retains canonical terrain support and the CPU-only
 four-sphere pair pass while adding independently interpolated orientations;
-see
+CHR-001 adds one bounded player authority and maps its interpolated snapshot to
+the blue proxy without changing camera authority; see
+[the Character contract](CHARACTER.md). CAM-001 is the next increment and will
+replace the static preview with an interpolated third-person follow/orbit
+camera. See
 [the simulation contract](SIMULATION.md). This component page
 no longer duplicates the rolling project
 queue; [ENGINE_PLAN.md](ENGINE_PLAN.md) is the roadmap source of truth. Rain

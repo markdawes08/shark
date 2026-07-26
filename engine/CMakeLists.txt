@@ -13,6 +13,8 @@ add_library(SharkEngine STATIC
     assets/include/shark/assets/environment_lighting.hpp
     assets/src/dds_cubemap.cpp
     assets/src/environment_lighting.cpp
+    character/include/shark/character/player_capsule.hpp
+    character/src/player_capsule.cpp
     core/include/shark/core/assertion.hpp
     core/include/shark/core/error.hpp
     core/include/shark/core/engine_info.hpp
@@ -103,6 +105,7 @@ add_library(SharkEngine STATIC
 target_include_directories(SharkEngine
     PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/assets/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/character/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/core/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/fluids/include"
         "${CMAKE_CURRENT_SOURCE_DIR}/physics/include"

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <shark/character/player_capsule.hpp>
 #include <shark/core/result.hpp>
 #include <shark/terrain/height_tile.hpp>
 #include <shark/terrain/island.hpp>
@@ -45,6 +46,7 @@ struct IslandDemoScenario final {
     IslandDemoWaterSurface water;
     std::uint64_t terrain_height_checksum{};
     math::Float3 spawn_ground_position;
+    character::PlayerCapsuleConfig player_capsule;
     std::array<
         math::Float3,
         island_demo_route_point_count>

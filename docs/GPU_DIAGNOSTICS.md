@@ -1,7 +1,7 @@
 # Direct3D 12 GPU Diagnostics Contract
 
-- **Completed through:** `PHY-004`
-- **Last verified:** July 21, 2026
+- **Completed through:** `CHR-001`
+- **Last verified:** July 25, 2026
 
 Shark's GPU diagnostics use fixed-capacity PIX events and direct-queue
 timestamps whose readback is delayed until the owning frame-context fence
@@ -9,7 +9,7 @@ completes. W-001 extends the frame contract to five passes, 15 imports, six
 transitions, 34 elisions, five texture binds, and 12 timestamps while adding
 no normal-frame queue drain or water resource. T-008's 225-chunk counters,
 payload/resource budgets, default-off `F4` diagnostics, and
-`0.603515625`-meter composite terrain error remain unchanged.
+`0.501953125`-meter Island Demo terrain error remain unchanged.
 
 ## PIX marker contract
 
@@ -21,7 +21,7 @@ development prerequisite; Shark neither installs nor launches it.
 |---|---:|---:|---|
 | `StaticSceneUpload` | 3 | once | cube and packed terrain-LOD/chunk-bounds/marker/sphere buffer copies; checker and retained DDS copies; 36 terrain-material and 79 HDR-environment subresource copies; 13 initialization barriers |
 | `Frame` | 1 | per submission | frame timestamp interval, 256-byte probe copy, complete graph execution, and timestamp resolve |
-| `Terrain` | 4 | per frame | HDR/depth clear, material/IBL binding, selected LOD0/coarse chunk surfaces, four spheres, matching visible chunk bounds, and marker draws |
+| `Terrain` | 4 | per frame | HDR/depth clear, material/IBL binding, selected LOD0/coarse chunk surfaces, four spheres, one blue player capsule, matching visible chunk bounds, and marker draws |
 | `TexturedCube` | 2 | per frame | HDR/depth binding, checker binding, and cube draw |
 | `Skybox` | 3 | per frame | HDR/read-only-depth binding, radiance/fallback state, and sky draw |
 | `Water` | 6 | per frame | HDR/read-only-depth binding after sky, radiance/fallback state, local-support constants, and six-vertex premultiplied draw |
@@ -199,10 +199,11 @@ terrain_shaded_draw_calls + terrain_material_weight_draw_calls
 terrain_visible_chunk_min == 61
 terrain_visible_chunk_max == 93
 terrain_visible_chunk_last == 61
-terrain_lod0_chunks_last == 1
-terrain_coarse_chunks_last == 60
+terrain_lod0_chunks_last == 0
+terrain_coarse_chunks_last == 61
 
 material_sphere_draw_calls == frame_submissions * 4
+debug_capsule_draw_calls == frame_submissions
 terrain_bounds_draw_calls == 2790
 terrain_bounds_indices == 66960
 terrain_query_marker_draw_calls == 30
@@ -217,7 +218,7 @@ terrain_vertex_count == 58081
 terrain_index_count == 540000
 terrain_lod0_index_count == 345600
 terrain_coarse_index_count == 194400
-terrain_maximum_geometric_error == 0.603515625
+terrain_maximum_geometric_error == 0.501953125
 terrain_bounds_vertex_count == 1800
 terrain_bounds_index_count == 5400
 terrain_query_marker_vertex_count == 6
@@ -225,6 +226,7 @@ terrain_query_marker_index_count == 6
 material_sphere_vertex_count == 266
 material_sphere_index_count == 1584
 material_sphere_indices == material_sphere_draw_calls * 1584
+debug_capsule_indices == debug_capsule_draw_calls * 1584
 
 terrain_surface_vertex_payload_bytes == 1393944
 terrain_surface_index_payload_bytes == 1080000
@@ -411,13 +413,14 @@ For manual PIX acceptance:
 
 1. Capture a hardware frame and confirm one `Frame` with sequential nested
    `Terrain`, `TexturedCube`, `Skybox`, `Water`, and `ToneMap` scopes.
-2. At the initial pose, confirm `Terrain` contains 93 864-index coarse draws
-   and four spheres, with no LOD0 draw. Toggle `F4` and confirm 93 matching
-   24-index bounds draws plus one marker; they are absent when the toggle is
-   off. At the scripted overview, confirm one 1,536-index LOD0 draw and 71
-   864-index coarse draws. In the final smoke-only near phase, confirm 61
-   coarse draws and no LOD0 draw. Cube and sky each retain one indexed draw; `Water`
-   retains one six-vertex non-indexed draw and `ToneMap` one fullscreen draw.
+2. At the initial pose, confirm `Terrain` contains 93 864-index coarse draws,
+   four spheres, and one blue capsule, with no LOD0 draw. Toggle `F4` and
+   confirm 93 matching 24-index bounds draws plus one marker; they are absent
+   when the toggle is off. At the scripted overview, confirm one 1,536-index
+   LOD0 draw and 71 864-index coarse draws. In the final smoke-only near phase,
+   confirm 61 coarse draws and no LOD0 draw. Cube and sky each retain one
+   indexed draw; `Water` retains one six-vertex non-indexed draw and `ToneMap`
+   one fullscreen draw.
 3. Confirm all six graph transitions occur inside `Frame` but outside the
    applicable pass intervals.
 4. Confirm material/environment resources remain in pixel-shader-read state.
@@ -451,11 +454,12 @@ pair. It reuses the radiance descriptor and creates no water GPU resource, so
 the static upload, four geometry buffers, and ten persistent descriptors stay
 unchanged. The active diagnostics contract is `15/5/5/6/34`, five texture
 bindings, and 12 timestamps per submitted frame. Rain remains deferred and
-the approved bounded action-RPG ceiling is unchanged. PHY-004 preserves this
-accounting while four CPU simulation snapshots rebind seven root constants for
-normalized orientation and position. It adds no PIX event, timestamp, resource,
-descriptor, pass, or draw. See [ENGINE_PLAN.md](ENGINE_PLAN.md) for the active
-increment queue.
+the approved bounded action-RPG ceiling is unchanged. CHR-001 preserves this
+pass/timestamp/resource accounting while four CPU physics snapshots and one
+player snapshot rebind nine environment-proxy root constants for orientation,
+position, radius, and half-segment. It adds one capsule draw but no PIX event,
+timestamp, resource, descriptor, or pass. See
+[ENGINE_PLAN.md](ENGINE_PLAN.md) for the active increment queue.
 
 ISL-001 preserves the complete `15/5/5/6/34`, five-binding, and 12-timestamp
 diagnostics contract while moving the single active LOD0 chunk to the turned

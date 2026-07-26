@@ -1,3 +1,4 @@
+#include <shark/character/player_capsule.hpp>
 #include <shark/terrain/height_tile.hpp>
 #include <shark/terrain/island.hpp>
 #include <shark/water/gameplay_water.hpp>
@@ -50,6 +51,7 @@ TEST_CASE(
         second.terrain_height_checksum);
     REQUIRE(first.spawn_ground_position ==
         second.spawn_ground_position);
+    REQUIRE(first.player_capsule == second.player_capsule);
     REQUIRE(first.traversal_loop == second.traversal_loop);
     REQUIRE(first.shore_entry_samples ==
         second.shore_entry_samples);
@@ -97,13 +99,50 @@ TEST_CASE(
         first.spawn_ground_position);
     REQUIRE(first.spawn_ground_position.y >=
         first.water.gameplay_body.surface_height + 2.0F);
+    REQUIRE(first.player_capsule.shape ==
+        character::PlayerCapsuleShape{
+            .radius = 0.5F,
+            .vertical_half_segment = 0.5F,
+        });
+    const auto player_result =
+        character::create_player_capsule(first.player_capsule);
+    REQUIRE(player_result);
+    const auto& player = player_result.value();
+    REQUIRE(player.previous == player.current);
+    REQUIRE(player.current.state.center_position ==
+        math::Float3{
+            first.spawn_ground_position.x,
+            first.spawn_ground_position.y + 1.0F,
+            first.spawn_ground_position.z,
+        });
+    REQUIRE(
+        player.current.state.center_position.y -
+            first.player_capsule.shape.radius -
+            first.player_capsule.shape.vertical_half_segment ==
+        first.spawn_ground_position.y);
+    REQUIRE(first.player_capsule.center_bounds.minimum.x ==
+        surface.bounds().minimum.x + 0.5F);
+    REQUIRE(first.player_capsule.center_bounds.minimum.z ==
+        surface.bounds().minimum.z + 0.5F);
+    REQUIRE(first.player_capsule.center_bounds.maximum.x ==
+        surface.bounds().maximum.x - 0.5F);
+    REQUIRE(first.player_capsule.center_bounds.maximum.z ==
+        surface.bounds().maximum.z - 0.5F);
+    const auto spawn_water = water::query_gameplay_water(
+        first.water.gameplay_body,
+        surface,
+        player.current.state.center_position.x,
+        player.current.state.center_position.z);
+    REQUIRE(spawn_water);
+    REQUIRE(spawn_water.value().disposition ==
+        water::GameplayWaterDisposition::no_water);
     REQUIRE(first.spawn_camera.transform.position ==
         math::Float3{
             first.spawn_ground_position.x,
-            first.spawn_ground_position.y + 2.0F,
-            first.spawn_ground_position.z,
+            first.spawn_ground_position.y + 4.0F,
+            first.spawn_ground_position.z + 10.0F,
         });
-    REQUIRE(first.spawn_camera.transform.pitch_radians == -0.12F);
+    REQUIRE(first.spawn_camera.transform.pitch_radians == -0.28F);
     REQUIRE(first.spawn_camera.lens.far_plane == 1'500.0F);
 
     const auto coarse_result =

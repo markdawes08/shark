@@ -12,8 +12,9 @@ footprint at the origin. The `-4`-meter waterline surrounds a low walkable
 interior, a shallow shelf, and a seabed that reaches at least seven meters
 below water on every terrain edge.
 
-The scenario publishes dry spawn ground at `(0,0.890625,112)` and camera eye
-`(0,2.890625,112)` with pitch `-0.12`. It also retains four PHY-004 diagnostic
+The scenario publishes dry spawn ground at `(0,0.890625,112)`, CHR-001 capsule
+center `(0,1.890625,112)`, and interactive preview camera
+`(0,4.890625,122)` with pitch `-0.28`. It also retains four PHY-004 diagnostic
 spheres, an exactly sampled 500-meter-or-longer walkable loop, and dry/shallow/
 transition/swim shore samples. W-001's six-vertex surface now renders the
 exterior support without changing canonical terrain ownership, topology, GPU
@@ -525,11 +526,12 @@ but it cannot discard one intersecting the frustum, which is the intersection
 of all six clip half-spaces. Nonfinite or rank-deficient view-projection
 matrices fail the frame before submission.
 
-The interactive camera starts at the scenario-owned eye
-`(0,2.890625,112)` meters with pitch `-0.12` radians and a 1,500-meter far
-plane, standing on the dry island. Normal movement is 32 meters/second and
-sprint is four times that speed. Presentation smoke deliberately retains its
-separate deterministic `(0,28,112)` pose with pitch `-0.25`. At both its
+The interactive camera starts at the scenario-owned preview position
+`(0,4.890625,122)` meters with pitch `-0.28` radians and a 1,500-meter far
+plane, looking toward the player capsule on the dry island. Normal movement is
+32 meters/second and sprint is four times that speed. Presentation smoke
+deliberately retains its separate deterministic `(0,28,112)` pose with pitch
+`-0.25`. At both its
 initial `16:9` aspect and the scripted
 `960x600` resize, the camera sees `93 / 225` chunks. Turning to yaw `1.25`
 radians at the resized aspect leaves `72 / 225` visible at a `1/71`
@@ -723,9 +725,10 @@ cycles:
 The renderer-owned production declaration now contains five passes:
 
 1. `Terrain` clears color/depth, draws each visible chunk's selected LOD0 or
-   coarse range in the selected solid or wireframe mode, and draws the material
-   sphere. When terrain diagnostics are enabled, it also draws each visible
-   chunk's magenta AABB and the cyan query marker.
+   coarse range in the selected solid or wireframe mode, then draws four
+   material spheres and the blue player capsule. When terrain diagnostics are
+   enabled, it also draws each visible chunk's magenta AABB and the cyan query
+   marker.
 2. `TexturedCube` preserves the attachments and draws the checker cube.
 3. `Skybox` reads depth and fills only the far background with procedural
    daylight or HDR radiance.
@@ -772,11 +775,12 @@ and `D` be one when diagnostics are enabled and zero otherwise. The `Terrain`
 timing interval contains all of these commands:
 
 ```text
-Terrain indexed draws       V + 4 + D * (V + 1)
-full-frame indexed draws     V + 6 + D * (V + 1)
+Terrain indexed draws       V + 5 + D * (V + 1)
+full-frame indexed draws     V + 7 + D * (V + 1)
 LOD0 terrain indices         1,536 * V0
 coarse terrain indices         864 * Vc
 material sphere indices      6,336
+player capsule indices       1,584
 diagnostic AABB indices      D * 24 * V
 diagnostic marker indices    D * 6
 textured-cube indices        36
@@ -840,13 +844,15 @@ terrain_shaded_draw_calls + terrain_material_weight_draw_calls
 terrain_visible_chunk_min == 61
 terrain_visible_chunk_max == 93
 terrain_visible_chunk_last == 61
-terrain_lod0_chunks_last == 1
-terrain_coarse_chunks_last == 60
+terrain_lod0_chunks_last == 0
+terrain_coarse_chunks_last == 61
 
 scene_matrix_changes == 4
 sky_matrix_changes == 3
 
 material_sphere_draw_calls == 4 * F
+debug_capsule_draw_calls == F
+debug_capsule_indices == 1,584 * F
 cube_draw_calls == skybox_draw_calls == water_draw_calls
     == tone_map_draw_calls == F
 water_vertices == 6 * F
@@ -1142,10 +1148,14 @@ lake-at-rest shoreline over that same simulation-owned bed. It does not snap
 water depth to the terrain or derive collision from a visual LOD. ISL-001 adds
 the separate playable-island fixture described below. WQ-001 now obtains bed
 height only through `HeightTileSurface::sample_lod0_surface`; it never reads a
-coarse/render mesh and never mutates terrain. The active queue is `CHR-001`,
-bounded player-capsule state. `W-005`, the GPU shallow-water solver, remains an
+coarse/render mesh and never mutates terrain. CHR-001 authors one bounded
+upright capsule whose bottom exactly matches the canonical LOD0 dry-spawn
+sample; it adds no terrain-contact query or locomotion. The active queue is
+`CAM-001`, which will use a canonical-terrain segment probe only for
+presentation obstruction. `W-005`, the GPU shallow-water solver, remains an
 approved deferred specialization in [ENGINE_PLAN.md](ENGINE_PLAN.md); gameplay
-query invariants are in [WATER.md](WATER.md).
+query invariants are in [WATER.md](WATER.md), and the player contract is in
+[CHARACTER.md](CHARACTER.md).
 
 ## ISL-001 playable island
 

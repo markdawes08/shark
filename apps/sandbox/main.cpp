@@ -1,5 +1,6 @@
 #include <shark/assets/dds_cubemap.hpp>
 #include <shark/assets/environment_lighting.hpp>
+#include <shark/character/player_capsule.hpp>
 #include <shark/core/error.hpp>
 #include <shark/core/logging.hpp>
 #include <shark/core/result.hpp>
@@ -20,6 +21,7 @@
 
 #include "camera_controller.hpp"
 #include "options.hpp"
+#include "player_command_source.hpp"
 
 #include <cube.pixel.hpp>
 #include <cube.vertex.hpp>
@@ -1588,7 +1590,8 @@ void log_platform_event(const shark::platform::Event& event)
               "terrain chunk/support-normal diagnostics; F5 "
               "resumes/pauses the "
               "fixed 60 Hz sphere simulation and F6 advances one "
-              "tick while paused");
+              "tick while paused; player actions are sampled per tick "
+              "and R resets the blue capsule proxy");
 
     world::Camera camera;
     if (smoke_mode) {
@@ -1610,6 +1613,21 @@ void log_platform_event(const shark::platform::Event& event)
     }
     auto simulation_clock =
         std::move(simulation_clock_result).value();
+    auto player_simulation_result =
+        character::create_player_capsule(
+            island_scenario.player_capsule);
+    if (!player_simulation_result) {
+        return core::Result<void>::failure(
+            std::move(player_simulation_result).error());
+    }
+    auto player_simulation =
+        std::move(player_simulation_result).value();
+    static_assert(
+        character::maximum_player_capsule_radius <=
+        renderer::maximum_debug_capsule_radius);
+    static_assert(
+        character::maximum_player_capsule_vertical_half_segment <=
+        renderer::maximum_debug_capsule_half_segment_length);
     static_assert(
         world::island_demo_sphere_body_count ==
         physics::sphere_body_capacity);
@@ -1680,6 +1698,7 @@ void log_platform_event(const shark::platform::Event& event)
             .movement_speed = 32.0F,
             .sprint_multiplier = 4.0F,
         }};
+    sandbox::PlayerCommandSource player_command_source;
     auto terrain_mode = renderer::TerrainRenderMode::solid;
     auto terrain_material_view =
         renderer::TerrainMaterialView::shaded;
@@ -1824,6 +1843,7 @@ void log_platform_event(const shark::platform::Event& event)
                     }
                 }
             }
+            player_command_source.handle_event(event);
             camera_controller.handle_event(event);
             log_platform_event(event);
             if (const auto* const resized =
@@ -1860,6 +1880,7 @@ void log_platform_event(const shark::platform::Event& event)
         const auto dropped_events = application.dropped_event_count();
         if (dropped_events != 0) {
             camera_controller.reset();
+            player_command_source.reset();
             reset_simulation_time_baseline();
         }
         application.clear_events();
@@ -2114,9 +2135,23 @@ void log_platform_event(const shark::platform::Event& event)
         }
         const auto simulation_frame =
             std::move(simulation_frame_result).value();
+        const auto first_fixed_tick =
+            simulation_clock.total_step_count() -
+            simulation_frame.step_count + 1U;
         for (std::uint32_t step = 0;
              step < simulation_frame.step_count;
              ++step) {
+            const auto player_command =
+                player_command_source.sample_fixed_tick();
+            auto player_step_result =
+                character::advance_player_capsule(
+                    player_simulation,
+                    player_command,
+                    first_fixed_tick + step);
+            if (!player_step_result) {
+                return core::Result<void>::failure(
+                    std::move(player_step_result).error());
+            }
             previous_sphere_bodies = current_sphere_bodies;
             for (std::size_t body_index = 0;
                   body_index < world::island_demo_sphere_body_count;
@@ -2197,6 +2232,24 @@ void log_platform_event(const shark::platform::Event& event)
                  math::is_unit(
                     current_sphere_bodies[3].orientation));
         }
+        auto interpolated_player_result =
+            character::interpolate_player_capsule(
+                player_simulation,
+                simulation_frame.interpolation_alpha);
+        if (!interpolated_player_result) {
+            return core::Result<void>::failure(
+                std::move(interpolated_player_result).error());
+        }
+        const auto interpolated_player =
+            interpolated_player_result.value();
+        const auto player_half_yaw =
+            interpolated_player.facing_yaw_radians * 0.5F;
+        const math::Quaternion player_proxy_orientation{
+            0.0F,
+            std::sin(player_half_yaw),
+            0.0F,
+            std::cos(player_half_yaw),
+        };
         std::array<
             math::Float3,
             renderer::maximum_material_sphere_count>
@@ -2271,6 +2324,17 @@ void log_platform_event(const shark::platform::Event& event)
             .material_sphere_count =
                 static_cast<std::uint32_t>(
                     world::island_demo_sphere_body_count),
+            .debug_capsule = {
+                .world_position =
+                    interpolated_player.center_position,
+                .orientation = player_proxy_orientation,
+                .radius =
+                    player_simulation.config.shape.radius,
+                .half_segment_length =
+                    player_simulation.config.shape
+                        .vertical_half_segment,
+                .enabled = true,
+            },
             .terrain_mode = terrain_mode,
             .terrain_material_view = terrain_material_view,
             .environment_lighting_mode =
@@ -2301,6 +2365,19 @@ void log_platform_event(const shark::platform::Event& event)
 
     if (smoke_mode) {
         const auto& stats = renderer_instance.stats();
+        if (!character::is_valid(player_simulation) ||
+            player_simulation.current.fixed_tick !=
+                simulation_clock.total_step_count() ||
+            player_simulation.current.state.center_position !=
+                player_simulation.config.spawn_center_position ||
+            player_simulation.current.state.facing_yaw_radians !=
+                player_simulation.config.spawn_facing_yaw_radians ||
+            player_simulation.current.reset_generation != 0U) {
+            return core::Result<void>::failure(
+                renderer_smoke_error(
+                    "The presentation smoke player snapshots diverged "
+                    "from deterministic spawn state"));
+        }
         const auto primary_terrain_normal_velocity =
             current_terrain_contacts[0].has_value()
             ? current_sphere_bodies[0].linear_velocity.x *
@@ -2562,6 +2639,8 @@ void log_platform_event(const shark::platform::Event& event)
             stats.material_sphere_draw_calls !=
                 stats.frame_submissions *
                     world::island_demo_sphere_body_count ||
+            stats.debug_capsule_draw_calls !=
+                stats.frame_submissions ||
             stats.tone_map_draw_calls != stats.frame_submissions ||
             stats.terrain_query_marker_draw_calls !=
                 expected_diagnostic_frames ||
@@ -2632,6 +2711,8 @@ void log_platform_event(const shark::platform::Event& event)
                 expected_diagnostic_frames * 6 ||
             stats.material_sphere_indices !=
                 stats.material_sphere_draw_calls * 1'584 ||
+            stats.debug_capsule_indices !=
+                stats.debug_capsule_draw_calls * 1'584 ||
             stats.terrain_vertex_count !=
                 terrain::large_capacity_tile_vertex_count ||
             stats.terrain_index_count !=
@@ -2929,9 +3010,13 @@ void log_platform_event(const shark::platform::Event& event)
         summary.append(std::to_string(stats.water_draw_calls));
         summary.push_back('/');
         summary.append(std::to_string(stats.skybox_draw_calls));
-        summary.append(", material-spheres/tone-map-draws=");
+        summary.append(
+            ", material-spheres/debug-capsule/tone-map-draws=");
         summary.append(std::to_string(
             stats.material_sphere_draw_calls));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            stats.debug_capsule_draw_calls));
         summary.push_back('/');
         summary.append(std::to_string(stats.tone_map_draw_calls));
         summary.append(", camera/sky-matrix-changes=");

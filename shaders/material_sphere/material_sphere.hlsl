@@ -5,6 +5,8 @@ cbuffer MaterialSphereTransform : register(b2)
 {
     float4 material_sphere_orientation;
     float3 material_sphere_world_position;
+    float environment_proxy_radius;
+    float environment_proxy_half_segment_length;
 }
 
 static const float3 material_sphere_authored_center =
@@ -21,6 +23,68 @@ float3 material_sphere_rotate(
         cross(orientation.xyz, twice_cross);
 }
 
+void environment_proxy_surface(
+    const float3 authored_local_position,
+    const float3 unit_direction,
+    out float3 local_position,
+    out float3 local_normal,
+    out float debug_capsule)
+{
+    // Keep the original material-sphere path exact. The capsule reuses the
+    // same mesh only as a bounded surface parameterization.
+    if (environment_proxy_half_segment_length == 0.0F)
+    {
+        local_position =
+            authored_local_position * environment_proxy_radius;
+        local_normal = unit_direction;
+        debug_capsule = 0.0F;
+        return;
+    }
+
+    static const float capsule_parameter_seam = 0.5F;
+    if (unit_direction.y >= capsule_parameter_seam)
+    {
+        local_normal = pbr_normalize_or(
+            float3(
+                unit_direction.x,
+                2.0F * unit_direction.y - 1.0F,
+                unit_direction.z),
+            float3(0.0F, 1.0F, 0.0F));
+        local_position =
+            local_normal * environment_proxy_radius;
+        local_position.y +=
+            environment_proxy_half_segment_length;
+    }
+    else if (unit_direction.y <= -capsule_parameter_seam)
+    {
+        local_normal = pbr_normalize_or(
+            float3(
+                unit_direction.x,
+                2.0F * unit_direction.y + 1.0F,
+                unit_direction.z),
+            float3(0.0F, -1.0F, 0.0F));
+        local_position =
+            local_normal * environment_proxy_radius;
+        local_position.y -=
+            environment_proxy_half_segment_length;
+    }
+    else
+    {
+        local_normal = pbr_normalize_or(
+            float3(
+                unit_direction.x,
+                0.0F,
+                unit_direction.z),
+            float3(1.0F, 0.0F, 0.0F));
+        local_position = float3(
+            local_normal.x * environment_proxy_radius,
+            environment_proxy_half_segment_length *
+                (unit_direction.y / capsule_parameter_seam),
+            local_normal.z * environment_proxy_radius);
+    }
+    debug_capsule = 1.0F;
+}
+
 struct VertexInput
 {
     float3 position : POSITION;
@@ -33,13 +97,23 @@ struct VertexOutput
     float3 world_position : TEXCOORD0;
     float3 normal : NORMAL;
     float3 local_direction : TEXCOORD1;
+    nointerpolation float debug_capsule : TEXCOORD2;
 };
 
 VertexOutput VSMain(const VertexInput input)
 {
     VertexOutput output;
-    const float3 local_position =
+    const float3 authored_local_position =
         input.position - material_sphere_authored_center;
+    float3 local_position;
+    float3 local_normal;
+    float debug_capsule;
+    environment_proxy_surface(
+        authored_local_position,
+        input.normal,
+        local_position,
+        local_normal,
+        debug_capsule);
     const float3 world_position =
         material_sphere_world_position +
         material_sphere_rotate(
@@ -50,9 +124,10 @@ VertexOutput VSMain(const VertexInput input)
         view_projection);
     output.world_position = world_position;
     output.normal = material_sphere_rotate(
-        input.normal,
+        local_normal,
         material_sphere_orientation);
-    output.local_direction = input.normal;
+    output.local_direction = local_normal;
+    output.debug_capsule = debug_capsule;
     return output;
 }
 
@@ -67,11 +142,18 @@ float4 PSMain(const VertexOutput input) : SV_Target0
         0.94F,
         0.985F,
         unit_local_direction.x);
-    const float3 albedo = lerp(
+    const float3 material_sphere_albedo = lerp(
         float3(0.32F, 0.34F, 0.36F),
         float3(0.42F, 0.30F, 0.22F),
         positive_x_marker * 0.65F);
-    const float roughness = 0.16F;
+    const float3 albedo = lerp(
+        material_sphere_albedo,
+        float3(0.08F, 0.30F, 0.72F),
+        input.debug_capsule);
+    const float roughness = lerp(
+        0.16F,
+        0.34F,
+        input.debug_capsule);
     const float3 unit_normal = pbr_normalize_or(
         input.normal,
         float3(0.0F, 1.0F, 0.0F));

@@ -1,7 +1,7 @@
 # Renderer and Direct3D 12 Presentation/Frame-Resource Contract
 
-- **Completed through:** `PHY-004`
-- **Last verified:** July 21, 2026
+- **Completed through:** `CHR-001`
+- **Last verified:** July 25, 2026
 
 `shark::renderer::Renderer` owns Shark's focused D3D12 scene/presentation
 backend. W-001 preserves the triple-buffered fence-gated HDR lifecycle,
@@ -28,8 +28,11 @@ synchronously and retains no caller CPU pointer.
 
 `RenderFrameData` carries finite scene/sky matrices, daylight settings, camera
 position, fixed four-entry material-sphere position/orientation arrays with
-active count, terrain fill/material views, and the environment mode. Active
-orientations must be finite unit quaternions. `F3` selects
+active count, one optional bounded debug-capsule proxy, terrain fill/material
+views, and the environment mode. Active orientations must be finite unit
+quaternions. An enabled capsule additionally requires a finite center, unit
+orientation, positive bounded radius, and positive bounded half-segment. `F3`
+selects
 image-based lighting or the retained
 procedural-daylight fallback.
 Each `TerrainChunkUploadView` carries contiguous LOD0/coarse ranges, exact
@@ -175,13 +178,14 @@ six transitions cover scene-color render/read state, depth write/read state,
 and back-buffer present/render state.
 
 For `V0` visible LOD0 chunks, `Vc` visible coarse chunks, and `V=V0+Vc`, normal
-submitted commands contain `V + 6` indexed scene draws plus one non-indexed
+submitted commands contain `V + 7` indexed scene draws plus one non-indexed
 six-vertex water draw. `F4` adds `V + 1` diagnostic draws:
 
 ```text
 LOD0 terrain chunks       1,536 * V0 indices
 coarse terrain chunks       864 * Vc indices
 four material spheres    6,336 indices
+blue player capsule      1,584 indices
 visible chunk AABBs       F4 ? 24 * V indices : 0
 terrain query marker      F4 ? 6 indices : 0
 textured cube                 36 indices
@@ -366,10 +370,12 @@ or static upload. The frame now has 15 imports, five passes, five dependencies,
 six transitions, 34 elisions, and five texture bindings. Sky renders before
 premultiplied transparent water; canonical-terrain depth testing determines the
 visible shoreline. Terrain remains unchanged and no fluid simulation is
-claimed. PHY-004 feeds four interpolated simulation transforms through seven
-sphere root constants per draw. It records the same four draws without
-changing frame-resource, descriptor, geometry, pass, or upload budgets. Rain remains
-deferred under the bounded action-RPG ceiling. See
+claimed. PHY-004 feeds four interpolated simulation transforms through the
+shared environment-proxy constants. CHR-001 extends that record from seven to
+nine DWORDs and adds one 1,584-index blue capsule draw in the existing Terrain
+pass. It reuses the material-sphere PSO and packed geometry without changing
+frame-resource, descriptor, geometry-buffer, pass, timestamp, or upload
+budgets. Rain remains deferred under the bounded action-RPG ceiling. See
 [ENGINE_PLAN.md](ENGINE_PLAN.md) for the active increment queue.
 
 ISL-001 reuses that exact presentation path with scenario-authored exterior

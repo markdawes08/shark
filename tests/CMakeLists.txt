@@ -6,8 +6,12 @@ add_executable(SharkTests
     ../apps/sandbox/camera_controller.cpp
     ../apps/sandbox/camera_controller.hpp
     ../apps/sandbox/options.cpp
+    ../apps/sandbox/player_command_source.cpp
+    ../apps/sandbox/player_command_source.hpp
     unit/camera_controller_tests.cpp
     unit/camera_tests.cpp
+    unit/character_player_capsule_tests.cpp
+    unit/character_player_pipeline_tests.cpp
     unit/assertion_tests.cpp
     unit/dds_cubemap_tests.cpp
     unit/environment_lighting_tests.cpp
@@ -32,6 +36,7 @@ add_executable(SharkTests
     unit/physics_rigid_body_tests.cpp
     unit/physics_sphere_body_collision_tests.cpp
     unit/physics_sphere_terrain_contact_tests.cpp
+    unit/player_command_source_tests.cpp
     unit/render_graph_tests.cpp
     unit/renderer_contract_tests.cpp
     unit/renderer_d3d12_cube_scene_data_tests.cpp

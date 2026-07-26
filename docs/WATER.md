@@ -85,5 +85,8 @@ state, buoyancy, water displacement, dynamic waves, GPU readback, fluid
 coupling, or renderer change. A later simulated-water adapter may provide the
 same query information without changing character policy.
 
-The active queue is `CHR-001`, bounded player-capsule state. The authoritative
-increment order remains in [ENGINE_PLAN.md](ENGINE_PLAN.md).
+CHR-001 now places one bounded capsule at the proven dry spawn but does not
+query water during fixed-tick advancement or own immersion policy. The active
+queue is `CAM-001`, a presentation-only third-person camera. The authoritative
+increment order remains in [ENGINE_PLAN.md](ENGINE_PLAN.md), and the player
+contract is in [CHARACTER.md](CHARACTER.md).

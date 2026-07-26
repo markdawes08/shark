@@ -1,7 +1,7 @@
 # HLSL Graphics Pipeline Contract
 
-- **Completed through:** `PHY-004`
-- **Last verified:** July 21, 2026
+- **Completed through:** `CHR-001`
+- **Last verified:** July 25, 2026
 
 Shark compiles all production HLSL at build time with a pinned retail DXC and
 creates immutable Direct3D 12 pipeline state during renderer startup. W-001
@@ -10,10 +10,11 @@ terrain, sky, material-sphere, and tone-map programs. The
 pipeline still includes S-003's shared image-based-lighting helpers,
 material-sphere proof, linear-HDR scene target, and final tone-map program.
 PHY-001 introduced the material-sphere translation bridge, and PHY-003 reused
-it for four indexed draws. PHY-004 expands `b2` to seven root constants—one
-unit quaternion and one world position—so the vertex shader rotates existing
-geometry/normals around its authored center. It changes no PSO count, geometry,
-descriptor, or graph pass.
+it for four indexed draws. CHR-001 expands `b2` to nine root constants: one
+unit quaternion, one world position, radius, and vertical half-segment.
+Half-segment zero preserves the existing sphere branch exactly; a positive
+half-segment deforms that same parameterization into the blue player-capsule
+proxy. It changes no PSO count, geometry buffer, descriptor, or graph pass.
 This remains a focused scene contract, not a general shader asset,
 material-graph, or pipeline-cache system.
 
@@ -126,11 +127,12 @@ Specular reconstruction uses the fixed dielectric `F0` in
 integrates angular Fresnel.
 
 The material-sphere shader consumes deterministic position/normal geometry and
-seven `b2` values ordered as quaternion `(x,y,z,w)` then world position. It
-rotates the authored-center-relative vertex and normal, then uses the same sun
-and IBL functions on a glossy neutral dielectric. A subtle local `+X` cap makes
-orientation inspectable without a texture. The transform remains the only
-simulation/render bridge; the sphere is not a general material instance.
+nine `b2` values ordered as quaternion `(x,y,z,w)`, world position, radius,
+then vertical half-segment. It rotates the authored-center-relative vertex and
+normal, then uses the same sun and IBL functions. Half-segment zero selects
+the retained glossy sphere with its subtle local `+X` marker. Positive
+half-segment selects the blue capsule deformation and diagnostic material.
+This focused proxy path is not a general material or mesh instance system.
 
 The cube shader samples the deterministic checker. The sky shader forces
 reversed-Z far depth, normalizes the world direction, and either samples the
@@ -166,8 +168,9 @@ descriptor allocator or bindless convention.
   point-wrap static sampler.
 - The terrain signature contains the frame CBV, material/environment root
   constants, one six-SRV table spanning slots 2-7, and an anisotropic-wrap
-  static sampler. The material sphere reuses it and reads seven vertex-visible
-  transform constants from its `b2` root parameter.
+  static sampler. The material spheres and blue player capsule reuse it and
+  read nine vertex-visible environment-proxy constants from `b2`: quaternion,
+  world position, radius, and vertical half-segment.
 - The water signature contains the frame CBV, 20 surface root constants, one
   radiance SRV table, and a linear-clamp static sampler.
 - The sky signature contains the frame CBV, environment-mode constants, one
@@ -234,9 +237,9 @@ Each non-minimized frame then:
 2. stages one 256-byte constants/probe record;
 3. composes the exact 15-import/five-pass HDR frame graph;
 4. executes `Terrain`, including one selected LOD0/coarse surface per visible
-   chunk plus four spheres transformed from PHY-004's immutable interpolated
-   body snapshots; default-off `F4` diagnostics additionally draw each visible
-   chunk's magenta bounds and the query marker;
+   chunk, four spheres transformed from PHY-004's immutable interpolated body
+   snapshots, and the CHR-001 capsule proxy; default-off `F4` diagnostics
+   additionally draw each visible chunk's magenta bounds and the query marker;
 5. executes `TexturedCube`;
 6. executes the far-depth `Skybox`;
 7. composites the local-domain `Water` pass;
@@ -253,6 +256,7 @@ LOD0 terrain chunks      V0 * DrawIndexedInstanced(1,536, ...)
 coarse terrain chunks    Vc * DrawIndexedInstanced(864, ...)
 four material spheres at b2 transforms
                          4 * DrawIndexedInstanced(1,584, ...)
+blue player capsule     DrawIndexedInstanced(1,584, ...)
 visible chunk AABBs      F4 ? V * DrawIndexedInstanced(24, ...) : 0
 terrain query marker     F4 ? DrawIndexedInstanced(6, ...) : 0
 textured cube            DrawIndexedInstanced(36, ...)
@@ -266,8 +270,9 @@ the shared 58,081-vertex stream; its maximum surface index is 58,080. The
 matching bounds draw selects its own packed eight-vertex/24-index range. Fine
 and coarse terrain indices occupy `0..345,599` and `345,600..539,999`; bounds,
 marker, and sphere begin at 540,000, 545,400, and 545,406. The four sphere
-draws reuse that one geometry range, so the normal `V + 6` indexed draws and optional
-`F4` diagnostic draws still use four geometry buffers. Initial/resized smoke
+draws and the player capsule reuse that one geometry range, so the normal
+`V + 7` indexed draws and optional `F4` diagnostic draws still use four
+geometry buffers. Initial/resized smoke
 poses select `V0/Vc=0/93`; the turned overview selects `1/71`; and the final
 smoke-only `(16, -1, 0)` near pose selects `0/61` with unchanged yaw/pitch.
 Both packed terrain index ranges are therefore live. Exact per-frame graph
@@ -334,5 +339,7 @@ terrain-supported simulation snapshot and retargets the existing static cyan
 pin. PHY-003 rebinds it in stable body-index order for four spheres; it adds no
 shader stage, PSO, descriptor, geometry buffer, graph pass, water state, or
 fluid coupling. PHY-004 replaces those three translation values with seven
-transform values and adds only the bounded orientation marker/shader math; the
-same four draws and all resource/pass counts remain fixed.
+transform values and adds only the bounded orientation marker/shader math.
+CHR-001 extends that record to nine values and adds one capsule draw by
+reusing the same shader, PSO, and packed geometry; all resource and pass counts
+remain fixed.

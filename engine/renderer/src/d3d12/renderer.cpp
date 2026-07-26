@@ -919,7 +919,9 @@ static_assert(
             return false;
         }
     }
-    return math::is_finite(frame_data.view_projection) &&
+    return backend_detail::valid_debug_capsule_proxy(
+               frame_data.debug_capsule) &&
+        math::is_finite(frame_data.view_projection) &&
         math::is_finite(frame_data.sky_view_projection) &&
         math::is_finite(frame_data.camera_world_position) &&
         backend_detail::valid_daylight_settings(frame_data.daylight) &&
@@ -1699,6 +1701,7 @@ public:
             maximum_material_sphere_count>&
             material_sphere_world_orientations,
         const std::uint32_t material_sphere_count,
+        const DebugCapsuleProxy& debug_capsule,
         const TerrainMaterialView material_view,
         const EnvironmentLightingMode environment_mode,
         const bool terrain_diagnostics_enabled)
@@ -1918,6 +1921,31 @@ public:
                 backend_detail::
                     material_sphere_transform_root_constant_count,
                 &material_sphere_transform,
+                0);
+            command_list->DrawIndexedInstanced(
+                material_sphere_index_count,
+                1,
+                terrain_surface_index_count +
+                    terrain_bounds_index_count +
+                    terrain_query_marker_index_count,
+                static_cast<INT>(
+                    terrain_vertex_count +
+                    terrain_bounds_vertex_count +
+                    backend_detail::
+                        terrain_query_marker_vertex_count),
+                0);
+        }
+
+        if (debug_capsule.enabled) {
+            const auto debug_capsule_transform =
+                backend_detail::make_debug_capsule_transform(
+                    debug_capsule);
+            command_list->SetGraphicsRoot32BitConstants(
+                backend_detail::
+                    material_sphere_transform_root_parameter,
+                backend_detail::
+                    material_sphere_transform_root_constant_count,
+                &debug_capsule_transform,
                 0);
             command_list->DrawIndexedInstanced(
                 material_sphere_index_count,
@@ -5934,6 +5962,7 @@ core::Result<RenderStatus> Renderer::render_frame(
                     frame_data.material_sphere_world_orientations,
                  material_sphere_count =
                     frame_data.material_sphere_count,
+                 debug_capsule = frame_data.debug_capsule,
                  material_view =
                     frame_data.terrain_material_view,
                  environment_mode =
@@ -5961,6 +5990,7 @@ core::Result<RenderStatus> Renderer::render_frame(
                         material_sphere_world_positions,
                         material_sphere_world_orientations,
                         material_sphere_count,
+                        debug_capsule,
                         material_view,
                         environment_mode,
                         terrain_diagnostics_enabled);
@@ -6242,6 +6272,11 @@ core::Result<RenderStatus> Renderer::render_frame(
         static_cast<std::uint64_t>(
             frame_data.material_sphere_count) *
         implementation_->material_sphere_index_count;
+    if (frame_data.debug_capsule.enabled) {
+        ++implementation_->statistics.debug_capsule_draw_calls;
+        implementation_->statistics.debug_capsule_indices +=
+            implementation_->material_sphere_index_count;
+    }
     ++implementation_->statistics.tone_map_draw_calls;
     const auto visible_chunk_count = static_cast<std::uint64_t>(
         implementation_->visible_terrain_chunks.size());

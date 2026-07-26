@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 25, 2026
-- **Latest completed:** `WQ-001` - CPU gameplay-water query boundary
-- **Next increment:** `CHR-001` - bounded player-capsule state
+- **Latest completed:** `CHR-001` - bounded player-capsule state
+- **Next increment:** `CAM-001` - third-person follow/orbit camera
 
 ## 1. Project direction
 
@@ -845,7 +845,7 @@ coupling are outside this first playable path.
 |---|---:|---|---|
 | `ISL-001` | V | Complete: retain the Environment Lab and numerical fixtures while adding a separate Q8 island over the existing `241x241` topology; lock checksum `0x53DD2821AE9ACDEA`, one connected dry component, a dry spawn and continuously walkable loop, a fully submerged perimeter, and a dry/shallow/transition/swim transect; make it the no-argument sandbox scenario and extend the existing 20-DWORD, six-vertex water path with a validated outside-footprint support mode that adds no pass, texture, descriptor, resource, or simulated state | `feat(terrain): add playable island scenario` |
 | `WQ-001` | - | Complete: add a `Water -> Core/Terrain` CPU boundary with scenario-authored inside/outside warped-footprint support, equilibrium surface height, strict positive `1/256`-meter shoreline depth tolerance, optional horizontal flow, and explicit out-of-terrain/no-water/water results; sample only canonical LOD0 triangle bed height, return checked nonnegative depth, map the neutral support side to the unchanged renderer at the composition root, and prove invalid input, inclusive footprint boundaries, tolerance-adjacent terrain, Island Demo depth bands, terrain edges, and deterministic repeats without GPU access or character policy | `feat(water): add gameplay water queries` |
-| `CHR-001` | S | Add one bounded player-capsule state, named keyboard/mouse action commands sampled at fixed-tick boundaries, previous/current snapshots, spawn/reset behavior, and an inspectable temporary proxy; do not add a general entity system or locomotion yet | `feat(character): add player capsule state` |
+| `CHR-001` | S | Complete: add one Core-only bounded upright player capsule, named keyboard/mouse action commands sampled once per emitted fixed tick, transactional previous/current snapshots, exact dry-spawn/reset behavior without interpolation smear, and a blue temporary proxy that reuses the existing material-sphere geometry and Terrain pass; prove invalid-state rollback plus exact command/snapshot transcripts across 30/60/120/144 Hz without adding a general entity system, locomotion, camera follow, terrain contact, or water policy | `feat(character): add player capsule state` |
 | `CAM-001` | V | Add an interpolated third-person follow/orbit camera, camera-relative movement basis, bounded pitch/distance, and a canonical-terrain obstruction probe without changing character authority | `feat(camera): add third-person follow camera` |
 | `CHR-002` | S | Add gravity, canonical-terrain capsule grounding, walkable-slope classification, stable support, falling, and landing; prove fixed-rate invariance and transactional invalid-state handling before horizontal control | `feat(character): add terrain grounding` |
 | `CHR-003` | S | Add fixed-tick walk/run acceleration, braking, facing, and bounded slope traversal from camera-relative commands; the player follows the island route without penetration or render-rate dependence | `feat(character): add grounded locomotion` |
@@ -917,9 +917,9 @@ character policy.
 ### Deferred visual-weather track
 
 The owner deferred these effects on July 19, 2026. They remain approved but
-have no position on the active `CHR-001` path. Resuming one requires a small plan
-update; skipping them does not remove the numerical precipitation rate used by
-later hydrology.
+have no position on the active playable-island path. Resuming one requires a
+small plan update; skipping them does not remove the numerical precipitation
+rate used by later hydrology.
 
 | ID | Level | Deferred increment and acceptance gate | Suggested commit |
 |---|---:|---|---|
@@ -992,10 +992,10 @@ problem, not accumulating feature checkboxes.
 
 ### Island-demo character path
 
-The current `World` boundary leaves room for controllable entities without
-requiring an ECS. M7 starts with one explicitly bounded player record, one
-kinematic capsule, named tick-owned actions, and immutable snapshots. Terrain
-and water remain query providers rather than character-owned data. Stable
+The current `World` boundary now authors CHR-001's one explicitly bounded
+player record without requiring an ECS. Character owns its upright kinematic
+capsule, named tick-owned actions, and immutable snapshots. Terrain and water
+remain query providers rather than character-owned data. Stable
 general entity handles, an ECS, a production skeletal pipeline, combat, party
 members, and zone serialization wait until measured needs after the demo.
 
@@ -1019,19 +1019,19 @@ members, and zone serialization wait until measured needs after the demo.
 
 ## 14. Immediate next increment
 
-With WQ-001 completed, implement only `CHR-001`:
+With CHR-001 completed, implement only `CAM-001`:
 
-- add one bounded kinematic player-capsule state under `engine/character`, with
-  stable scenario ownership and no general entity/ECS layer;
-- define named keyboard/mouse action commands sampled only at fixed-tick
-  boundaries, without letting platform key codes cross into Character;
-- publish previous/current authoritative snapshots for later interpolation and
-  deterministic dry-spawn/reset behavior;
-- render one inspectable temporary capsule proxy without claiming final avatar
-  art or animation; and
-- prove invalid-state rollback, command sampling, snapshot order, spawn/reset,
-  and 30/60/120/144 Hz render-partition invariance, then stop before gravity,
-  grounding, locomotion, camera follow, jumping, wading, or swimming.
+- derive one presentation-only camera target from the interpolated player
+  snapshot without letting camera state become Character authority;
+- add third-person orbit/follow controls with bounded pitch and distance plus
+  a camera-relative horizontal movement basis for later locomotion;
+- query canonical terrain along the target-to-camera segment and shorten the
+  boom before terrain can obstruct the view;
+- preserve deterministic smoke behavior and the existing free-fly diagnostic
+  option; and
+- prove interpolation, orbit bounds, basis conventions, and obstruction
+  behavior, then stop before gravity, grounding, locomotion, jumping, wading,
+  swimming, target lock, or gamepad input.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -1302,7 +1302,23 @@ the 492,868-assertion, 335-case complete suite. The 1,000-frame RTX 4070
 presentation smoke retains one water draw per frame, zero D3D12
 corruption/errors, and zero live child objects.
 
-The active queue is `CHR-001`, bounded player-capsule state.
+CHR-001 adds one bounded Core-only player capsule, one sandbox-owned platform
+event translator, previous/current fixed-tick snapshots, deterministic
+dry-spawn/reset behavior, and a blue presentation proxy. The Island Demo
+authors a `0.5`-meter radius and `0.5`-meter vertical half segment at center
+`(0, 1.890625, 112)`, exactly one meter above canonical dry ground. The proxy
+reuses the existing material-sphere geometry and Terrain pass, adding one
+1,584-index draw per submitted frame without a pass, resource, descriptor,
+allocation, upload, or timestamp. Exact 120-tick command/snapshot transcripts
+match at 30/60/120/144 Hz. See [CHARACTER.md](CHARACTER.md) for the ownership,
+input, snapshot, and proxy contracts.
+
+Debug and Release each pass 497,863 assertions across 351 cases. The
+1,000-frame RTX 4070 Debug presentation smoke records 1,000 capsule draws,
+5,000 unchanged graph-pass executions, zero D3D12 corruption/errors, and zero
+live child objects.
+
+The active queue is `CAM-001`, third-person follow/orbit camera.
 `W-005`, `W-006`, `R-001` through `R-004`, and coupled hydrology remain
 approved but deferred from the Island Demo 0.1 critical path.
 

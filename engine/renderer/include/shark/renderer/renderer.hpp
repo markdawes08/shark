@@ -16,6 +16,9 @@ namespace shark::renderer {
 
 inline constexpr std::size_t
     maximum_material_sphere_count = 4;
+inline constexpr float maximum_debug_capsule_radius = 64.0F;
+inline constexpr float maximum_debug_capsule_half_segment_length =
+    64.0F;
 
 struct RenderExtent final {
     std::uint32_t width{};
@@ -218,6 +221,21 @@ enum class EnvironmentLightingMode : std::uint32_t {
     image_based,
 };
 
+// A presentation-only capsule used to inspect an authoritative simulation
+// snapshot. The renderer never advances or owns the state represented by this
+// proxy. Its local centerline is aligned with +Y/-Y before orientation.
+struct DebugCapsuleProxy final {
+    math::Float3 world_position{};
+    math::Quaternion orientation{};
+    float radius{0.5F};
+    float half_segment_length{0.75F};
+    bool enabled{false};
+
+    [[nodiscard]] friend bool operator==(
+        const DebugCapsuleProxy&,
+        const DebugCapsuleProxy&) noexcept = default;
+};
+
 struct RendererConfig final {
     void* native_window{};
     RenderExtent extent{1280, 720};
@@ -258,6 +276,7 @@ struct RenderFrameData final {
         maximum_material_sphere_count>
         material_sphere_world_orientations{};
     std::uint32_t material_sphere_count{1};
+    DebugCapsuleProxy debug_capsule{};
     TerrainRenderMode terrain_mode{TerrainRenderMode::solid};
     TerrainMaterialView terrain_material_view{
         TerrainMaterialView::shaded};
@@ -351,6 +370,7 @@ struct RendererStats final {
     std::uint64_t terrain_bounds_draw_calls{};
     std::uint64_t terrain_query_marker_draw_calls{};
     std::uint64_t material_sphere_draw_calls{};
+    std::uint64_t debug_capsule_draw_calls{};
     std::uint64_t tone_map_draw_calls{};
     std::uint64_t terrain_chunk_count{};
     std::uint64_t terrain_chunks_tested{};
@@ -367,6 +387,7 @@ struct RendererStats final {
     std::uint64_t terrain_bounds_indices{};
     std::uint64_t terrain_query_marker_indices{};
     std::uint64_t material_sphere_indices{};
+    std::uint64_t debug_capsule_indices{};
     std::uint64_t terrain_vertex_count{};
     std::uint64_t terrain_index_count{};
     std::uint64_t terrain_lod0_index_count{};

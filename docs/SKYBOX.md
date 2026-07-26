@@ -1,8 +1,8 @@
 # Sky and HDR Environment-Lighting Contract
 
 - **Sky capability completed through:** `S-003`
-- **Renderer integration verified through:** `W-001`
-- **Last verified:** July 19, 2026
+- **Renderer integration verified through:** `CHR-001`
+- **Last verified:** July 25, 2026
 - **Active roadmap:** [ENGINE_PLAN.md](ENGINE_PLAN.md)
 
 Shark still uses a skybox as the background rasterization technique: a cube is
@@ -188,11 +188,11 @@ color into shader-read state, then restore the back buffer and depth to their
 declared final states. Persistent environment and material resources remain in
 pixel-shader-read state.
 
-With `V` visible terrain chunks, a normal submitted frame issues `V + 6`
+With `V` visible terrain chunks, a normal submitted frame issues `V + 7`
 indexed draws: `V` selected LOD0/coarse chunk surfaces, four material-sphere
-draws, the textured cube, and the skybox. Water adds one non-indexed procedural six-vertex
-draw after the sky, and `ToneMap` adds one non-indexed fullscreen-triangle
-draw. Default-off `F4` diagnostics add `V` matching
+draws, the CHR-001 capsule proxy, the textured cube, and the skybox. Water adds
+one non-indexed procedural six-vertex draw after the sky, and `ToneMap` adds
+one non-indexed fullscreen-triangle draw. Default-off `F4` diagnostics add `V` matching
 magenta chunk bounds and the terrain query marker. LOD0 surfaces use 1,536
 indices and coarse surfaces use 864. Both surface ranges, bounds, marker, and
 sphere share the packed terrain buffers, so the static scene still contains

@@ -204,4 +204,5 @@ horizontal flow; see [WATER.md](WATER.md).
 `W-005` may later port fixed-step batches to D3D12 ping-pong compute resources
 and must match this CPU oracle within documented tolerances. GPU
 simulated-water rendering, rain coupling, and hydrology remain approved
-deferred specializations. The active queue is `CHR-001`.
+deferred specializations. CHR-001 does not consume this solver; the active
+queue is `CAM-001`.

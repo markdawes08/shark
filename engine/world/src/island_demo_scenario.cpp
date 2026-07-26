@@ -99,11 +99,19 @@ inline constexpr std::array<
         {},
         {0.0F, 0.0F, 0.2F},
     }};
-inline constexpr float island_demo_spawn_eye_height = 2.0F;
+inline constexpr character::PlayerCapsuleShape
+    island_demo_player_capsule_shape{
+        .radius = 0.5F,
+        .vertical_half_segment = 0.5F,
+    };
+inline constexpr float island_demo_player_minimum_center_y = -32.0F;
+inline constexpr float island_demo_player_maximum_center_y = 64.0F;
+inline constexpr float island_demo_spawn_camera_height = 4.0F;
+inline constexpr float island_demo_spawn_camera_distance = 10.0F;
 inline constexpr float island_demo_primary_body_height = 12.0F;
 inline constexpr float island_demo_pair_body_height = 20.0F;
 inline constexpr float island_demo_isolated_body_height = 14.0F;
-inline constexpr float island_demo_spawn_pitch = -0.12F;
+inline constexpr float island_demo_spawn_pitch = -0.28F;
 inline constexpr float island_demo_far_plane = 1'500.0F;
 inline constexpr float minimum_spawn_clearance = 2.0F;
 inline constexpr float minimum_route_clearance = 0.5F;
@@ -239,6 +247,58 @@ core::Result<IslandDemoScenario> make_island_demo_scenario()
         return core::Result<IslandDemoScenario>::failure(
             scenario_error(
                 "Island Demo spawn is not dry above the waterline"));
+    }
+
+    const auto player_vertical_extent =
+        island_demo_player_capsule_shape.radius +
+        island_demo_player_capsule_shape.vertical_half_segment;
+    const character::PlayerCapsuleConfig player_capsule{
+        .shape = island_demo_player_capsule_shape,
+        .center_bounds = {
+            .minimum = {
+                surface.bounds().minimum.x +
+                    island_demo_player_capsule_shape.radius,
+                island_demo_player_minimum_center_y,
+                surface.bounds().minimum.z +
+                    island_demo_player_capsule_shape.radius,
+            },
+            .maximum = {
+                surface.bounds().maximum.x -
+                    island_demo_player_capsule_shape.radius,
+                island_demo_player_maximum_center_y,
+                surface.bounds().maximum.z -
+                    island_demo_player_capsule_shape.radius,
+            },
+        },
+        .spawn_center_position = {
+            spawn_ground.x,
+            spawn_ground.y + player_vertical_extent,
+            spawn_ground.z,
+        },
+        .spawn_facing_yaw_radians = 0.0F,
+    };
+    const auto player_result =
+        character::create_player_capsule(player_capsule);
+    if (!player_result) {
+        return core::Result<IslandDemoScenario>::failure(
+            player_result.error());
+    }
+    const auto spawn_water_result =
+        water::query_gameplay_water(
+            island_demo_gameplay_water,
+            surface,
+            spawn_ground.x,
+            spawn_ground.z);
+    if (!spawn_water_result ||
+        spawn_water_result.value().disposition !=
+            water::GameplayWaterDisposition::no_water ||
+        player_result.value().current.state.center_position.y -
+                player_vertical_extent !=
+            spawn_ground.y) {
+        return core::Result<IslandDemoScenario>::failure(
+            scenario_error(
+                "Island Demo player capsule is not resting at its "
+                "canonical dry spawn"));
     }
 
     auto route_result = validate_route(surface);
@@ -394,8 +454,8 @@ core::Result<IslandDemoScenario> make_island_demo_scenario()
     Camera spawn_camera;
     spawn_camera.transform.position = {
         spawn_ground.x,
-        spawn_ground.y + island_demo_spawn_eye_height,
-        spawn_ground.z,
+        spawn_ground.y + island_demo_spawn_camera_height,
+        spawn_ground.z + island_demo_spawn_camera_distance,
     };
     spawn_camera.transform.pitch_radians =
         island_demo_spawn_pitch;
@@ -415,6 +475,7 @@ core::Result<IslandDemoScenario> make_island_demo_scenario()
             },
             .terrain_height_checksum = shaped_height_checksum,
             .spawn_ground_position = spawn_ground,
+            .player_capsule = player_capsule,
             .traversal_loop = route_positions,
             .shore_entry_samples = shore_positions,
             .sphere_body_spawn_positions =

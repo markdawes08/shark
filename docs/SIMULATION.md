@@ -516,20 +516,22 @@ to the shared solver without moving SAT or manifold generation into response.
 ## Rendering boundary
 
 The existing material-sphere mesh remains packed in the terrain geometry
-buffers at its original authored center. Its vertex shader reads seven 32-bit
-`b2` constants: one quaternion followed by one world position.
-`RenderFrameData` owns fixed four-entry position/orientation arrays and an
-active count in `[0, 4]`. The renderer validates active transforms, binds the
-material-sphere PSO once, then visits active bodies in index order, rebinds
-`b2`, rotates each vertex/normal about the authored center, and issues the
-existing indexed draw once per sphere inside `Terrain`. A small local `+X`
-material cap makes rotation inspectable without another mesh or texture.
+buffers at its original authored center. CHR-001 extends its shared `b2`
+record to nine 32-bit constants: one quaternion, one world position, radius,
+and vertical half-segment. `RenderFrameData` owns fixed four-entry
+position/orientation arrays and an active count in `[0, 4]`, plus one optional
+debug-capsule proxy. The renderer validates active transforms, binds the
+material-sphere PSO once, then visits active bodies in index order. Radius `1`
+and half-segment `0` retain the exact sphere branch and its local `+X` marker.
+The enabled player proxy reuses that draw state with its authored radius and
+positive half-segment, producing the blue capsule inside `Terrain`.
 
 This adds no geometry buffer, descriptor, texture, graph pass, water resource,
 or upload-buffer allocation. Four active bodies produce exactly four draws and
-`4 * 1,584` indices per submitted frame. Composition-level tests lock the
-physics, world, and renderer capacities together and validate the renderer
-fixture's one-meter visual radius against the scenario-owned collider radius.
+`4 * 1,584` indices per submitted frame; CHR-001's enabled proxy adds one
+separately counted 1,584-index draw. Composition-level tests lock the physics,
+world, and renderer capacities together and validate the renderer fixture's
+one-meter visual radius against the scenario-owned collider radius.
 
 `F4` retains the existing bounded six-vertex/six-index cyan normal pin and
 magenta visible-chunk bounds. The pin is now built at the proof sphere's fixed
@@ -781,8 +783,8 @@ continuous collision, arbitrary convex collision, rolling resistance, or
 general debug-draw service. It does not add damping, lock crate rotation, or
 couple contact response to buoyancy, water displacement, an entity system, or
 a reset control. The crate stack remains a permanent CPU scenario built from
-the pure box queries; the interactive runtime remains the four-sphere
-Environment Lab.
+the pure box queries; the interactive runtime retains the four-sphere
+diagnostics beside CHR-001's separate kinematic player capsule.
 
 The terrain adapter remains an intentional one-sample face response for the
 current one-meter-radius, four-meter-cell, slope-bounded Environment Lab
@@ -792,11 +794,15 @@ W-001 presentation-only water, and `R-001` through `R-004` remain deferred.
 W-004 adds no sandbox or GPU fluid integration. ISL-001 now supplies the
 deterministic playable-island scenario while retaining this fixture. WQ-001
 adds a stateless CPU water query over authored support plus the canonical
-triangle-interpolated bed; it changes no fixed-step state or ordering. The
-active queue is `CHR-001`, bounded player-capsule state. W-005 remains an
-approved deferred fluid specialization; the queue is centralized in
+triangle-interpolated bed; it changes no fixed-step state or ordering. CHR-001
+adds a separate bounded player capsule whose commands and previous/current
+snapshots advance on the same emitted fixed-tick numbers as dynamic Physics;
+it neither enters the rigid-body arrays nor changes their solver order. The
+active queue is `CAM-001`, a presentation-only third-person camera. W-005
+remains an approved deferred fluid specialization; the queue is centralized in
 [ENGINE_PLAN.md](ENGINE_PLAN.md), and the query contract is in
-[WATER.md](WATER.md).
+[WATER.md](WATER.md). The player contract is in
+[CHARACTER.md](CHARACTER.md).
 
 ISL-001 keeps the four-sphere runtime diagnostics while moving them onto the
 playable island. The 1,000-frame hardware smoke records exact broad-phase

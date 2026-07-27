@@ -134,6 +134,13 @@ inline constexpr character::PlayerWadingSettings
         .depth_for_minimum_speed = 1.5F,
         .minimum_speed_multiplier = 0.5F,
     };
+inline constexpr character::PlayerSurfaceSwimmingSettings
+    island_demo_player_surface_swimming{
+        .enter_depth = 1.5F,
+        .exit_depth = 1.25F,
+        .surface_center_depth = 0.5F,
+        .speed = 3.0F,
+    };
 inline constexpr float island_demo_player_minimum_center_y = -32.0F;
 inline constexpr float island_demo_player_maximum_center_y = 64.0F;
 inline constexpr ThirdPersonCameraConfig island_demo_player_camera{
@@ -348,6 +355,8 @@ core::Result<IslandDemoScenario> make_island_demo_scenario()
         .air_locomotion =
             island_demo_player_air_locomotion,
         .wading = island_demo_player_wading,
+        .surface_swimming =
+            island_demo_player_surface_swimming,
     };
     const auto player_result =
         character::create_player_capsule(
@@ -465,7 +474,13 @@ core::Result<IslandDemoScenario> make_island_demo_scenario()
         shallow_depth > 0.75F ||
         transition_depth < 1.0F ||
         transition_depth > 2.0F ||
-        swim_depth < 3.0F) {
+        transition_depth <=
+            island_demo_player_surface_swimming.exit_depth ||
+        transition_depth >=
+            island_demo_player_surface_swimming.enter_depth ||
+        swim_depth < 3.0F ||
+        swim_depth <
+            island_demo_player_surface_swimming.enter_depth) {
         return core::Result<IslandDemoScenario>::failure(
             scenario_error(
                 "Island Demo shore transect does not progress from dry "

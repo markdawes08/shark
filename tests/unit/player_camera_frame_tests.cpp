@@ -375,6 +375,115 @@ TEST_CASE(
 }
 
 TEST_CASE(
+    "player camera frame follows finite interpolated surface-swim entry",
+    "[sandbox][player-camera-frame][character][surface-swimming]")
+{
+    using namespace shark;
+
+    const auto fixture = make_island_fixture();
+    const auto& deep_sample =
+        fixture.scenario.shore_entry_samples[3];
+    const auto support =
+        character::query_player_terrain_support(
+            fixture.scenario.player_capsule.shape,
+            fixture.scenario.player_capsule.grounding,
+            fixture.surface,
+            deep_sample.x,
+            deep_sample.z);
+    REQUIRE(support);
+    REQUIRE(support.value());
+
+    auto config = fixture.scenario.player_capsule;
+    config.spawn_center_position = {
+        deep_sample.x,
+        support.value()->center_position_y,
+        deep_sample.z,
+    };
+    auto player_result = character::create_player_capsule(
+        config,
+        fixture.surface);
+    REQUIRE(player_result);
+    auto player = std::move(player_result).value();
+    auto camera_rig = make_camera_rig(fixture.scenario);
+
+    for (std::uint64_t fixed_tick = 1U;
+         fixed_tick <= 2U;
+         ++fixed_tick) {
+        REQUIRE(world::advance_third_person_camera_rig(
+            camera_rig,
+            fixed_tick == 2U
+                ? world::ThirdPersonOrbitDelta{
+                      .yaw_radians = 0.1F,
+                  }
+                : world::ThirdPersonOrbitDelta{},
+            fixed_tick));
+        const auto basis = world::horizontal_camera_basis(
+            camera_rig.current.state.yaw_radians);
+        REQUIRE(basis);
+        const auto gameplay_water =
+            water::query_gameplay_water(
+                fixture.scenario.water.gameplay_body,
+                fixture.surface,
+                player.current.state.center_position.x,
+                player.current.state.center_position.z);
+        REQUIRE(gameplay_water);
+        REQUIRE(character::advance_player_capsule(
+            player,
+            {},
+            {
+                .right = basis.value().right,
+                .forward = basis.value().forward,
+            },
+            fixture.surface,
+            gameplay_water.value(),
+            1.0F / 60.0F,
+            fixed_tick));
+    }
+
+    REQUIRE(player.previous.water.phase ==
+        character::PlayerWaterPhase::wading);
+    REQUIRE(player.current.water.phase ==
+        character::PlayerWaterPhase::surface_swimming);
+    REQUIRE(player.current.vertical.phase ==
+        character::PlayerGroundPhase::surface_swimming);
+    REQUIRE(player.current.state.center_position.y == -4.5F);
+    REQUIRE(player.previous.state.center_position.y <
+        player.current.state.center_position.y);
+
+    constexpr auto alpha = 0.5F;
+    const auto expected_player =
+        character::interpolate_player_capsule(player, alpha);
+    REQUIRE(expected_player);
+    REQUIRE(math::is_finite(
+        expected_player.value().center_position));
+    REQUIRE(expected_player.value().center_position.y >
+        player.previous.state.center_position.y);
+    REQUIRE(expected_player.value().center_position.y <
+        player.current.state.center_position.y);
+
+    const auto frame = sandbox::build_player_camera_frame(
+        player,
+        camera_rig,
+        alpha,
+        fixture.scenario.player_camera_lens,
+        fixture.surface);
+    REQUIRE(frame);
+    REQUIRE(frame.value().interpolated_player ==
+        expected_player.value());
+    REQUIRE(frame.value().camera_placement.target_position ==
+        math::Float3{
+            expected_player.value().center_position.x,
+            expected_player.value().center_position.y +
+                camera_rig.config.target_height_offset,
+            expected_player.value().center_position.z,
+        });
+    REQUIRE(math::is_finite(
+        frame.value().camera_placement.target_position));
+    REQUIRE(math::is_finite(
+        frame.value().camera_placement.camera.transform.position));
+}
+
+TEST_CASE(
     "player camera frame applies canonical terrain obstruction",
     "[sandbox][player-camera-frame][terrain]")
 {

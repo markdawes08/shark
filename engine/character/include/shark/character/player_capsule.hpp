@@ -48,6 +48,14 @@ inline constexpr float
 inline constexpr float
     default_player_wading_minimum_speed_multiplier = 0.5F;
 inline constexpr float maximum_player_wading_depth = 32.0F;
+inline constexpr float
+    default_player_surface_swimming_enter_depth = 1.5F;
+inline constexpr float
+    default_player_surface_swimming_exit_depth = 1.25F;
+inline constexpr float
+    default_player_surface_swimming_center_depth = 0.5F;
+inline constexpr float default_player_surface_swimming_speed = 3.0F;
+inline constexpr float maximum_player_surface_swimming_depth = 32.0F;
 inline constexpr float minimum_player_probe_spacing = 0.01F;
 inline constexpr float maximum_player_probe_spacing = 1.0F;
 inline constexpr float maximum_player_fixed_delta_seconds = 0.25F;
@@ -102,6 +110,20 @@ struct PlayerWadingSettings final {
         const PlayerWadingSettings&) noexcept = default;
 };
 
+struct PlayerSurfaceSwimmingSettings final {
+    float enter_depth{
+        default_player_surface_swimming_enter_depth};
+    float exit_depth{
+        default_player_surface_swimming_exit_depth};
+    float surface_center_depth{
+        default_player_surface_swimming_center_depth};
+    float speed{default_player_surface_swimming_speed};
+
+    [[nodiscard]] friend bool operator==(
+        const PlayerSurfaceSwimmingSettings&,
+        const PlayerSurfaceSwimmingSettings&) noexcept = default;
+};
+
 // Character-owned, device-neutral horizontal frame supplied once per fixed
 // tick. At camera yaw zero, right is +X and forward is -Z.
 struct PlayerMovementFrame final {
@@ -119,19 +141,22 @@ enum class PlayerGroundPhase : std::uint8_t {
     falling,
     landing,
     steep_contact,
+    surface_swimming,
 };
 
 enum class PlayerWaterPhase : std::uint8_t {
     dry = 1,
     wading,
+    surface_swimming,
 };
 
 // This is the water state consumed at the authoritative tick-start position,
-// not a query of the post-movement position. Dry state always carries
-// canonical positive-zero depth.
+// not a query of the post-movement position. Dry and wading states always
+// carry canonical positive-zero surface height.
 struct PlayerWaterState final {
     PlayerWaterPhase phase{PlayerWaterPhase::dry};
     float depth{};
+    float surface_height{};
 
     [[nodiscard]] friend bool operator==(
         const PlayerWaterState&,
@@ -178,6 +203,7 @@ struct PlayerCapsuleConfig final {
     PlayerGroundLocomotionSettings ground_locomotion;
     PlayerAirLocomotionSettings air_locomotion;
     PlayerWadingSettings wading;
+    PlayerSurfaceSwimmingSettings surface_swimming;
 
     [[nodiscard]] friend bool operator==(
         const PlayerCapsuleConfig&,
@@ -255,6 +281,10 @@ static_assert(
     std::is_trivially_copyable_v<PlayerAirLocomotionSettings>);
 static_assert(std::is_standard_layout_v<PlayerWadingSettings>);
 static_assert(std::is_trivially_copyable_v<PlayerWadingSettings>);
+static_assert(
+    std::is_standard_layout_v<PlayerSurfaceSwimmingSettings>);
+static_assert(
+    std::is_trivially_copyable_v<PlayerSurfaceSwimmingSettings>);
 static_assert(std::is_standard_layout_v<PlayerMovementFrame>);
 static_assert(std::is_trivially_copyable_v<PlayerMovementFrame>);
 static_assert(std::is_standard_layout_v<PlayerVerticalState>);
@@ -288,6 +318,9 @@ static_assert(std::is_trivially_copyable_v<PlayerCapsuleSimulation>);
 
 [[nodiscard]] bool is_valid(
     const PlayerWadingSettings& settings) noexcept;
+
+[[nodiscard]] bool is_valid(
+    const PlayerSurfaceSwimmingSettings& settings) noexcept;
 
 [[nodiscard]] bool is_valid(
     const PlayerMovementFrame& frame) noexcept;

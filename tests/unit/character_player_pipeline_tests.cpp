@@ -12,8 +12,10 @@
 
 #include <Windows.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <utility>
@@ -259,10 +261,40 @@ make_flat_surface()
 [[nodiscard]] shark::water::CalmWaterBody
 pipeline_water_body(
     const bool wading_schedule,
+    const bool surface_swimming_schedule,
     const std::uint64_t fixed_tick)
 {
     auto surface_height = -1.0F;
-    if (wading_schedule) {
+    if (surface_swimming_schedule) {
+        surface_height = 1.5F;
+        switch (fixed_tick) {
+        case 111U:
+            surface_height = 0.875F;
+            break;
+        case 112U:
+            surface_height = 1.5F;
+            break;
+        case 113U:
+            surface_height = 1.359375F;
+            break;
+        case 114U:
+            surface_height = 1.25F;
+            break;
+        case 115U:
+            surface_height = 0.2F;
+            break;
+        case 116U:
+            surface_height =
+                shark::character::default_player_wading_exit_depth;
+            break;
+        default:
+            if (fixed_tick >= 117U) {
+                surface_height = -1.0F;
+            }
+            break;
+        }
+    }
+    else if (wading_schedule) {
         surface_height = 0.875F;
         switch (fixed_tick) {
         case 111U:
@@ -309,7 +341,8 @@ pipeline_water_body(
 
 [[nodiscard]] PipelineRun run_pipeline_schedule(
     const std::uint32_t render_rate_hz,
-    const bool wading_schedule = false)
+    const bool wading_schedule = false,
+    const bool surface_swimming_schedule = false)
 {
     using namespace shark;
 
@@ -383,6 +416,7 @@ pipeline_water_body(
                 water::query_gameplay_water(
                     pipeline_water_body(
                         wading_schedule,
+                        surface_swimming_schedule,
                         run.emitted_ticks),
                     surface,
                     player.current.state.center_position.x,
@@ -539,6 +573,8 @@ TEST_CASE(
                 shark::math::Float3{});
             REQUIRE(entry.current.state.center_position.y > 1.0F);
             break;
+        case shark::character::PlayerGroundPhase::
+            surface_swimming:
         case shark::character::PlayerGroundPhase::steep_contact:
         default:
             FAIL("flat pipeline produced an invalid support phase");
@@ -789,6 +825,135 @@ TEST_CASE(
         CAPTURE(render_rate);
         const auto run =
             run_pipeline_schedule(render_rate, true);
+        REQUIRE(run.emitted_ticks == transcript_tick_count);
+        REQUIRE(run.final_interpolation_alpha ==
+            Catch::Approx(0.0F).margin(0.000001F));
+        REQUIRE(run.transcript == baseline.transcript);
+        if (render_rate > 60U) {
+            REQUIRE(run.zero_step_render_frames > 0U);
+        }
+    }
+}
+
+TEST_CASE(
+    "surface-swimming command pipeline is exact across render partitions",
+    "[character][player-capsule][pipeline][surface-swimming][fixed-step][invariance]")
+{
+    using namespace shark;
+
+    constexpr std::array<std::uint32_t, 4> render_rates{
+        30U,
+        60U,
+        120U,
+        144U,
+    };
+    const auto baseline =
+        run_pipeline_schedule(
+            render_rates.front(),
+            false,
+            true);
+    REQUIRE(baseline.multi_step_render_frames > 0U);
+
+    REQUIRE(baseline.transcript[0].current.water ==
+        character::PlayerWaterState{
+            .phase = character::PlayerWaterPhase::wading,
+            .depth = 1.5F,
+        });
+    REQUIRE(baseline.transcript[0].current.vertical.phase ==
+        character::PlayerGroundPhase::grounded);
+    REQUIRE(baseline.transcript[1].current.water ==
+        character::PlayerWaterState{
+            .phase =
+                character::PlayerWaterPhase::surface_swimming,
+            .depth = 1.5F,
+            .surface_height = 1.5F,
+        });
+    REQUIRE(baseline.transcript[1].current.vertical.phase ==
+        character::PlayerGroundPhase::surface_swimming);
+
+    const auto& ignored_swim_jump = baseline.transcript[19];
+    REQUIRE(ignored_swim_jump.command.jump_pressed);
+    REQUIRE(ignored_swim_jump.previous.vertical.phase ==
+        character::PlayerGroundPhase::surface_swimming);
+    REQUIRE(ignored_swim_jump.current.vertical.phase ==
+        character::PlayerGroundPhase::surface_swimming);
+    REQUIRE(ignored_swim_jump.current.water.phase ==
+        character::PlayerWaterPhase::surface_swimming);
+    REQUIRE(ignored_swim_jump.current.vertical.velocity_y ==
+        0.0F);
+
+    REQUIRE(baseline.transcript[109].command.reset_pressed);
+    REQUIRE(baseline.transcript[109].previous.state ==
+        baseline.transcript[109].current.state);
+    REQUIRE(baseline.transcript[109].current.state.center_position ==
+        math::Float3{0.0F, 1.0F, 0.0F});
+    REQUIRE(baseline.transcript[109].previous.water ==
+        character::PlayerWaterState{});
+    REQUIRE(baseline.transcript[109].current.water ==
+        character::PlayerWaterState{});
+    REQUIRE(baseline.transcript[109].current.reset_generation ==
+        1U);
+
+    REQUIRE(baseline.transcript[110].current.water ==
+        character::PlayerWaterState{
+            .phase = character::PlayerWaterPhase::wading,
+            .depth = 0.875F,
+        });
+    REQUIRE(baseline.transcript[111].current.water ==
+        character::PlayerWaterState{
+            .phase =
+                character::PlayerWaterPhase::surface_swimming,
+            .depth = 1.5F,
+            .surface_height = 1.5F,
+        });
+    REQUIRE(baseline.transcript[112].current.water ==
+        character::PlayerWaterState{
+            .phase =
+                character::PlayerWaterPhase::surface_swimming,
+            .depth = 1.359375F,
+            .surface_height = 1.359375F,
+        });
+    REQUIRE(baseline.transcript[113].current.water ==
+        character::PlayerWaterState{
+            .phase = character::PlayerWaterPhase::wading,
+            .depth = 1.25F,
+        });
+    REQUIRE(baseline.transcript[114].current.water ==
+        character::PlayerWaterState{
+            .phase = character::PlayerWaterPhase::wading,
+            .depth = 0.2F,
+        });
+    REQUIRE(baseline.transcript[115].current.water ==
+        character::PlayerWaterState{});
+
+    for (const auto& entry : baseline.transcript) {
+        if (entry.current.water.phase ==
+            character::PlayerWaterPhase::surface_swimming) {
+            REQUIRE(entry.current.vertical.phase ==
+                character::PlayerGroundPhase::surface_swimming);
+            REQUIRE(entry.current.vertical.velocity_y == 0.0F);
+            REQUIRE(entry.current.vertical.support_normal ==
+                math::Float3{});
+            REQUIRE(entry.current.state.center_position.y ==
+                Catch::Approx(
+                    std::max(
+                        entry.current.water.surface_height - 0.5F,
+                        1.0F))
+                    .margin(0.000001F));
+            REQUIRE(std::hypot(
+                entry.current.horizontal_velocity.x,
+                entry.current.horizontal_velocity.z) <=
+                3.0F + 0.000001F);
+        }
+    }
+
+    for (const auto render_rate : render_rates) {
+        CAPTURE(render_rate);
+        const auto run =
+            run_pipeline_schedule(
+                render_rate,
+                false,
+                true);
         REQUIRE(run.emitted_ticks == transcript_tick_count);
         REQUIRE(run.final_interpolation_alpha ==
             Catch::Approx(0.0F).margin(0.000001F));

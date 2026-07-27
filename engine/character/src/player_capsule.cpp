@@ -57,6 +57,12 @@ struct HorizontalIntent final {
     return value == 0.0F && !std::signbit(value);
 }
 
+[[nodiscard]] bool canonical_float(const float value) noexcept
+{
+    return std::isfinite(value) &&
+        (value != 0.0F || !std::signbit(value));
+}
+
 [[nodiscard]] bool canonical_zero_vector(
     const math::Float3 value) noexcept
 {
@@ -189,6 +195,9 @@ struct HorizontalIntent final {
     case PlayerGroundPhase::rising:
         return vertical.velocity_y > 0.0F &&
             canonical_zero_vector(vertical.support_normal);
+    case PlayerGroundPhase::surface_swimming:
+        return positive_zero(vertical.velocity_y) &&
+            canonical_zero_vector(vertical.support_normal);
     case PlayerGroundPhase::steep_contact:
         return positive_zero(vertical.velocity_y) &&
             valid_surface_normal(vertical.support_normal) &&
@@ -205,16 +214,32 @@ struct HorizontalIntent final {
 [[nodiscard]] bool valid_water_state(
     const PlayerWaterState& water_state,
     const PlayerVerticalState& vertical,
-    const PlayerWadingSettings& settings) noexcept
+    const PlayerCapsuleState& state,
+    const PlayerWadingSettings& wading,
+    const PlayerSurfaceSwimmingSettings&
+        surface_swimming) noexcept
 {
     switch (water_state.phase) {
     case PlayerWaterPhase::dry:
-        return positive_zero(water_state.depth);
+        return positive_zero(water_state.depth) &&
+            positive_zero(water_state.surface_height);
     case PlayerWaterPhase::wading:
         return std::isfinite(water_state.depth) &&
-            water_state.depth > settings.exit_depth &&
+            water_state.depth > wading.exit_depth &&
+            positive_zero(water_state.surface_height) &&
             (vertical.phase == PlayerGroundPhase::grounded ||
              vertical.phase == PlayerGroundPhase::landing);
+    case PlayerWaterPhase::surface_swimming:
+        return std::isfinite(water_state.depth) &&
+            water_state.depth > surface_swimming.exit_depth &&
+            canonical_float(water_state.surface_height) &&
+            vertical.phase ==
+                PlayerGroundPhase::surface_swimming &&
+            static_cast<double>(state.center_position.y) >=
+                static_cast<double>(
+                    water_state.surface_height) -
+                    static_cast<double>(
+                        surface_swimming.surface_center_depth);
     default:
         return false;
     }
@@ -283,7 +308,16 @@ struct HorizontalIntent final {
         is_valid(config.grounding) &&
         is_valid(config.ground_locomotion) &&
         is_valid(config.air_locomotion) &&
-        is_valid(config.wading);
+        is_valid(config.wading) &&
+        is_valid(config.surface_swimming) &&
+        config.wading.enter_depth <
+            config.surface_swimming.exit_depth &&
+        config.surface_swimming.exit_depth <
+            config.surface_swimming.enter_depth &&
+        config.surface_swimming.enter_depth >=
+            config.wading.depth_for_minimum_speed &&
+        config.surface_swimming.speed <=
+            config.ground_locomotion.run_speed;
 }
 
 [[nodiscard]] PlayerCapsuleState spawn_state(
@@ -317,6 +351,16 @@ struct HorizontalIntent final {
     return {
         .velocity_y = canonical_zero(velocity_y),
         .phase = PlayerGroundPhase::falling,
+        .support_normal = {},
+    };
+}
+
+[[nodiscard]] PlayerVerticalState
+surface_swimming_vertical_state() noexcept
+{
+    return {
+        .velocity_y = 0.0F,
+        .phase = PlayerGroundPhase::surface_swimming,
         .support_normal = {},
     };
 }
@@ -728,7 +772,9 @@ build_spawn_discontinuity(
     const auto& vertical = simulation.current.vertical;
     if (!support) {
         if (vertical.phase != PlayerGroundPhase::rising &&
-            vertical.phase != PlayerGroundPhase::falling) {
+            vertical.phase != PlayerGroundPhase::falling &&
+            vertical.phase !=
+                PlayerGroundPhase::surface_swimming) {
             return core::Result<void>::failure(character_error(
                 core::ErrorCode::invalid_state,
                 "Supported player state has no canonical terrain "
@@ -747,7 +793,9 @@ build_spawn_discontinuity(
     }
 
     if (vertical.phase == PlayerGroundPhase::rising ||
-        vertical.phase == PlayerGroundPhase::falling) {
+        vertical.phase == PlayerGroundPhase::falling ||
+        vertical.phase ==
+            PlayerGroundPhase::surface_swimming) {
         return core::Result<void>::success();
     }
 
@@ -915,6 +963,212 @@ traverse_walkable_ground(
         traversal.horizontal_velocity = {};
     }
     return core::Result<GroundTraversal>::success(traversal);
+}
+
+[[nodiscard]] HorizontalIntent scale_intent_for_surface_swimming(
+    HorizontalIntent intent,
+    const PlayerSurfaceSwimmingSettings& settings) noexcept
+{
+    if (intent.active) {
+        intent.target_speed = settings.speed;
+    }
+    return intent;
+}
+
+[[nodiscard]] core::Result<float>
+surface_swimming_baseline(
+    const PlayerCapsuleSimulation& simulation,
+    const water::GameplayWaterQuery& gameplay_water,
+    const PlayerTerrainSupport& source_support)
+{
+    const auto baseline = std::max(
+        static_cast<double>(gameplay_water.surface_height) -
+            static_cast<double>(
+                simulation.config.surface_swimming
+                    .surface_center_depth),
+        static_cast<double>(
+            source_support.center_position_y));
+    if (!representable_float(baseline)) {
+        return core::Result<float>::failure(character_error(
+            core::ErrorCode::unavailable,
+            "Player surface-swimming baseline exceeded finite "
+            "range"));
+    }
+    return core::Result<float>::success(
+        canonical_zero(static_cast<float>(baseline)));
+}
+
+struct SurfaceSwimmingTraversal final {
+    math::Float3 center_position{};
+    math::Float3 horizontal_velocity{};
+    bool blocked{};
+};
+
+[[nodiscard]] core::Result<SurfaceSwimmingTraversal>
+traverse_surface_swimming(
+    const PlayerCapsuleSimulation& simulation,
+    const PlayerTerrainSupport& source_support,
+    const water::GameplayWaterQuery& gameplay_water,
+    const math::Float3 requested_velocity,
+    const terrain::HeightTileSurface& terrain_surface,
+    const float traversal_seconds)
+{
+    auto baseline_result = surface_swimming_baseline(
+        simulation,
+        gameplay_water,
+        source_support);
+    if (!baseline_result) {
+        return core::Result<
+            SurfaceSwimmingTraversal>::failure(
+                baseline_result.error());
+    }
+    const auto baseline = baseline_result.value();
+    SurfaceSwimmingTraversal traversal{
+        .center_position = {
+            simulation.current.state.center_position.x,
+            baseline,
+            simulation.current.state.center_position.z,
+        },
+        .horizontal_velocity = requested_velocity,
+    };
+    if (!contains(
+            simulation.config.center_bounds,
+            traversal.center_position)) {
+        return core::Result<
+            SurfaceSwimmingTraversal>::failure(
+                character_error(
+                    core::ErrorCode::unavailable,
+                    "Player surface-swimming source lies outside "
+                    "its center bounds"));
+    }
+
+    const auto displacement_x =
+        static_cast<double>(requested_velocity.x) *
+        static_cast<double>(traversal_seconds);
+    const auto displacement_z =
+        static_cast<double>(requested_velocity.z) *
+        static_cast<double>(traversal_seconds);
+    const auto displacement_length = std::sqrt(
+        displacement_x * displacement_x +
+        displacement_z * displacement_z);
+    if (!std::isfinite(displacement_length) ||
+        !representable_float(displacement_x) ||
+        !representable_float(displacement_z)) {
+        return core::Result<
+            SurfaceSwimmingTraversal>::failure(
+                character_error(
+                    core::ErrorCode::unavailable,
+                    "Player surface-swimming traversal exceeded "
+                    "finite range"));
+    }
+    if (displacement_length == 0.0) {
+        return core::Result<
+            SurfaceSwimmingTraversal>::success(traversal);
+    }
+
+    const auto probe_count_value = std::ceil(
+        displacement_length /
+        static_cast<double>(
+            simulation.config.ground_locomotion
+                .maximum_probe_spacing));
+    if (!std::isfinite(probe_count_value) ||
+        probe_count_value < 1.0 ||
+        probe_count_value >
+            static_cast<double>(
+                maximum_airborne_probe_count)) {
+        return core::Result<
+            SurfaceSwimmingTraversal>::failure(
+                character_error(
+                    core::ErrorCode::unavailable,
+                    "Player surface-swimming probe count exceeded "
+                    "its bounded range"));
+    }
+    const auto probe_count =
+        static_cast<std::uint32_t>(probe_count_value);
+    const auto source_x = static_cast<double>(
+        simulation.current.state.center_position.x);
+    const auto source_z = static_cast<double>(
+        simulation.current.state.center_position.z);
+
+    for (std::uint32_t probe_index = 1U;
+         probe_index <= probe_count;
+         ++probe_index) {
+        const auto fraction =
+            static_cast<double>(probe_index) /
+            static_cast<double>(probe_count);
+        const auto probe_x =
+            source_x + displacement_x * fraction;
+        const auto probe_z =
+            source_z + displacement_z * fraction;
+        if (!representable_float(probe_x) ||
+            !representable_float(probe_z)) {
+            return core::Result<
+                SurfaceSwimmingTraversal>::failure(
+                    character_error(
+                        core::ErrorCode::unavailable,
+                        "Player surface-swimming probe exceeded "
+                        "finite world coordinates"));
+        }
+        const auto canonical_x =
+            canonical_zero(static_cast<float>(probe_x));
+        const auto canonical_z =
+            canonical_zero(static_cast<float>(probe_z));
+        if (!contains_horizontal(
+                simulation.config.center_bounds,
+                canonical_x,
+                canonical_z)) {
+            traversal.blocked = true;
+            break;
+        }
+
+        auto support_result = query_player_terrain_support(
+            simulation.config.shape,
+            simulation.config.grounding,
+            terrain_surface,
+            canonical_x,
+            canonical_z);
+        if (!support_result) {
+            return core::Result<
+                SurfaceSwimmingTraversal>::failure(
+                    support_result.error());
+        }
+        if (!support_result.value()) {
+            traversal.blocked = true;
+            break;
+        }
+
+        const auto& support = *support_result.value();
+        if (!support.walkable &&
+            static_cast<double>(support.center_position_y) >
+                static_cast<double>(baseline) +
+                    terrain_contact_tolerance) {
+            traversal.blocked = true;
+            break;
+        }
+        const math::Float3 probe_position{
+            canonical_x,
+            canonical_zero(
+                std::max(
+                    baseline,
+                    support.walkable
+                        ? support.center_position_y
+                        : baseline)),
+            canonical_z,
+        };
+        if (!contains(
+                simulation.config.center_bounds,
+                probe_position)) {
+            traversal.blocked = true;
+            break;
+        }
+        traversal.center_position = probe_position;
+    }
+
+    if (traversal.blocked) {
+        traversal.horizontal_velocity = {};
+    }
+    return core::Result<
+        SurfaceSwimmingTraversal>::success(traversal);
 }
 
 struct AirTraversal final {
@@ -1315,6 +1569,25 @@ bool is_valid(const PlayerWadingSettings& settings) noexcept
         settings.minimum_speed_multiplier <= 1.0F;
 }
 
+bool is_valid(
+    const PlayerSurfaceSwimmingSettings& settings) noexcept
+{
+    return std::isfinite(settings.enter_depth) &&
+        settings.enter_depth > 0.0F &&
+        settings.enter_depth <=
+            maximum_player_surface_swimming_depth &&
+        std::isfinite(settings.exit_depth) &&
+        settings.exit_depth >= 0.0F &&
+        settings.exit_depth < settings.enter_depth &&
+        std::isfinite(settings.surface_center_depth) &&
+        settings.surface_center_depth >= 0.0F &&
+        settings.surface_center_depth <=
+            maximum_player_surface_swimming_depth &&
+        std::isfinite(settings.speed) &&
+        settings.speed > 0.0F &&
+        settings.speed <= maximum_player_horizontal_speed;
+}
+
 bool is_valid(const PlayerMovementFrame& frame) noexcept
 {
     if (!math::is_finite(frame.right) ||
@@ -1370,11 +1643,15 @@ bool is_valid(
         !valid_water_state(
             simulation.previous.water,
             simulation.previous.vertical,
-            simulation.config.wading) ||
+            simulation.previous.state,
+            simulation.config.wading,
+            simulation.config.surface_swimming) ||
         !valid_water_state(
             simulation.current.water,
             simulation.current.vertical,
-            simulation.config.wading) ||
+            simulation.current.state,
+            simulation.config.wading,
+            simulation.config.surface_swimming) ||
         !valid_horizontal_velocity(
             simulation.previous.horizontal_velocity,
             simulation.previous.vertical.phase,
@@ -1511,13 +1788,15 @@ create_player_capsule(
         !is_valid(config.grounding) ||
         !is_valid(config.ground_locomotion) ||
         !is_valid(config.air_locomotion) ||
-        !is_valid(config.wading)) {
+        !is_valid(config.wading) ||
+        !is_valid(config.surface_swimming)) {
         return core::Result<PlayerCapsuleSimulation>::failure(
             character_error(
                 core::ErrorCode::invalid_argument,
                 "Player capsule requires finite bounded shape, "
                 "center bounds, spawn pose, grounding, ground "
-                "locomotion, air locomotion, and wading settings"));
+                "locomotion, air locomotion, wading, and surface-"
+                "swimming settings"));
     }
 
     config.center_bounds.minimum =
@@ -1534,6 +1813,12 @@ create_player_capsule(
         canonical_zero(config.grounding.snap_distance);
     config.wading.exit_depth =
         canonical_zero(config.wading.exit_depth);
+    config.surface_swimming.exit_depth =
+        canonical_zero(
+            config.surface_swimming.exit_depth);
+    config.surface_swimming.surface_center_depth =
+        canonical_zero(
+            config.surface_swimming.surface_center_depth);
     if (!valid_config(config)) {
         return core::Result<PlayerCapsuleSimulation>::failure(
             character_error(
@@ -1678,23 +1963,164 @@ core::Result<void> advance_player_capsule(
             movement_frame;
         candidate.current.fixed_tick = fixed_tick;
 
-        const auto supported =
+        const auto currently_surface_swimming =
             simulation.current.vertical.phase ==
-                PlayerGroundPhase::grounded ||
-            simulation.current.vertical.phase ==
-                PlayerGroundPhase::landing;
-        const auto airborne =
-            simulation.current.vertical.phase ==
-                PlayerGroundPhase::rising ||
-            simulation.current.vertical.phase ==
-                PlayerGroundPhase::falling;
-        const auto tick_start_water =
-            classify_tick_start_water(
-                simulation.current.water,
-                simulation.current.vertical,
-                gameplay_water,
-                simulation.config.wading);
-        if (supported || airborne) {
+                PlayerGroundPhase::surface_swimming;
+        if (currently_surface_swimming) {
+            if (!support_result.value()) {
+                auto recovery_result =
+                    build_spawn_discontinuity(
+                        simulation,
+                        command,
+                        movement_frame,
+                        terrain_surface,
+                        fixed_tick);
+                if (!recovery_result) {
+                    return core::Result<void>::failure(
+                        recovery_result.error());
+                }
+                candidate = recovery_result.value();
+            }
+            else if (
+                gameplay_water.disposition ==
+                    water::GameplayWaterDisposition::water &&
+                gameplay_water.depth >
+                    simulation.config.surface_swimming
+                        .exit_depth) {
+                auto intent_result = build_horizontal_intent(
+                    command,
+                    movement_frame,
+                    simulation.config.ground_locomotion);
+                if (!intent_result) {
+                    return core::Result<void>::failure(
+                        intent_result.error());
+                }
+                const auto swim_intent =
+                    scale_intent_for_surface_swimming(
+                        intent_result.value(),
+                        simulation.config.surface_swimming);
+                auto facing_result =
+                    turn_facing_toward_intent(
+                        simulation.current.state
+                            .facing_yaw_radians,
+                        swim_intent,
+                        simulation.config.ground_locomotion,
+                        fixed_delta_seconds);
+                if (!facing_result) {
+                    return core::Result<void>::failure(
+                        facing_result.error());
+                }
+                auto velocity_result =
+                    move_horizontal_velocity_toward(
+                        simulation.current.horizontal_velocity,
+                        swim_intent,
+                        simulation.config.ground_locomotion,
+                        fixed_delta_seconds);
+                if (!velocity_result) {
+                    return core::Result<void>::failure(
+                        velocity_result.error());
+                }
+                auto traversal_result =
+                    traverse_surface_swimming(
+                        simulation,
+                        *support_result.value(),
+                        gameplay_water,
+                        velocity_result.value(),
+                        terrain_surface,
+                        fixed_delta_seconds);
+                if (!traversal_result) {
+                    return core::Result<void>::failure(
+                        traversal_result.error());
+                }
+                candidate.current.state.center_position =
+                    traversal_result.value().center_position;
+                candidate.current.state.facing_yaw_radians =
+                    facing_result.value();
+                candidate.current.vertical =
+                    surface_swimming_vertical_state();
+                candidate.current.water = {
+                    .phase =
+                        PlayerWaterPhase::surface_swimming,
+                    .depth = gameplay_water.depth,
+                    .surface_height =
+                        gameplay_water.surface_height,
+                };
+                candidate.current.horizontal_velocity =
+                    traversal_result.value().horizontal_velocity;
+            }
+            else {
+                const auto& support = *support_result.value();
+                const auto water_exit =
+                    gameplay_water.disposition ==
+                    water::GameplayWaterDisposition::water;
+                const auto separation =
+                    static_cast<double>(
+                        simulation.current.state
+                            .center_position.y) -
+                    static_cast<double>(
+                        support.center_position_y);
+                const auto can_snap_no_water =
+                    !water_exit &&
+                    support.walkable &&
+                    separation >= -terrain_contact_tolerance &&
+                    separation <=
+                        static_cast<double>(
+                            simulation.config.grounding
+                                .snap_distance) +
+                            terrain_contact_tolerance;
+                if (water_exit || can_snap_no_water) {
+                    candidate.current.state.center_position.y =
+                        support.center_position_y;
+                    candidate.current.vertical =
+                        supported_vertical_state(
+                            support,
+                            false);
+                    candidate.current.water =
+                        water_exit &&
+                            support.walkable &&
+                            gameplay_water.depth >
+                                simulation.config.wading
+                                    .exit_depth
+                        ? PlayerWaterState{
+                              .phase =
+                                  PlayerWaterPhase::wading,
+                              .depth = gameplay_water.depth,
+                          }
+                        : PlayerWaterState{};
+                    candidate.current.horizontal_velocity =
+                        support.walkable
+                        ? simulation.current
+                              .horizontal_velocity
+                        : math::Float3{};
+                }
+                else {
+                    candidate.current.vertical =
+                        falling_vertical_state();
+                    candidate.current.water = {};
+                    candidate.current.horizontal_velocity =
+                        simulation.current
+                            .horizontal_velocity;
+                }
+            }
+        }
+        else {
+            const auto supported =
+                simulation.current.vertical.phase ==
+                    PlayerGroundPhase::grounded ||
+                simulation.current.vertical.phase ==
+                    PlayerGroundPhase::landing;
+            const auto airborne =
+                simulation.current.vertical.phase ==
+                    PlayerGroundPhase::rising ||
+                simulation.current.vertical.phase ==
+                    PlayerGroundPhase::falling;
+            const auto tick_start_water =
+                classify_tick_start_water(
+                    simulation.current.water,
+                    simulation.current.vertical,
+                    gameplay_water,
+                    simulation.config.wading);
+            if (supported || airborne) {
             auto intent_result = build_horizontal_intent(
                 command,
                 movement_frame,
@@ -1713,7 +2139,71 @@ core::Result<void> advance_player_capsule(
                     facing_result.error());
             }
 
-            if (supported && !command.jump_pressed) {
+            const auto enter_surface_swimming =
+                supported &&
+                !command.jump_pressed &&
+                simulation.current.water.phase ==
+                    PlayerWaterPhase::wading &&
+                gameplay_water.disposition ==
+                    water::GameplayWaterDisposition::water &&
+                gameplay_water.depth >=
+                    simulation.config.surface_swimming
+                        .enter_depth;
+            if (enter_surface_swimming) {
+                const auto swim_intent =
+                    scale_intent_for_surface_swimming(
+                        intent_result.value(),
+                        simulation.config.surface_swimming);
+                auto swim_facing_result =
+                    turn_facing_toward_intent(
+                        simulation.current.state
+                            .facing_yaw_radians,
+                        swim_intent,
+                        simulation.config.ground_locomotion,
+                        fixed_delta_seconds);
+                if (!swim_facing_result) {
+                    return core::Result<void>::failure(
+                        swim_facing_result.error());
+                }
+                auto velocity_result =
+                    move_horizontal_velocity_toward(
+                        simulation.current.horizontal_velocity,
+                        swim_intent,
+                        simulation.config.ground_locomotion,
+                        fixed_delta_seconds);
+                if (!velocity_result) {
+                    return core::Result<void>::failure(
+                        velocity_result.error());
+                }
+                auto traversal_result =
+                    traverse_surface_swimming(
+                        simulation,
+                        *support_result.value(),
+                        gameplay_water,
+                        velocity_result.value(),
+                        terrain_surface,
+                        fixed_delta_seconds);
+                if (!traversal_result) {
+                    return core::Result<void>::failure(
+                        traversal_result.error());
+                }
+                candidate.current.state.center_position =
+                    traversal_result.value().center_position;
+                candidate.current.state.facing_yaw_radians =
+                    swim_facing_result.value();
+                candidate.current.vertical =
+                    surface_swimming_vertical_state();
+                candidate.current.water = {
+                    .phase =
+                        PlayerWaterPhase::surface_swimming,
+                    .depth = gameplay_water.depth,
+                    .surface_height =
+                        gameplay_water.surface_height,
+                };
+                candidate.current.horizontal_velocity =
+                    traversal_result.value().horizontal_velocity;
+            }
+            else if (supported && !command.jump_pressed) {
                 const auto& support = *support_result.value();
                 const auto ground_intent =
                     scale_intent_for_wading(
@@ -1768,54 +2258,179 @@ core::Result<void> advance_player_capsule(
                     ? simulation.config.air_locomotion
                         .jump_launch_speed
                     : simulation.current.vertical.velocity_y;
-                auto traversal_result = traverse_airborne(
-                    simulation,
-                    velocity_result.value(),
-                    starting_velocity_y,
-                    terrain_surface,
-                    fixed_delta_seconds);
-                if (!traversal_result) {
-                    return core::Result<void>::failure(
-                        traversal_result.error());
-                }
-                if (traversal_result.value().requires_recovery) {
-                    auto recovery_result =
-                        build_spawn_discontinuity(
+                auto captured_surface = false;
+                if (!supported &&
+                    simulation.current.vertical.phase ==
+                        PlayerGroundPhase::falling &&
+                    gameplay_water.disposition ==
+                        water::GameplayWaterDisposition::water &&
+                    gameplay_water.depth >=
+                        simulation.config.surface_swimming
+                            .enter_depth) {
+                    auto baseline_result =
+                        surface_swimming_baseline(
                             simulation,
-                            command,
-                            movement_frame,
-                            terrain_surface,
-                            fixed_tick);
-                    if (!recovery_result) {
+                            gameplay_water,
+                            *support_result.value());
+                    if (!baseline_result) {
                         return core::Result<void>::failure(
-                            recovery_result.error());
+                            baseline_result.error());
                     }
-                    candidate = recovery_result.value();
+                    const auto baseline =
+                        static_cast<double>(
+                            baseline_result.value());
+                    const auto source_y =
+                        static_cast<double>(
+                            simulation.current.state
+                                .center_position.y);
+                    const auto next_velocity_y =
+                        static_cast<double>(
+                            starting_velocity_y) -
+                        static_cast<double>(
+                            simulation.config.grounding
+                                .gravity_magnitude) *
+                            static_cast<double>(
+                                fixed_delta_seconds);
+                    const auto displacement_y =
+                        next_velocity_y *
+                        static_cast<double>(
+                            fixed_delta_seconds);
+                    const auto target_y =
+                        source_y + displacement_y;
+                    if (!representable_float(next_velocity_y) ||
+                        !representable_float(displacement_y) ||
+                        !representable_float(target_y)) {
+                        return core::Result<void>::failure(
+                            character_error(
+                                core::ErrorCode::unavailable,
+                                "Player surface capture exceeded "
+                                "finite range"));
+                    }
+
+                    auto capture_fraction = 1.0;
+                    if (source_y <= baseline) {
+                        capture_fraction = 0.0;
+                        captured_surface = true;
+                    }
+                    else if (next_velocity_y <= 0.0 &&
+                             target_y <= baseline) {
+                        const auto descent =
+                            source_y - target_y;
+                        if (!std::isfinite(descent) ||
+                            descent <= 0.0) {
+                            return core::Result<void>::failure(
+                                character_error(
+                                    core::ErrorCode::unavailable,
+                                    "Player surface-capture "
+                                    "trajectory is invalid"));
+                        }
+                        capture_fraction = std::clamp(
+                            (source_y - baseline) / descent,
+                            0.0,
+                            1.0);
+                        captured_surface = true;
+                    }
+
+                    if (captured_surface) {
+                        const auto capture_seconds =
+                            static_cast<double>(
+                                fixed_delta_seconds) *
+                            capture_fraction;
+                        if (!representable_float(
+                                capture_seconds)) {
+                            return core::Result<void>::failure(
+                                character_error(
+                                    core::ErrorCode::unavailable,
+                                    "Player surface-capture time "
+                                    "exceeded finite range"));
+                        }
+                        auto swim_traversal_result =
+                            traverse_surface_swimming(
+                                simulation,
+                                *support_result.value(),
+                                gameplay_water,
+                                velocity_result.value(),
+                                terrain_surface,
+                                canonical_zero(
+                                    static_cast<float>(
+                                        capture_seconds)));
+                        if (!swim_traversal_result) {
+                            return core::Result<void>::failure(
+                                swim_traversal_result.error());
+                        }
+                        candidate.current.state.center_position =
+                            swim_traversal_result.value()
+                                .center_position;
+                        candidate.current.state
+                            .facing_yaw_radians =
+                            facing_result.value();
+                        candidate.current.vertical =
+                            surface_swimming_vertical_state();
+                        candidate.current.water = {
+                            .phase = PlayerWaterPhase::
+                                surface_swimming,
+                            .depth = gameplay_water.depth,
+                            .surface_height =
+                                gameplay_water.surface_height,
+                        };
+                        candidate.current.horizontal_velocity =
+                            swim_traversal_result.value()
+                                .horizontal_velocity;
+                    }
                 }
-                else {
-                    candidate.current.state.center_position =
-                        traversal_result.value()
-                            .center_position;
-                    candidate.current.state.facing_yaw_radians =
-                        facing_result.value();
-                    candidate.current.vertical =
-                        traversal_result.value().vertical;
-                    candidate.current.horizontal_velocity =
-                        traversal_result.value()
-                            .horizontal_velocity;
+                if (!captured_surface) {
+                    auto traversal_result = traverse_airborne(
+                        simulation,
+                        velocity_result.value(),
+                        starting_velocity_y,
+                        terrain_surface,
+                        fixed_delta_seconds);
+                    if (!traversal_result) {
+                        return core::Result<void>::failure(
+                            traversal_result.error());
+                    }
+                    if (traversal_result.value()
+                            .requires_recovery) {
+                        auto recovery_result =
+                            build_spawn_discontinuity(
+                                simulation,
+                                command,
+                                movement_frame,
+                                terrain_surface,
+                                fixed_tick);
+                        if (!recovery_result) {
+                            return core::Result<void>::failure(
+                                recovery_result.error());
+                        }
+                        candidate = recovery_result.value();
+                    }
+                    else {
+                        candidate.current.state.center_position =
+                            traversal_result.value()
+                                .center_position;
+                        candidate.current.state
+                            .facing_yaw_radians =
+                            facing_result.value();
+                        candidate.current.vertical =
+                            traversal_result.value().vertical;
+                        candidate.current.horizontal_velocity =
+                            traversal_result.value()
+                                .horizontal_velocity;
+                    }
                 }
             }
-        }
-        else {
-            const auto& support = *support_result.value();
-            candidate.current.state.center_position.y =
-                support.center_position_y;
-            candidate.current.vertical =
-                supported_vertical_state(
-                    support,
-                    false);
-            candidate.current.water = {};
-            candidate.current.horizontal_velocity = {};
+            }
+            else {
+                const auto& support = *support_result.value();
+                candidate.current.state.center_position.y =
+                    support.center_position_y;
+                candidate.current.vertical =
+                    supported_vertical_state(
+                        support,
+                        false);
+                candidate.current.water = {};
+                candidate.current.horizontal_velocity = {};
+            }
         }
     }
 

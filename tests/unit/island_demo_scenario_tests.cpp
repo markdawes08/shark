@@ -726,6 +726,9 @@ TEST_CASE(
         case character::PlayerGroundPhase::steep_contact:
             FAIL("Dry-spawn jump reached steep terrain");
             break;
+        case character::PlayerGroundPhase::surface_swimming:
+            FAIL("Dry-spawn jump entered surface swimming");
+            break;
         default:
             FAIL("Dry-spawn jump published an unknown phase");
             break;
@@ -988,4 +991,285 @@ TEST_CASE(
         camera_basis.forward.y * toward_center.y +
         camera_basis.forward.z * toward_center.z;
     REQUIRE(forward_dot > 100.0F);
+}
+
+TEST_CASE(
+    "Island Demo player surface swims to deep water and returns through shore",
+    "[world][scenario][island-demo][character][surface-swimming][shore][route]")
+{
+    using namespace shark;
+
+    const auto scenario_result =
+        world::make_island_demo_scenario();
+    REQUIRE(scenario_result);
+    const auto& scenario = scenario_result.value();
+    const auto surface_result =
+        terrain::HeightTileSurface::create(scenario.terrain);
+    REQUIRE(surface_result);
+    const auto& surface = surface_result.value();
+    const auto player_result =
+        character::create_player_capsule(
+            scenario.player_capsule,
+            surface);
+    REQUIRE(player_result);
+    auto player = player_result.value();
+
+    const auto& deep_sample =
+        scenario.shore_entry_samples[3];
+    const auto deep_query = water::query_gameplay_water(
+        scenario.water.gameplay_body,
+        surface,
+        deep_sample.x,
+        deep_sample.z);
+    REQUIRE(deep_query);
+    REQUIRE(deep_query.value().disposition ==
+        water::GameplayWaterDisposition::water);
+    REQUIRE(deep_query.value().depth == 5.734375F);
+    REQUIRE(deep_query.value().bed_height ==
+        deep_sample.y);
+    REQUIRE(deep_query.value().surface_height == -4.0F);
+    REQUIRE(
+        deep_query.value().surface_height -
+            scenario.player_capsule.surface_swimming
+                .surface_center_depth ==
+        -4.5F);
+
+    const auto& transition_sample =
+        scenario.shore_entry_samples[2];
+    const auto transition_query =
+        water::query_gameplay_water(
+            scenario.water.gameplay_body,
+            surface,
+            transition_sample.x,
+            transition_sample.z);
+    REQUIRE(transition_query);
+    REQUIRE(transition_query.value().depth == 1.359375F);
+    REQUIRE(transition_query.value().depth >
+        scenario.player_capsule.surface_swimming.exit_depth);
+    REQUIRE(transition_query.value().depth <
+        scenario.player_capsule.surface_swimming.enter_depth);
+
+    constexpr float fixed_delta_seconds = 1.0F / 60.0F;
+    constexpr float waypoint_radius = 0.2F;
+    constexpr std::uint64_t maximum_ticks = 8'000U;
+    const std::array<math::Float3, 2> targets{
+        scenario.shore_entry_samples[3],
+        scenario.shore_entry_samples[0],
+    };
+    std::size_t target_index = 0U;
+    std::uint64_t fixed_tick = 0U;
+    std::uint64_t swim_entry_crossing_tick = 0U;
+    std::uint64_t swim_entry_transition_tick = 0U;
+    std::uint64_t swim_exit_crossing_tick = 0U;
+    std::uint64_t swim_exit_transition_tick = 0U;
+    std::uint32_t wading_entry_count = 0U;
+    std::uint32_t swim_entry_count = 0U;
+    std::uint32_t swim_exit_count = 0U;
+    std::uint32_t wading_exit_count = 0U;
+    auto observed_deep_surface_center = false;
+    auto observed_outbound_transition_band = false;
+    auto maximum_depth = 0.0F;
+
+    while (target_index < targets.size() &&
+           fixed_tick < maximum_ticks) {
+        const auto& target = targets[target_index];
+        const auto delta_x =
+            target.x - player.current.state.center_position.x;
+        const auto delta_z =
+            target.z - player.current.state.center_position.z;
+        const auto distance = std::hypot(delta_x, delta_z);
+        if (distance <= waypoint_radius) {
+            ++target_index;
+            continue;
+        }
+
+        const auto outbound = target_index == 1U;
+        const auto inverse_distance = 1.0F / distance;
+        const math::Float3 forward{
+            delta_x == 0.0F
+                ? 0.0F
+                : delta_x * inverse_distance,
+            0.0F,
+            delta_z == 0.0F
+                ? 0.0F
+                : delta_z * inverse_distance,
+        };
+        const character::PlayerMovementFrame movement_frame{
+            .right = {
+                forward.z == 0.0F ? 0.0F : -forward.z,
+                0.0F,
+                forward.x,
+            },
+            .forward = forward,
+        };
+        const auto source_water =
+            island_water_query(scenario, surface, player);
+        const auto previous_water = player.current.water;
+        ++fixed_tick;
+        CAPTURE(
+            target_index,
+            fixed_tick,
+            distance,
+            source_water.depth);
+        REQUIRE(character::advance_player_capsule(
+            player,
+            {
+                .move_forward_held = true,
+                .run_held = true,
+            },
+            movement_frame,
+            surface,
+            source_water,
+            fixed_delta_seconds,
+            fixed_tick));
+
+        switch (player.current.water.phase) {
+        case character::PlayerWaterPhase::dry:
+        case character::PlayerWaterPhase::wading:
+            REQUIRE(player.current.vertical.phase ==
+                character::PlayerGroundPhase::grounded);
+            break;
+        case character::PlayerWaterPhase::surface_swimming:
+            REQUIRE(player.current.vertical.phase ==
+                character::PlayerGroundPhase::
+                    surface_swimming);
+            REQUIRE(player.current.vertical.velocity_y == 0.0F);
+            REQUIRE_FALSE(std::signbit(
+                player.current.vertical.velocity_y));
+            REQUIRE(player.current.vertical.support_normal ==
+                math::Float3{});
+            break;
+        default:
+            FAIL("Island swim route published an unknown water phase");
+            break;
+        }
+
+        if (source_water.disposition ==
+            water::GameplayWaterDisposition::water) {
+            maximum_depth =
+                std::max(maximum_depth, source_water.depth);
+        }
+        if (previous_water.phase ==
+                character::PlayerWaterPhase::dry &&
+            player.current.water.phase ==
+                character::PlayerWaterPhase::wading) {
+            ++wading_entry_count;
+        }
+        if (previous_water.phase ==
+                character::PlayerWaterPhase::wading &&
+            player.current.water.phase ==
+                character::PlayerWaterPhase::
+                    surface_swimming) {
+            ++swim_entry_count;
+            swim_entry_transition_tick = fixed_tick;
+            REQUIRE(source_water.depth >=
+                scenario.player_capsule.surface_swimming
+                    .enter_depth);
+        }
+        if (previous_water.phase ==
+                character::PlayerWaterPhase::
+                    surface_swimming &&
+            player.current.water.phase ==
+                character::PlayerWaterPhase::wading) {
+            ++swim_exit_count;
+            swim_exit_transition_tick = fixed_tick;
+            REQUIRE(source_water.disposition ==
+                water::GameplayWaterDisposition::water);
+            REQUIRE(source_water.depth <=
+                scenario.player_capsule.surface_swimming
+                    .exit_depth);
+        }
+        if (previous_water.phase ==
+                character::PlayerWaterPhase::wading &&
+            player.current.water.phase ==
+                character::PlayerWaterPhase::dry) {
+            ++wading_exit_count;
+        }
+
+        if (source_water.disposition ==
+                water::GameplayWaterDisposition::water &&
+            source_water.depth >= 5.0F) {
+            REQUIRE(player.current.water.phase ==
+                character::PlayerWaterPhase::
+                    surface_swimming);
+            REQUIRE(player.current.state.center_position.y ==
+                -4.5F);
+            observed_deep_surface_center = true;
+        }
+        if (outbound &&
+            source_water.disposition ==
+                water::GameplayWaterDisposition::water &&
+            source_water.depth > 1.3F &&
+            source_water.depth < 1.4F) {
+            REQUIRE(previous_water.phase ==
+                character::PlayerWaterPhase::
+                    surface_swimming);
+            REQUIRE(player.current.water.phase ==
+                character::PlayerWaterPhase::
+                    surface_swimming);
+            observed_outbound_transition_band = true;
+        }
+
+        const auto candidate_water =
+            island_water_query(scenario, surface, player);
+        if (!outbound &&
+            swim_entry_crossing_tick == 0U &&
+            (source_water.disposition !=
+                    water::GameplayWaterDisposition::water ||
+             source_water.depth <
+                    scenario.player_capsule.surface_swimming
+                        .enter_depth) &&
+            candidate_water.disposition ==
+                water::GameplayWaterDisposition::water &&
+            candidate_water.depth >=
+                scenario.player_capsule.surface_swimming
+                    .enter_depth) {
+            swim_entry_crossing_tick = fixed_tick;
+            REQUIRE(player.current.water.phase ==
+                character::PlayerWaterPhase::wading);
+        }
+        if (outbound &&
+            swim_exit_crossing_tick == 0U &&
+            source_water.disposition ==
+                water::GameplayWaterDisposition::water &&
+            source_water.depth >
+                scenario.player_capsule.surface_swimming
+                    .exit_depth &&
+            (candidate_water.disposition !=
+                    water::GameplayWaterDisposition::water ||
+             candidate_water.depth <=
+                    scenario.player_capsule.surface_swimming
+                        .exit_depth)) {
+            swim_exit_crossing_tick = fixed_tick;
+            REQUIRE(player.current.water.phase ==
+                character::PlayerWaterPhase::
+                    surface_swimming);
+        }
+    }
+
+    REQUIRE(target_index == targets.size());
+    REQUIRE(fixed_tick < maximum_ticks);
+    REQUIRE(wading_entry_count == 1U);
+    REQUIRE(swim_entry_count == 1U);
+    REQUIRE(swim_exit_count == 1U);
+    REQUIRE(wading_exit_count == 1U);
+    REQUIRE(swim_entry_crossing_tick != 0U);
+    REQUIRE(swim_exit_crossing_tick != 0U);
+    REQUIRE(
+        swim_entry_transition_tick ==
+        swim_entry_crossing_tick + 1U);
+    REQUIRE(
+        swim_exit_transition_tick ==
+        swim_exit_crossing_tick + 1U);
+    REQUIRE(observed_deep_surface_center);
+    REQUIRE(observed_outbound_transition_band);
+    REQUIRE(maximum_depth >= 5.0F);
+    REQUIRE(player.current.water ==
+        character::PlayerWaterState{});
+    REQUIRE(player.current.vertical.phase ==
+        character::PlayerGroundPhase::grounded);
+    REQUIRE(player.current.state.center_position.z ==
+        Catch::Approx(
+            scenario.shore_entry_samples[0].z)
+            .margin(waypoint_radius));
 }

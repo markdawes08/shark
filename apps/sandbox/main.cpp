@@ -1594,12 +1594,14 @@ void log_platform_event(const shark::platform::Event& event)
               "resumes/pauses the "
               "fixed 60 Hz sphere simulation and F6 advances one "
               "tick while paused; F7 toggles third-person/free-fly; "
-              "WASD moves the blue capsule, Shift runs, Space jumps, "
+              "WASD moves the blue capsule, Shift runs on supported "
+              "ground, Space jumps outside surface swimming, "
               "RMB orbits, and the wheel zooms the fixed-tick "
               "third-person camera; standard gravity, canonical "
               "terrain grounding, and shallow-water wading advance "
-              "per tick, deeper water slows wading, and R resets the "
-              "player");
+              "per tick, deeper water transitions to surface "
+              "swimming, Space has no swim jump yet, and R resets "
+              "the player");
 
     auto simulation_clock_result =
         simulation::FixedStepClock::create(

@@ -1,9 +1,12 @@
 # Fixed-Step Rigid-Body and Contact Contract
 
 - **Completed through:** `PHY-010`
-- **Character integration verified through:** `CHR-005`
+- **Character integration completed through:** `CHR-006`
 - **Camera integration verified through:** `CAM-001`
 - **Last verified:** July 26, 2026
+- **CHR-006 verification:** Debug and Release each passed `612,172` assertions
+  across `410` cases; focused Debug passed `22,221` assertions across `10`
+  surface-swimming cases; RTX 4070/WARP smokes passed `1,000/600` frames
 
 PHY-001 established Shark's fixed-clock ballistic path. PHY-002 gives that one
 sphere a one-meter collider and deterministic canonical-terrain support.
@@ -811,31 +814,54 @@ it neither enters the rigid-body arrays nor changes their solver order.
 CAM-001 adds a separate presentation-only orbit rig on those same fixed ticks
 and never mutates Character.
 
-CHR-005 preserves and extends the fixed-tick order: sample one command,
+CHR-006 preserves the fixed-tick order: sample one command,
 advance the authoritative orbit, derive its horizontal camera basis, query
 WQ-001 at the tick-start authoritative player X/Z, advance Character with that
 movement frame and water result, and then run the unchanged dynamic-sphere
 path. Catch-up frames perform the CPU query separately for every emitted tick;
 render interpolation never supplies simulation coordinates.
 
-Character classifies only supported grounded/landing motion as wading. Entry
-is `>= 0.25 m`, exit is `<= 0.125 m`, and target speed scales linearly from
-`1.0` at entry depth to `0.5` at `1.5 m`, remaining clamped deeper. The query
-bed must exactly agree with canonical LOD0 support. A movement step can cross
-the shore before its tick-start observation changes, so reclassification
-occurs on the next emitted tick. Jump/air/steep/reset/recovery publish dry
-state; reset wins over a wet source query. Flow is ignored. The controller
-remains kinematic, mutates no water, performs no GPU wait, and does not enter
-the unchanged dynamic Physics path. A time-baseline discontinuity still
-collapses player and camera presentation history before accumulated time is
-discarded.
+Character classifies supported grounded/landing motion as wading at
+`0.25/0.125 m` entry/exit thresholds. Supported wading enters surface swimming
+at depth `>= 1.50 m` unless a same-tick jump wins first; a swimmer exits at
+depth `<= 1.25 m`. Its vertical center is
+`max(surface height - 0.50 m, canonical support)`, horizontal intent has one
+`3 m/s` camera-relative speed, and Shift/Space are ignored while swimming.
+Ground acceleration, braking, facing, and bounded terrain probes remain the
+movement machinery.
 
-Until CHR-006, deep-bed traversal remains wading at the `0.5` multiplier rather
-than a barrier or swim transition. The active queue is `CHR-006`, surface
-swimming. W-005 remains an approved
-deferred fluid specialization; the queue is centralized in
-[ENGINE_PLAN.md](ENGINE_PLAN.md), and the query contract is in
-[WATER.md](WATER.md). The player contract is in
+Descending deep-water motion can be captured at the surface target before a
+terrain landing, while rising motion is unchanged. Walkable terrain can raise
+the center through the surface/support maximum. A rejected X/Z candidate,
+missing candidate support, or protruding steep support preserves the safe
+prefix. A walkable shallow exit returns to exact support and wading/dry state;
+a steep exit becomes dry steep contact. A `no_water` swimmer snaps
+grounded/dry only within the ordinary ground-snap rule and otherwise becomes
+dry falling with horizontal momentum preserved. `out_of_terrain` or missing
+source support uses collapsed spawn recovery. Reset wins and collapses dry
+spawn; lifecycle discontinuities still collapse player and camera
+presentation histories.
+
+The query bed must exactly agree with canonical LOD0 support. A movement step
+can cross the shore before its tick-start observation changes, so
+reclassification occurs on the next emitted tick. No per-probe Water query is
+added, and the DTO still lacks source-X/Z provenance for equal-height stale
+samples. Flow is ignored. The controller remains kinematic, mutates no water,
+performs no GPU wait, and does not enter the unchanged dynamic Physics path.
+The camera, renderer proxy, WQ ordering, and dynamic-sphere order are unchanged.
+
+CHR-006 focused Debug passed `22,221` assertions across `10` surface-swimming
+cases, and the complete Debug and Release suites each passed `612,172`
+assertions across `410` cases. The final Debug RTX 4070 and packaged-WARP
+presentation smokes passed `1,000/600` frames; each end-of-run validation
+reported zero D3D12 corruption, zero errors, zero live D3D12 child objects, and
+only the two expected device-level RLDO advisory warnings. The active queue is
+`AVT-001`, placeholder avatar presentation. Underwater
+movement/combat, swim jump, currents, animation, dynamic-water smoothing,
+per-probe Water queries, and GPU integration remain deferred. W-005 remains an
+approved fluid specialization; the queue is centralized in
+[ENGINE_PLAN.md](ENGINE_PLAN.md), the query contract is in
+[WATER.md](WATER.md), and the player contract is in
 [CHARACTER.md](CHARACTER.md).
 
 ISL-001 keeps the four-sphere runtime diagnostics while moving them onto the

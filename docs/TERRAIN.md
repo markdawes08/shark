@@ -1,8 +1,11 @@
 # Canonical Terrain-Tile Contract
 
 - **Completed through:** `ISL-001`
-- **Character integration verified through:** `CHR-005`
+- **Character integration completed through:** `CHR-006`
 - **Last verified:** July 26, 2026
+- **CHR-006 verification:** Debug and Release each passed `612,172` assertions
+  across `410` cases; focused Debug passed `22,221` assertions across `10`
+  surface-swimming cases; RTX 4070/WARP smokes passed `1,000/600` frames
 
 ISL-001 retains the T-007 rolling-height source and all historical T-008 basin
 fixtures, but the no-argument Island Demo applies a separate deterministic Q8
@@ -1167,18 +1170,40 @@ features and obstacle collision are not claimed. CAM-001 continues to use the
 canonical LOD0 segment query only for presentation obstruction and never
 changes Character authority.
 
-CHR-005 consumes one WQ-001 result at the authoritative tick-start X/Z and
+CHR-006 consumes one WQ-001 result at the authoritative tick-start X/Z and
 requires its bed height to equal the same canonical LOD0 face used by
 Character support. Wading changes only the supported movement target; it does
 not change terrain probes, support height, topology, coarse visual LOD, or
-terrain ownership. Water is not queried at each terrain traversal probe, so a
-shore crossing is reclassified on the next emitted fixed tick. Jumping,
-airborne motion, steep contact, reset, and recovery remain dry. Deep submerged
-beds are temporarily traversable at the clamped half-speed wading multiplier;
-CHR-005 adds neither a terrain barrier nor a swim transition.
+terrain ownership. Surface swimming enters/exits at `1.50/1.25 m`, targets
+`max(water surface - 0.50 m, canonical support)`, and reuses the ground
+acceleration, braking, facing, and maximum `0.25 m` terrain-probe spacing at
+one `3 m/s` horizontal speed. The maximum keeps the water-supported capsule
+above the canonical bed; it does not turn the bed into swimming support.
 
-The active queue is `CHR-006`, surface swimming. `W-005`, the GPU
-shallow-water solver, remains an approved deferred specialization in
+Walkable bed rise raises the capsule through the surface/support maximum. A
+rejected X/Z bound, missing candidate support, or steep support protruding
+above the surface baseline preserves the last safe horizontal prefix and zeros
+horizontal velocity. Water is not queried at each terrain traversal probe, so
+a shore crossing is reclassified from the next tick-start observation.
+Walkable shallow exit snaps to exact support and retains horizontal velocity;
+steep exit publishes dry `steep_contact` and zeros it. A `no_water` swimmer
+snaps to grounded support only when it is at or above support within
+ground-snap distance, otherwise it falls dry. `out_of_terrain` or missing
+canonical source support uses collapsed spawn recovery. Descending deep-water
+motion can be captured at the surface; rising motion remains unchanged.
+
+Terrain owns none of the `1.50/1.25 m` thresholds, surface offset, water
+containment, or phase policy. The WQ result still has no source-X/Z provenance,
+and Character adds no per-probe Water query, renderer dependency, GPU access,
+current response, or dynamic-water smoothing. CHR-006 focused Debug passed
+`22,221` assertions across `10` surface-swimming cases, and the complete Debug
+and Release suites each passed `612,172` assertions across `410` cases. The
+final Debug RTX 4070 and packaged-WARP presentation smokes passed `1,000/600`
+frames; each end-of-run validation reported zero D3D12 corruption, zero errors,
+zero live D3D12 child objects, and only the two expected device-level RLDO
+advisory warnings. The active queue is `AVT-001`, placeholder avatar
+presentation. `W-005`, the
+GPU shallow-water solver, remains an approved deferred specialization in
 [ENGINE_PLAN.md](ENGINE_PLAN.md); gameplay query invariants are in
 [WATER.md](WATER.md), and the player contract is in
 [CHARACTER.md](CHARACTER.md).

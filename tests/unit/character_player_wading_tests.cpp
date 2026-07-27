@@ -327,7 +327,7 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "wading scales only ground target speed and clamps in deep water",
+    "wading scales ground target speed until surface-swim entry",
     "[character][player-capsule][wading][locomotion][speed]")
 {
     using namespace shark;
@@ -355,27 +355,38 @@ TEST_CASE(
         math::Float3{0.0F, 0.0F, -3.0F});
     REQUIRE(player.current.state.center_position.z == -0.75F);
 
+    const auto below_swim_entry = std::nextafter(
+        character::default_player_surface_swimming_enter_depth,
+        -std::numeric_limits<float>::infinity());
     advance_with_body(
         player,
         surface,
-        water_body(1.5F),
+        water_body(below_swim_entry),
         2U,
         walk,
         0.25F);
-    REQUIRE(player.current.horizontal_velocity ==
-        math::Float3{0.0F, 0.0F, -2.0F});
-    REQUIRE(player.current.state.center_position.z == -1.25F);
+    REQUIRE(player.current.water.phase ==
+        character::PlayerWaterPhase::wading);
+    REQUIRE(player.current.horizontal_velocity.z ==
+        Catch::Approx(-2.0F).margin(0.000001F));
+    REQUIRE(player.current.state.center_position.z ==
+        Catch::Approx(-1.25F).margin(0.000001F));
 
     advance_with_body(
         player,
         surface,
-        water_body(5.734375F),
+        water_body(
+            character::
+                default_player_surface_swimming_enter_depth),
         3U,
         walk,
         0.25F);
+    REQUIRE(player.current.water.phase ==
+        character::PlayerWaterPhase::surface_swimming);
     REQUIRE(player.current.horizontal_velocity ==
-        math::Float3{0.0F, 0.0F, -2.0F});
-    REQUIRE(player.current.state.center_position.z == -1.75F);
+        math::Float3{0.0F, 0.0F, -3.0F});
+    REQUIRE(player.current.state.center_position.z ==
+        Catch::Approx(-2.0F).margin(0.000001F));
 
     auto island_depth_player = make_player(surface);
     advance_with_body(

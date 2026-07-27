@@ -204,12 +204,25 @@ horizontal flow; see [WATER.md](WATER.md).
 `W-005` may later port fixed-step batches to D3D12 ping-pong compute resources
 and must match this CPU oracle within documented tolerances. GPU
 simulated-water rendering, rain coupling, and hydrology remain approved
-deferred specializations. CHR-004 jump, airborne, landing, and recovery policy
-remains unchanged. CHR-005 consumes one separate CPU WQ-001 calm-water result
-per emitted fixed tick, validates its canonical bed, and owns dry/wading
-hysteresis plus depth-scaled supported movement. It neither consumes this
-numerical solver nor mutates water volume; flow, GPU readback, per-probe water
-queries, and dynamic coupling remain absent. Deep-bed wading stays clamped at
-half speed until CHR-006 adds surface swimming. CAM-001 also does not consume
-this solver. The active queue is `CHR-006`, surface swimming through the same
-adapter-neutral gameplay-water result.
+deferred specializations. CHR-006 consumes one separate CPU WQ-001 calm-water
+result per emitted fixed tick, validates its canonical bed, and owns dry/wading/
+surface-swimming policy. Surface entry/exit is `1.50/1.25 m`; the center target
+is `max(surface - 0.50 m, canonical support)`, and one `3 m/s` directional speed
+reuses Character's ground acceleration, braking, facing, and terrain probes.
+Descending deep-water motion can be captured at that surface target; rising
+motion is unchanged.
+
+CHR-006 neither consumes this numerical solver nor mutates water volume. Flow,
+currents, dynamic-water smoothing, GPU readback, per-probe Water queries, and
+dynamic coupling remain absent. Tick-start/source-only classification means a
+crossing is observed on the next emitted tick; the DTO's lack of source-X/Z
+provenance remains a known limitation. Missing support uses Character's
+collapsed spawn recovery, and reset/collapse remain Character-owned. CAM-001
+and the renderer still do not consume this solver. CHR-006 focused Debug
+passed `22,221` assertions across `10` surface-swimming cases, and the complete
+Debug and Release suites each passed `612,172` assertions across `410` cases.
+The final Debug RTX 4070 and packaged-WARP presentation smokes passed
+`1,000/600` frames; each end-of-run validation reported zero D3D12 corruption,
+zero errors, zero live D3D12 child objects, and only the two expected
+device-level RLDO advisory warnings. The active queue is `AVT-001`, placeholder
+avatar presentation.

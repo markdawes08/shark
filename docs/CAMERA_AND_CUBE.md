@@ -2,8 +2,11 @@
 
 - **Camera/cube capability completed through:** `G-005`
 - **Renderer integration verified through:** `CAM-001`
-- **Character integration verified through:** `CHR-005`
+- **Character integration completed through:** `CHR-006`
 - **Last verified:** July 26, 2026
+- **CHR-006 verification:** Debug and Release each passed `612,172` assertions
+  across `410` cases; focused Debug passed `22,221` assertions across `10`
+  surface-swimming cases; RTX 4070/WARP smokes passed `1,000/600` frames
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
 engine-owned free-fly camera drives a resource-bound cube pipeline, a finite
@@ -437,13 +440,33 @@ newly advanced authoritative orbit basis; the camera's terrain-clearance probe
 remains presentation-only. CHR-004 adds vertical jump motion and weaker
 camera-relative airborne control through that same basis; the camera follows
 the interpolated rising/falling center while clearance remains
-presentation-only. CHR-005 evaluates WQ-001 at the tick-start authoritative
-player X/Z after orbit advancement and before Character advancement. Wading
-can slow the controller but does not change camera state, target height,
-clearance, interpolation, or render ordering. A shore crossing is reclassified
-on the next emitted simulation tick; the camera continues to follow only the
-interpolated player position. Time-baseline resets collapse both interpolation
-intervals before resuming.
+presentation-only. CHR-006 evaluates WQ-001 at the tick-start authoritative
+player X/Z after orbit advancement and before Character advancement, preserving
+the CAM-001/WQ/Character order exactly. Wading can slow the controller and
+surface swimming can place its center at
+`max(surface height - 0.50 m, canonical support)`, but neither mode changes
+camera state, target-height offset, terrain clearance, interpolation, or render
+ordering. The current orbit basis still supplies camera-relative direction;
+surface swimming uses one `3 m/s` speed with Shift ignored.
+
+A shore crossing is reclassified on the next emitted simulation tick because
+Character consumes only the one source-position WQ result and performs no
+per-probe Water query. The camera continues to follow only the interpolated
+player position. Descending deep-water capture and shore return therefore move
+the existing upright blue proxy and camera target through their ordinary
+presentation interpolation. The renderer receives no water phase, adds no
+swim pose/pass/resource, and remains unchanged; `AVT-001` owns placeholder
+avatar and phase-aware presentation. Space has no swim jump, flow/currents and
+dynamic-water smoothing remain deferred, and the WQ DTO still lacks source-X/Z
+provenance. Time-baseline resets collapse both interpolation intervals before
+resuming. CHR-006 focused Debug passed `22,221` assertions across `10`
+surface-swimming cases, and the complete Debug and Release suites each passed
+`612,172` assertions across `410` cases. The final Debug RTX 4070 and
+packaged-WARP presentation smokes passed `1,000/600` frames; each end-of-run
+validation reported zero D3D12 corruption, zero errors, zero live D3D12 child
+objects, and only the two expected device-level RLDO advisory warnings. The
+active queue is
+`AVT-001`.
 See [the Character contract](CHARACTER.md) and
 [the simulation contract](SIMULATION.md). This component page
 no longer duplicates the rolling project

@@ -17,6 +17,7 @@ add_executable(SharkTests
     unit/camera_tests.cpp
     unit/character_player_capsule_tests.cpp
     unit/character_player_pipeline_tests.cpp
+    unit/character_player_wading_tests.cpp
     unit/assertion_tests.cpp
     unit/dds_cubemap_tests.cpp
     unit/environment_lighting_tests.cpp

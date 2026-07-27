@@ -1,7 +1,7 @@
 # Gameplay Water Query Contract
 
 - **Completed through:** `WQ-001`
-- **Character integration observed through:** `CHR-004`
+- **Character integration observed through:** `CHR-005`
 - **Last verified:** July 26, 2026
 
 WQ-001 adds a small platform- and renderer-independent `shark::water` boundary
@@ -49,13 +49,48 @@ shoreline tolerance remains `no_water`; the immediately deeper representable
 case is `water`. This conservative gameplay strip absorbs small
 triangle-interpolation differences. CPU double evaluation and rasterized
 shader float evaluation are not claimed to be bit-identical on the analytic
-support curve; later character-state hysteresis belongs to `CHR-005`, not this
-stateless query.
+support curve; CHR-005's character-state hysteresis belongs to Character, not
+this stateless query.
 
 Invalid body fields, unknown support values, nonpositive tolerance, nonfinite
 flow, or nonfinite query coordinates return a Simulation `invalid_argument`
 error. A finite terrain miss is an ordinary result, not an error. Derived
 nonfinite or unrepresentable support/depth fails without partial output.
+
+## CHR-005 consumption
+
+The sandbox evaluates this CPU query once per emitted fixed tick at the
+tick-start authoritative capsule X/Z, after advancing the authoritative orbit
+and before advancing Character. Catch-up frames therefore obtain a fresh
+result for each simulation tick. Render interpolation, water pixels, and GPU
+state never participate.
+
+Character consumes only `GameplayWaterQuery`; it does not receive
+`CalmWaterBody` or Water's analytic containment policy. A supported grounded
+or landing character enters wading at depth `>= 0.25 m`, remains wading while
+depth is greater than `0.125 m`, and exits at depth `<= 0.125 m`. The query's
+bed must exactly match Character's canonical LOD0 terrain support at the same
+source position. A malformed or inconsistent observation fails the Character
+advance transaction.
+
+The DTO does not carry source X/Z. Querying at the authoritative tick-start
+position is consequently a composition-root contract; exact bed matching is a
+defensive check, not complete provenance for equal-height terrain points. The
+sandbox satisfies the contract by querying immediately before each Character
+advance.
+
+Supported wading scales movement linearly from multiplier `1.0` at `0.25 m`
+to `0.5` at `1.5 m`; deeper observations remain clamped at `0.5`. The optional
+horizontal flow remains part of the adapter-neutral result but CHR-005 ignores
+it. A step that crosses the shoreline is reclassified on the next emitted
+fixed tick because the result describes the tick-start position.
+
+Jumping, airborne motion, steep contact, reset, and recovery publish dry
+Character water state. Reset wins over a wet source observation. No Character
+operation mutates this body, water volume, renderer input, or fluid state.
+CHR-005 performs no per-probe water query and creates no deep-water barrier;
+deep-bed walking temporarily remains possible at the `0.5` multiplier until
+CHR-006 adds surface swimming.
 
 ## Island Demo proof
 
@@ -75,23 +110,21 @@ The permanent fixture verifies:
 - adjacent representable Island Demo shoreline samples; and
 - deterministic repeated queries with unchanged terrain.
 
-Focused Debug and Release verification each pass 362 assertions across eight
-cases. Both complete configurations pass 492,868 assertions across 335 cases;
-the complete verification record is in [BUILDING.md](BUILDING.md).
+At the WQ-001 checkpoint, focused Debug and Release verification each passed
+362 assertions across eight cases, while both complete configurations passed
+492,868 assertions across 335 cases. The current complete verification record
+is in [BUILDING.md](BUILDING.md).
 
 ## Non-goals
 
-WQ-001 adds no capsule immersion thresholds, wading/swimming modes, character
+WQ-001 itself still owns no capsule thresholds, movement modes, character
 state, buoyancy, water displacement, dynamic waves, GPU readback, fluid
-coupling, or renderer change. A later simulated-water adapter may provide the
-same query information without changing character policy.
+coupling, or renderer change. CHR-005 owns the wading policy described above;
+a later simulated-water adapter may provide the same query information without
+changing Character policy.
 
-CHR-004 lets one bounded capsule walk, jump, steer in air, land, and recover
-against canonical terrain but still does not query water during fixed-tick
-advancement or own immersion policy. It can therefore continue along, jump
-over, or land on submerged terrain as a temporary limitation. No Character
-action mutates water volume. CAM-001 changes only its presentation camera.
-The active queue is `CHR-005`, where WQ-001 first enters Character policy for
-shallow-water wading. The authoritative increment order remains in
-[ENGINE_PLAN.md](ENGINE_PLAN.md), and the player contract is in
-[CHARACTER.md](CHARACTER.md).
+Surface-relative buoyancy and surface-swim entry/exit remain outside CHR-005.
+No Character action mutates water volume, and CAM-001 remains presentation
+only. The active queue is `CHR-006`, surface swimming. The authoritative
+increment order remains in [ENGINE_PLAN.md](ENGINE_PLAN.md), and the player
+contract is in [CHARACTER.md](CHARACTER.md).

@@ -28,6 +28,21 @@ namespace {
     return static_cast<std::size_t>(z) * columns + x;
 }
 
+[[nodiscard]] shark::water::GameplayWaterQuery
+island_water_query(
+    const shark::world::IslandDemoScenario& scenario,
+    const shark::terrain::HeightTileSurface& surface,
+    const shark::character::PlayerCapsuleSimulation& player)
+{
+    const auto result = shark::water::query_gameplay_water(
+        scenario.water.gameplay_body,
+        surface,
+        player.current.state.center_position.x,
+        player.current.state.center_position.z);
+    REQUIRE(result);
+    return result.value();
+}
+
 } // namespace
 
 TEST_CASE(
@@ -135,6 +150,13 @@ TEST_CASE(
             .jump_launch_speed = 6.5F,
             .control_acceleration = 12.0F,
         });
+    REQUIRE(first.player_capsule.wading ==
+        character::PlayerWadingSettings{
+            .enter_depth = 0.25F,
+            .exit_depth = 0.125F,
+            .depth_for_minimum_speed = 1.5F,
+            .minimum_speed_multiplier = 0.5F,
+        });
     const auto spawn_support_result =
         character::query_player_terrain_support(
             first.player_capsule.shape,
@@ -179,6 +201,8 @@ TEST_CASE(
         player.current.vertical.velocity_y));
     REQUIRE(player.current.horizontal_velocity ==
         math::Float3{});
+    REQUIRE(player.current.water ==
+        character::PlayerWaterState{});
     REQUIRE(player.current.vertical.phase ==
         character::PlayerGroundPhase::grounded);
     REQUIRE(player.current.vertical.support_normal ==
@@ -487,6 +511,7 @@ TEST_CASE(
             command,
             movement_frame,
             surface,
+            island_water_query(scenario, surface, player),
             fixed_delta_seconds,
             fixed_tick));
 
@@ -510,6 +535,8 @@ TEST_CASE(
         REQUIRE(player.current.horizontal_velocity.y == 0.0F);
         REQUIRE_FALSE(std::signbit(
             player.current.horizontal_velocity.y));
+        REQUIRE(player.current.water ==
+            character::PlayerWaterState{});
         REQUIRE(support.surface.position.y >=
             scenario.water.gameplay_body.surface_height +
                 0.5F);
@@ -554,10 +581,13 @@ TEST_CASE(
         {.jump_pressed = true},
         {},
         surface,
+        island_water_query(scenario, surface, player),
         fixed_delta_seconds,
         1U));
     REQUIRE(player.current.vertical.phase ==
         character::PlayerGroundPhase::rising);
+    REQUIRE(player.current.water ==
+        character::PlayerWaterState{});
     REQUIRE(player.current.vertical.velocity_y ==
         Catch::Approx(
             scenario.player_capsule.air_locomotion
@@ -579,6 +609,7 @@ TEST_CASE(
         {.jump_pressed = true},
         {},
         surface,
+        island_water_query(scenario, surface, player),
         fixed_delta_seconds,
         2U));
     REQUIRE(player.current.vertical.phase ==
@@ -608,6 +639,7 @@ TEST_CASE(
             {},
             {},
             surface,
+            island_water_query(scenario, surface, player),
             fixed_delta_seconds,
             fixed_tick));
 
@@ -632,6 +664,8 @@ TEST_CASE(
         REQUIRE(position.z == spawn_position.z);
         REQUIRE(player.current.horizontal_velocity ==
             math::Float3{});
+        REQUIRE(player.current.water ==
+            character::PlayerWaterState{});
 
         const auto support_result =
             character::query_player_terrain_support(
@@ -710,6 +744,177 @@ TEST_CASE(
         spawn_position);
     REQUIRE(player.current.vertical.phase ==
         character::PlayerGroundPhase::grounded);
+}
+
+TEST_CASE(
+    "Island Demo player enters and exits its authored shallow shore",
+    "[world][scenario][island-demo][character][wading][shore][route]")
+{
+    using namespace shark;
+
+    const auto scenario_result =
+        world::make_island_demo_scenario();
+    REQUIRE(scenario_result);
+    const auto& scenario = scenario_result.value();
+    const auto surface_result =
+        terrain::HeightTileSurface::create(scenario.terrain);
+    REQUIRE(surface_result);
+    const auto& surface = surface_result.value();
+    const auto player_result =
+        character::create_player_capsule(
+            scenario.player_capsule,
+            surface);
+    REQUIRE(player_result);
+    auto player = player_result.value();
+
+    constexpr float fixed_delta_seconds = 1.0F / 60.0F;
+    constexpr float waypoint_radius = 0.2F;
+    constexpr std::uint64_t maximum_ticks = 4'000U;
+    const std::array<math::Float3, 2> targets{
+        scenario.shore_entry_samples[2],
+        scenario.shore_entry_samples[0],
+    };
+    std::size_t target_index = 0U;
+    std::uint64_t fixed_tick = 0U;
+    std::uint64_t entry_crossing_tick = 0U;
+    std::uint64_t entry_transition_tick = 0U;
+    std::uint64_t exit_crossing_tick = 0U;
+    std::uint64_t exit_transition_tick = 0U;
+    std::uint32_t entry_transition_count = 0U;
+    std::uint32_t exit_transition_count = 0U;
+    auto maximum_depth = 0.0F;
+
+    while (target_index < targets.size() &&
+           fixed_tick < maximum_ticks) {
+        const auto& target = targets[target_index];
+        const auto delta_x =
+            target.x - player.current.state.center_position.x;
+        const auto delta_z =
+            target.z - player.current.state.center_position.z;
+        const auto distance = std::hypot(delta_x, delta_z);
+        if (distance <= waypoint_radius) {
+            ++target_index;
+            continue;
+        }
+
+        const auto inverse_distance = 1.0F / distance;
+        const math::Float3 forward{
+            delta_x == 0.0F
+                ? 0.0F
+                : delta_x * inverse_distance,
+            0.0F,
+            delta_z == 0.0F
+                ? 0.0F
+                : delta_z * inverse_distance,
+        };
+        const character::PlayerMovementFrame movement_frame{
+            .right = {
+                forward.z == 0.0F ? 0.0F : -forward.z,
+                0.0F,
+                forward.x,
+            },
+            .forward = forward,
+        };
+        const auto source_water =
+            island_water_query(scenario, surface, player);
+        const auto previous_water = player.current.water;
+        ++fixed_tick;
+        CAPTURE(
+            target_index,
+            fixed_tick,
+            distance,
+            source_water.depth);
+        REQUIRE(character::advance_player_capsule(
+            player,
+            {
+                .move_forward_held = true,
+                .run_held = true,
+            },
+            movement_frame,
+            surface,
+            source_water,
+            fixed_delta_seconds,
+            fixed_tick));
+        REQUIRE(player.current.vertical.phase ==
+            character::PlayerGroundPhase::grounded);
+        REQUIRE(player.current.horizontal_velocity.y == 0.0F);
+
+        if (source_water.disposition ==
+            water::GameplayWaterDisposition::water) {
+            maximum_depth =
+                std::max(maximum_depth, source_water.depth);
+        }
+        if (previous_water.phase ==
+                character::PlayerWaterPhase::dry &&
+            player.current.water.phase ==
+                character::PlayerWaterPhase::wading) {
+            ++entry_transition_count;
+            entry_transition_tick = fixed_tick;
+            REQUIRE(source_water.disposition ==
+                water::GameplayWaterDisposition::water);
+            REQUIRE(source_water.depth >=
+                scenario.player_capsule.wading.enter_depth);
+        }
+        if (previous_water.phase ==
+                character::PlayerWaterPhase::wading &&
+            player.current.water.phase ==
+                character::PlayerWaterPhase::dry) {
+            ++exit_transition_count;
+            exit_transition_tick = fixed_tick;
+            REQUIRE((
+                source_water.disposition !=
+                    water::GameplayWaterDisposition::water ||
+                source_water.depth <=
+                    scenario.player_capsule.wading.exit_depth));
+        }
+
+        const auto candidate_water =
+            island_water_query(scenario, surface, player);
+        if (target_index == 0U &&
+            entry_crossing_tick == 0U &&
+            (source_water.disposition !=
+                    water::GameplayWaterDisposition::water ||
+             source_water.depth <
+                    scenario.player_capsule.wading.enter_depth) &&
+            candidate_water.disposition ==
+                water::GameplayWaterDisposition::water &&
+            candidate_water.depth >=
+                scenario.player_capsule.wading.enter_depth) {
+            entry_crossing_tick = fixed_tick;
+            REQUIRE(player.current.water.phase ==
+                character::PlayerWaterPhase::dry);
+        }
+        if (target_index == 1U &&
+            exit_crossing_tick == 0U &&
+            source_water.disposition ==
+                water::GameplayWaterDisposition::water &&
+            source_water.depth >
+                scenario.player_capsule.wading.exit_depth &&
+            (candidate_water.disposition !=
+                    water::GameplayWaterDisposition::water ||
+             candidate_water.depth <=
+                    scenario.player_capsule.wading.exit_depth)) {
+            exit_crossing_tick = fixed_tick;
+            REQUIRE(player.current.water.phase ==
+                character::PlayerWaterPhase::wading);
+        }
+    }
+
+    REQUIRE(target_index == targets.size());
+    REQUIRE(fixed_tick < maximum_ticks);
+    REQUIRE(entry_transition_count == 1U);
+    REQUIRE(exit_transition_count == 1U);
+    REQUIRE(entry_crossing_tick != 0U);
+    REQUIRE(exit_crossing_tick != 0U);
+    REQUIRE(entry_transition_tick == entry_crossing_tick + 1U);
+    REQUIRE(exit_transition_tick == exit_crossing_tick + 1U);
+    REQUIRE(maximum_depth >= 1.25F);
+    REQUIRE(player.current.water ==
+        character::PlayerWaterState{});
+    REQUIRE(player.current.state.center_position.z ==
+        Catch::Approx(
+            scenario.shore_entry_samples[0].z)
+            .margin(waypoint_radius));
 }
 
 TEST_CASE(

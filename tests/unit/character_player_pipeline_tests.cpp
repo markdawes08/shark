@@ -4,6 +4,7 @@
 #include <shark/platform/events.hpp>
 #include <shark/simulation/fixed_step_clock.hpp>
 #include <shark/terrain/height_tile.hpp>
+#include <shark/water/gameplay_water.hpp>
 #include <shark/world/third_person_camera.hpp>
 
 #include <catch2/catch_approx.hpp>
@@ -255,8 +256,60 @@ make_flat_surface()
     return std::move(result).value();
 }
 
+[[nodiscard]] shark::water::CalmWaterBody
+pipeline_water_body(
+    const bool wading_schedule,
+    const std::uint64_t fixed_tick)
+{
+    auto surface_height = -1.0F;
+    if (wading_schedule) {
+        surface_height = 0.875F;
+        switch (fixed_tick) {
+        case 111U:
+            surface_height = 0.2F;
+            break;
+        case 112U:
+            surface_height =
+                shark::character::default_player_wading_enter_depth;
+            break;
+        case 113U:
+            surface_height = 0.2F;
+            break;
+        case 114U:
+            surface_height =
+                shark::character::default_player_wading_exit_depth;
+            break;
+        default:
+            if (fixed_tick >= 115U) {
+                surface_height = -1.0F;
+            }
+            break;
+        }
+    }
+    return {
+        .footprint = {
+            .center_x = 0.0F,
+            .center_z = 0.0F,
+            .semi_axis_x = 64.0F,
+            .semi_axis_z = 64.0F,
+            .x_warp_square_offset = 0.0F,
+            .x_warp_divisor = 4'096.0F,
+            .z_warp_square_offset = 0.0F,
+            .z_warp_divisor = 4'096.0F,
+        },
+        .support_side =
+            shark::water::CalmWaterSupportSide::
+                inside_warped_footprint,
+        .surface_height = surface_height,
+        .shoreline_depth_tolerance =
+            shark::water::default_shoreline_depth_tolerance,
+        .flow_velocity = shark::water::HorizontalFlow{},
+    };
+}
+
 [[nodiscard]] PipelineRun run_pipeline_schedule(
-    const std::uint32_t render_rate_hz)
+    const std::uint32_t render_rate_hz,
+    const bool wading_schedule = false)
 {
     using namespace shark;
 
@@ -326,11 +379,21 @@ make_flat_surface()
                 .right = camera_basis.value().right,
                 .forward = camera_basis.value().forward,
             };
+            const auto gameplay_water =
+                water::query_gameplay_water(
+                    pipeline_water_body(
+                        wading_schedule,
+                        run.emitted_ticks),
+                    surface,
+                    player.current.state.center_position.x,
+                    player.current.state.center_position.z);
+            REQUIRE(gameplay_water);
             REQUIRE(character::advance_player_capsule(
                 player,
                 command,
                 movement_frame,
                 surface,
+                gameplay_water.value(),
                 clock.fixed_delta_seconds(),
                 run.emitted_ticks));
             REQUIRE(player.current.consumed_command ==
@@ -450,6 +513,8 @@ TEST_CASE(
     std::uint64_t landing_count = 0U;
     std::uint64_t apex_transition_count = 0U;
     for (const auto& entry : baseline.transcript) {
+        REQUIRE(entry.current.water ==
+            shark::character::PlayerWaterState{});
         REQUIRE(entry.current.horizontal_velocity.y == 0.0F);
         REQUIRE(entry.current.consumed_command == entry.command);
         REQUIRE(entry.current.consumed_movement_frame ==
@@ -647,4 +712,89 @@ TEST_CASE(
         shark::math::Float3{});
     REQUIRE(baseline.transcript.back().current.vertical.phase ==
         shark::character::PlayerGroundPhase::grounded);
+}
+
+TEST_CASE(
+    "wading command pipeline is exact across render partitions",
+    "[character][player-capsule][pipeline][wading][fixed-step][invariance]")
+{
+    using namespace shark;
+
+    constexpr std::array<std::uint32_t, 4> render_rates{
+        30U,
+        60U,
+        120U,
+        144U,
+    };
+    const auto baseline =
+        run_pipeline_schedule(render_rates.front(), true);
+    REQUIRE(baseline.multi_step_render_frames > 0U);
+    REQUIRE(baseline.transcript[0].current.water ==
+        character::PlayerWaterState{
+            .phase = character::PlayerWaterPhase::wading,
+            .depth = 0.875F,
+        });
+    REQUIRE(baseline.transcript[19].command.jump_pressed);
+    REQUIRE(baseline.transcript[19].current.vertical.phase ==
+        character::PlayerGroundPhase::rising);
+    REQUIRE(baseline.transcript[19].current.water ==
+        character::PlayerWaterState{});
+
+    std::uint64_t landing_tick = 0U;
+    for (const auto& entry : baseline.transcript) {
+        if (entry.current.vertical.phase ==
+            character::PlayerGroundPhase::landing) {
+            landing_tick = entry.current.fixed_tick;
+            REQUIRE(entry.current.water ==
+                character::PlayerWaterState{});
+        }
+        if (entry.current.vertical.phase ==
+                character::PlayerGroundPhase::rising ||
+            entry.current.vertical.phase ==
+                character::PlayerGroundPhase::falling) {
+            REQUIRE(entry.current.water ==
+                character::PlayerWaterState{});
+        }
+    }
+    REQUIRE(landing_tick != 0U);
+    REQUIRE(landing_tick < 110U);
+    REQUIRE(
+        baseline.transcript[
+            static_cast<std::size_t>(landing_tick)]
+            .current.water.phase ==
+        character::PlayerWaterPhase::wading);
+
+    REQUIRE(baseline.transcript[109].command.reset_pressed);
+    REQUIRE(baseline.transcript[109].current.water ==
+        character::PlayerWaterState{});
+    REQUIRE(baseline.transcript[110].current.water ==
+        character::PlayerWaterState{});
+    REQUIRE(baseline.transcript[111].current.water ==
+        character::PlayerWaterState{
+            .phase = character::PlayerWaterPhase::wading,
+            .depth =
+                character::default_player_wading_enter_depth,
+        });
+    REQUIRE(baseline.transcript[112].current.water ==
+        character::PlayerWaterState{
+            .phase = character::PlayerWaterPhase::wading,
+            .depth = 0.2F,
+        });
+    REQUIRE(baseline.transcript[113].current.water ==
+        character::PlayerWaterState{});
+    REQUIRE(baseline.transcript[114].current.water ==
+        character::PlayerWaterState{});
+
+    for (const auto render_rate : render_rates) {
+        CAPTURE(render_rate);
+        const auto run =
+            run_pipeline_schedule(render_rate, true);
+        REQUIRE(run.emitted_ticks == transcript_tick_count);
+        REQUIRE(run.final_interpolation_alpha ==
+            Catch::Approx(0.0F).margin(0.000001F));
+        REQUIRE(run.transcript == baseline.transcript);
+        if (render_rate > 60U) {
+            REQUIRE(run.zero_step_render_frames > 0U);
+        }
+    }
 }

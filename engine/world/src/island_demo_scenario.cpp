@@ -127,6 +127,13 @@ inline constexpr character::PlayerAirLocomotionSettings
         .jump_launch_speed = 6.5F,
         .control_acceleration = 12.0F,
     };
+inline constexpr character::PlayerWadingSettings
+    island_demo_player_wading{
+        .enter_depth = 0.25F,
+        .exit_depth = 0.125F,
+        .depth_for_minimum_speed = 1.5F,
+        .minimum_speed_multiplier = 0.5F,
+    };
 inline constexpr float island_demo_player_minimum_center_y = -32.0F;
 inline constexpr float island_demo_player_maximum_center_y = 64.0F;
 inline constexpr ThirdPersonCameraConfig island_demo_player_camera{
@@ -340,6 +347,7 @@ core::Result<IslandDemoScenario> make_island_demo_scenario()
             island_demo_player_ground_locomotion,
         .air_locomotion =
             island_demo_player_air_locomotion,
+        .wading = island_demo_player_wading,
     };
     const auto player_result =
         character::create_player_capsule(

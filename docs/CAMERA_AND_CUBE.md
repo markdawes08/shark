@@ -2,7 +2,7 @@
 
 - **Camera/cube capability completed through:** `G-005`
 - **Renderer integration verified through:** `CAM-001`
-- **Character integration verified through:** `CHR-004`
+- **Character integration verified through:** `CHR-005`
 - **Last verified:** July 26, 2026
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
@@ -98,8 +98,8 @@ snapshot:
 
 | Input | Third-person action |
 |---|---|
-| `W` / `S` | Walk or steer in air forward / backward relative to the orbit yaw |
-| `A` / `D` | Walk or steer in air left / right relative to the orbit yaw |
+| `W` / `S` | Walk, wade, or steer in air forward / backward relative to the orbit yaw |
+| `A` / `D` | Walk, wade, or steer in air left / right relative to the orbit yaw |
 | Hold `Shift` | Select the run target |
 | `Space` | Jump from grounded or landing |
 | Hold right mouse and drag | Orbit yaw and pitch |
@@ -437,8 +437,13 @@ newly advanced authoritative orbit basis; the camera's terrain-clearance probe
 remains presentation-only. CHR-004 adds vertical jump motion and weaker
 camera-relative airborne control through that same basis; the camera follows
 the interpolated rising/falling center while clearance remains
-presentation-only. Time-baseline resets collapse both interpolation intervals
-before resuming.
+presentation-only. CHR-005 evaluates WQ-001 at the tick-start authoritative
+player X/Z after orbit advancement and before Character advancement. Wading
+can slow the controller but does not change camera state, target height,
+clearance, interpolation, or render ordering. A shore crossing is reclassified
+on the next emitted simulation tick; the camera continues to follow only the
+interpolated player position. Time-baseline resets collapse both interpolation
+intervals before resuming.
 See [the Character contract](CHARACTER.md) and
 [the simulation contract](SIMULATION.md). This component page
 no longer duplicates the rolling project

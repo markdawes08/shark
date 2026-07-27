@@ -205,6 +205,11 @@ horizontal flow; see [WATER.md](WATER.md).
 and must match this CPU oracle within documented tolerances. GPU
 simulated-water rendering, rain coupling, and hydrology remain approved
 deferred specializations. CHR-004 jump, airborne, landing, and recovery policy
-remains terrain-only; neither Character nor CAM-001 consumes this solver. The
-active queue is `CHR-005`, shallow-water wading through the separate CPU
-WQ-001 boundary.
+remains unchanged. CHR-005 consumes one separate CPU WQ-001 calm-water result
+per emitted fixed tick, validates its canonical bed, and owns dry/wading
+hysteresis plus depth-scaled supported movement. It neither consumes this
+numerical solver nor mutates water volume; flow, GPU readback, per-probe water
+queries, and dynamic coupling remain absent. Deep-bed wading stays clamped at
+half speed until CHR-006 adds surface swimming. CAM-001 also does not consume
+this solver. The active queue is `CHR-006`, surface swimming through the same
+adapter-neutral gameplay-water result.

@@ -3,6 +3,7 @@
 #include <shark/core/math.hpp>
 #include <shark/core/result.hpp>
 #include <shark/terrain/height_tile.hpp>
+#include <shark/water/gameplay_water.hpp>
 
 #include <cstdint>
 #include <optional>
@@ -40,6 +41,13 @@ inline constexpr float
     default_player_air_control_acceleration = 12.0F;
 inline constexpr float
     maximum_player_air_control_acceleration = 256.0F;
+inline constexpr float default_player_wading_enter_depth = 0.25F;
+inline constexpr float default_player_wading_exit_depth = 0.125F;
+inline constexpr float
+    default_player_wading_depth_for_minimum_speed = 1.5F;
+inline constexpr float
+    default_player_wading_minimum_speed_multiplier = 0.5F;
+inline constexpr float maximum_player_wading_depth = 32.0F;
 inline constexpr float minimum_player_probe_spacing = 0.01F;
 inline constexpr float maximum_player_probe_spacing = 1.0F;
 inline constexpr float maximum_player_fixed_delta_seconds = 0.25F;
@@ -81,6 +89,19 @@ struct PlayerAirLocomotionSettings final {
         const PlayerAirLocomotionSettings&) noexcept = default;
 };
 
+struct PlayerWadingSettings final {
+    float enter_depth{default_player_wading_enter_depth};
+    float exit_depth{default_player_wading_exit_depth};
+    float depth_for_minimum_speed{
+        default_player_wading_depth_for_minimum_speed};
+    float minimum_speed_multiplier{
+        default_player_wading_minimum_speed_multiplier};
+
+    [[nodiscard]] friend bool operator==(
+        const PlayerWadingSettings&,
+        const PlayerWadingSettings&) noexcept = default;
+};
+
 // Character-owned, device-neutral horizontal frame supplied once per fixed
 // tick. At camera yaw zero, right is +X and forward is -Z.
 struct PlayerMovementFrame final {
@@ -98,6 +119,23 @@ enum class PlayerGroundPhase : std::uint8_t {
     falling,
     landing,
     steep_contact,
+};
+
+enum class PlayerWaterPhase : std::uint8_t {
+    dry = 1,
+    wading,
+};
+
+// This is the water state consumed at the authoritative tick-start position,
+// not a query of the post-movement position. Dry state always carries
+// canonical positive-zero depth.
+struct PlayerWaterState final {
+    PlayerWaterPhase phase{PlayerWaterPhase::dry};
+    float depth{};
+
+    [[nodiscard]] friend bool operator==(
+        const PlayerWaterState&,
+        const PlayerWaterState&) noexcept = default;
 };
 
 struct PlayerVerticalState final {
@@ -139,6 +177,7 @@ struct PlayerCapsuleConfig final {
     PlayerGroundingSettings grounding;
     PlayerGroundLocomotionSettings ground_locomotion;
     PlayerAirLocomotionSettings air_locomotion;
+    PlayerWadingSettings wading;
 
     [[nodiscard]] friend bool operator==(
         const PlayerCapsuleConfig&,
@@ -179,6 +218,7 @@ struct PlayerActionCommand final {
 struct PlayerCapsuleSnapshot final {
     PlayerCapsuleState state;
     PlayerVerticalState vertical;
+    PlayerWaterState water;
     math::Float3 horizontal_velocity{};
     PlayerActionCommand consumed_command;
     PlayerMovementFrame consumed_movement_frame;
@@ -213,10 +253,14 @@ static_assert(
 static_assert(std::is_standard_layout_v<PlayerAirLocomotionSettings>);
 static_assert(
     std::is_trivially_copyable_v<PlayerAirLocomotionSettings>);
+static_assert(std::is_standard_layout_v<PlayerWadingSettings>);
+static_assert(std::is_trivially_copyable_v<PlayerWadingSettings>);
 static_assert(std::is_standard_layout_v<PlayerMovementFrame>);
 static_assert(std::is_trivially_copyable_v<PlayerMovementFrame>);
 static_assert(std::is_standard_layout_v<PlayerVerticalState>);
 static_assert(std::is_trivially_copyable_v<PlayerVerticalState>);
+static_assert(std::is_standard_layout_v<PlayerWaterState>);
+static_assert(std::is_trivially_copyable_v<PlayerWaterState>);
 static_assert(std::is_standard_layout_v<PlayerCapsuleCenterBounds>);
 static_assert(std::is_trivially_copyable_v<PlayerCapsuleCenterBounds>);
 static_assert(std::is_standard_layout_v<PlayerCapsuleConfig>);
@@ -241,6 +285,9 @@ static_assert(std::is_trivially_copyable_v<PlayerCapsuleSimulation>);
 
 [[nodiscard]] bool is_valid(
     const PlayerAirLocomotionSettings& settings) noexcept;
+
+[[nodiscard]] bool is_valid(
+    const PlayerWadingSettings& settings) noexcept;
 
 [[nodiscard]] bool is_valid(
     const PlayerMovementFrame& frame) noexcept;
@@ -284,19 +331,22 @@ create_player_capsule(
 // fixed_tick must be exactly current.fixed_tick + 1. Grounded and airborne
 // movement use the supplied frame plus bounded canonical terrain probes.
 // Airborne collision is a deterministic sampled center path, not exact
-// continuous capsule collision. The operation validates source terrain
-// consistency and its complete candidate before committing.
+// continuous capsule collision. gameplay_water must be the one WQ result
+// sampled at the authoritative tick-start X/Z; a crossing is therefore
+// reclassified on the following emitted tick. The operation validates source
+// terrain/water consistency and its complete candidate before committing.
 [[nodiscard]] core::Result<void> advance_player_capsule(
     PlayerCapsuleSimulation& simulation,
     PlayerActionCommand command,
     PlayerMovementFrame movement_frame,
     const terrain::HeightTileSurface& terrain_surface,
+    const water::GameplayWaterQuery& gameplay_water,
     float fixed_delta_seconds,
     std::uint64_t fixed_tick);
 
-// Collapses pose, vertical, and horizontal presentation history after a
-// time-baseline discontinuity. Tick, consumed inputs, generation, config, and
-// current authority remain unchanged.
+// Collapses pose, vertical, water, and horizontal presentation history after
+// a time-baseline discontinuity. Tick, consumed inputs, generation, config,
+// and current authority remain unchanged.
 [[nodiscard]] core::Result<void>
 collapse_player_capsule_interpolation(
     PlayerCapsuleSimulation& simulation);

@@ -1,6 +1,7 @@
 #include <shark/character/player_capsule.hpp>
 #include <shark/simulation/fixed_step_clock.hpp>
 #include <shark/terrain/height_tile.hpp>
+#include <shark/water/gameplay_water.hpp>
 
 #include <shark/core/error.hpp>
 
@@ -14,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -144,6 +146,48 @@ make_simulation(
     return std::move(result).value();
 }
 
+[[nodiscard]] shark::water::GameplayWaterQuery dry_water_query(
+    const shark::terrain::HeightTileSurface& surface,
+    const shark::character::PlayerCapsuleSimulation& player)
+{
+    const auto& position =
+        player.current.state.center_position;
+    const auto sample = surface.sample_lod0_surface(
+        position.x,
+        position.z);
+    if (!sample.has_value()) {
+        return {};
+    }
+    return {
+        .disposition =
+            shark::water::GameplayWaterDisposition::no_water,
+        .horizontal_support = false,
+        .surface_height = sample->position.y,
+        .bed_height = sample->position.y,
+        .depth = 0.0F,
+        .flow_velocity = std::nullopt,
+    };
+}
+
+[[nodiscard]] shark::core::Result<void>
+advance_dry_player_capsule(
+    shark::character::PlayerCapsuleSimulation& player,
+    const shark::character::PlayerActionCommand command,
+    const shark::character::PlayerMovementFrame movement_frame,
+    const shark::terrain::HeightTileSurface& surface,
+    const float fixed_delta_seconds,
+    const std::uint64_t fixed_tick)
+{
+    return shark::character::advance_player_capsule(
+        player,
+        command,
+        movement_frame,
+        surface,
+        dry_water_query(surface, player),
+        fixed_delta_seconds,
+        fixed_tick);
+}
+
 [[nodiscard]] bool positive_zero(const float value) noexcept
 {
     return value == 0.0F && !std::signbit(value);
@@ -252,7 +296,7 @@ struct ScheduleRun final {
              step < frame_result.value().step_count;
              ++step) {
             const auto fixed_tick = first_tick + step;
-            REQUIRE(character::advance_player_capsule(
+            REQUIRE(advance_dry_player_capsule(
                 player,
                 scripted_command(fixed_tick),
                 {},
@@ -692,7 +736,7 @@ TEST_CASE(
     REQUIRE(character::is_valid(frame));
     const auto surface = make_surface();
     auto player = make_simulation(surface);
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         player,
         {},
         frame,
@@ -718,7 +762,7 @@ TEST_CASE(
     const auto surface = make_surface(make_wide_plane_tile());
 
     auto forward = make_simulation(surface);
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         forward,
         {.move_forward_held = true},
         {},
@@ -739,7 +783,7 @@ TEST_CASE(
         .right = {0.0F, 0.0F, 1.0F},
         .forward = {1.0F, 0.0F, 0.0F},
     };
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         rotated,
         {.move_forward_held = true},
         quarter_turn,
@@ -760,7 +804,7 @@ TEST_CASE(
         quarter_turn);
 
     auto diagonal = make_simulation(surface);
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         diagonal,
         {
             .move_forward_held = true,
@@ -795,7 +839,7 @@ TEST_CASE(
         Catch::Approx(1.0).margin(0.000001));
 
     auto cancelled = make_simulation(surface);
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         cancelled,
         {
             .move_forward_held = true,
@@ -825,7 +869,7 @@ TEST_CASE(
         .move_right_held = true,
         .run_held = true,
     };
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         player,
         run_right,
         {},
@@ -834,7 +878,7 @@ TEST_CASE(
         1U));
     REQUIRE(player.current.horizontal_velocity.x == 6.0F);
     REQUIRE(player.current.state.center_position.x == 1.5F);
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         player,
         run_right,
         {},
@@ -844,7 +888,7 @@ TEST_CASE(
     REQUIRE(player.current.horizontal_velocity.x == 7.0F);
     REQUIRE(player.current.state.center_position.x == 3.25F);
 
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         player,
         {},
         {},
@@ -853,7 +897,7 @@ TEST_CASE(
         3U));
     REQUIRE(player.current.horizontal_velocity.x == 3.0F);
     REQUIRE(player.current.state.center_position.x == 3.625F);
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         player,
         {},
         {},
@@ -865,21 +909,21 @@ TEST_CASE(
     REQUIRE(player.current.state.center_position.x == 3.625F);
 
     auto reversing = make_simulation(surface);
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         reversing,
         run_right,
         {},
         surface,
         0.25F,
         1U));
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         reversing,
         run_right,
         {},
         surface,
         0.25F,
         2U));
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         reversing,
         {
             .move_left_held = true,
@@ -908,7 +952,7 @@ TEST_CASE(
     auto player = make_simulation(
         barrier,
         test_config({-0.5F, 1.0F, 0.0F}));
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         player,
         {
             .move_right_held = true,
@@ -929,7 +973,7 @@ TEST_CASE(
         Catch::Approx(math::half_pi).margin(0.000001F));
 
     const auto blocked = player;
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         player,
         {
             .move_right_held = true,
@@ -962,7 +1006,7 @@ TEST_CASE(
             support.value()->center_position_y,
             0.0F,
         }));
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         slope,
         {.move_right_held = true},
         {},
@@ -994,7 +1038,7 @@ TEST_CASE(
     auto bounded = make_simulation(
         bounded_surface,
         bounded_config);
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         bounded,
         {.move_right_held = true},
         {},
@@ -1019,7 +1063,7 @@ TEST_CASE(
     const auto initial_yaw =
         player.current.state.facing_yaw_radians;
     const auto desired_yaw = -math::pi + 0.5F;
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         player,
         {.move_forward_held = true},
         movement_frame_for_yaw(desired_yaw),
@@ -1052,7 +1096,7 @@ TEST_CASE(
     auto falling = make_simulation(
         flat,
         test_config({0.0F, 3.0F, 0.0F}));
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         falling,
         {
             .move_forward_held = true,
@@ -1103,7 +1147,7 @@ TEST_CASE(
     REQUIRE(steep.current.vertical.phase ==
         character::PlayerGroundPhase::steep_contact);
     const auto before = steep.current.state;
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         steep,
         {
             .move_forward_held = true,
@@ -1130,7 +1174,7 @@ TEST_CASE(
         const character::PlayerActionCommand command{
             .primary_action_pressed = tick % 2U == 0U,
         };
-        REQUIRE(character::advance_player_capsule(
+        REQUIRE(advance_dry_player_capsule(
             player,
             command,
             {},
@@ -1177,7 +1221,7 @@ TEST_CASE(
         const character::PlayerActionCommand command{
             .jump_pressed = tick == 1U || tick == 5U,
         };
-        REQUIRE(character::advance_player_capsule(
+        REQUIRE(advance_dry_player_capsule(
             player,
             command,
             {},
@@ -1230,7 +1274,7 @@ TEST_CASE(
     REQUIRE(landing_count == 1U);
     REQUIRE(highest_y ==
         Catch::Approx(3.0995F).margin(0.00002F));
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         player,
         {},
         {},
@@ -1260,7 +1304,7 @@ TEST_CASE(
         .run_held = true,
     };
     for (std::uint64_t tick = 1U; tick <= 12U; ++tick) {
-        REQUIRE(character::advance_player_capsule(
+        REQUIRE(advance_dry_player_capsule(
             player,
             controlled,
             frame,
@@ -1277,7 +1321,7 @@ TEST_CASE(
         Catch::Approx(math::half_pi).margin(0.000001F));
 
     const auto before_neutral = player.current;
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         player,
         {.jump_pressed = true},
         {},
@@ -1310,7 +1354,7 @@ TEST_CASE(
         auto player = make_simulation(
             surface,
             test_config({-0.5F, 1.0F, 0.0F}));
-        REQUIRE(character::advance_player_capsule(
+        REQUIRE(advance_dry_player_capsule(
             player,
             {
                 .move_right_held = true,
@@ -1338,7 +1382,7 @@ TEST_CASE(
         auto config = test_config();
         config.center_bounds.maximum.x = 0.3F;
         auto player = make_simulation(surface, config);
-        REQUIRE(character::advance_player_capsule(
+        REQUIRE(advance_dry_player_capsule(
             player,
             {
                 .move_right_held = true,
@@ -1389,7 +1433,7 @@ TEST_CASE(
         surface,
         test_config({-1.0F, 1.0F, 0.0F}));
     constexpr auto delta_seconds = 0.25F;
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         player,
         {},
         {},
@@ -1427,7 +1471,7 @@ TEST_CASE(
         endpoint_support.value()->center_position_y +
             player.config.grounding.snap_distance);
 
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         player,
         {},
         {},
@@ -1459,7 +1503,7 @@ TEST_CASE(
     auto config = test_config({1.75F, 1.0F, 0.0F});
     config.center_bounds.minimum.y = 0.0F;
     auto player = make_simulation(surface, config);
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         player,
         {
             .move_right_held = true,
@@ -1477,7 +1521,7 @@ TEST_CASE(
 
     std::uint64_t recovery_tick = 0U;
     for (std::uint64_t tick = 2U; tick <= 40U; ++tick) {
-        const auto result = character::advance_player_capsule(
+        const auto result = advance_dry_player_capsule(
             player,
             {},
             {},
@@ -1499,6 +1543,10 @@ TEST_CASE(
         player.current.consumed_command.reset_pressed);
     REQUIRE(player.previous.state == player.current.state);
     REQUIRE(player.previous.vertical == player.current.vertical);
+    REQUIRE(player.previous.water ==
+        character::PlayerWaterState{});
+    REQUIRE(player.current.water ==
+        character::PlayerWaterState{});
     REQUIRE(player.previous.horizontal_velocity ==
         math::Float3{});
     REQUIRE(player.current.horizontal_velocity ==
@@ -1510,7 +1558,7 @@ TEST_CASE(
     REQUIRE(player.previous.fixed_tick == recovery_tick - 1U);
     REQUIRE(player.current.fixed_tick == recovery_tick);
 
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         player,
         {.jump_pressed = true},
         {},
@@ -1533,7 +1581,7 @@ TEST_CASE(
     SECTION("deep fall lands before crossing the recovery bound")
     {
         auto player = make_simulation(surface);
-        REQUIRE(character::advance_player_capsule(
+        REQUIRE(advance_dry_player_capsule(
             player,
             {},
             {},
@@ -1547,7 +1595,7 @@ TEST_CASE(
         };
         REQUIRE(character::is_valid(player));
 
-        REQUIRE(character::advance_player_capsule(
+        REQUIRE(advance_dry_player_capsule(
             player,
             {},
             {},
@@ -1565,7 +1613,7 @@ TEST_CASE(
     SECTION("deep unsupported fall recovers after bounded probing")
     {
         auto player = make_simulation(surface);
-        REQUIRE(character::advance_player_capsule(
+        REQUIRE(advance_dry_player_capsule(
             player,
             {},
             {},
@@ -1580,7 +1628,7 @@ TEST_CASE(
         };
         REQUIRE(character::is_valid(player));
 
-        REQUIRE(character::advance_player_capsule(
+        REQUIRE(advance_dry_player_capsule(
             player,
             {},
             {},
@@ -1602,7 +1650,7 @@ TEST_CASE(
         config.center_bounds.maximum.y = 100.0F;
         config.ground_locomotion.maximum_probe_spacing = 0.01F;
         auto player = make_simulation(surface, config);
-        REQUIRE(character::advance_player_capsule(
+        REQUIRE(advance_dry_player_capsule(
             player,
             {},
             {},
@@ -1617,7 +1665,7 @@ TEST_CASE(
         REQUIRE(character::is_valid(player));
         const auto before = player;
 
-        const auto result = character::advance_player_capsule(
+        const auto result = advance_dry_player_capsule(
             player,
             {},
             {},
@@ -1651,7 +1699,7 @@ TEST_CASE(
     for (std::uint64_t tick = 1U; tick <= 20U; ++tick) {
         expected_velocity -= 9.81 * delta_seconds;
         expected_y += expected_velocity * delta_seconds;
-        REQUIRE(character::advance_player_capsule(
+        REQUIRE(advance_dry_player_capsule(
             player,
             {},
             {},
@@ -1684,7 +1732,7 @@ TEST_CASE(
     }
     REQUIRE(landing_tick > 0U);
 
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         player,
         {.move_forward_held = true},
         {},
@@ -1731,7 +1779,7 @@ TEST_CASE(
         auto player = make_simulation(surface, config);
         REQUIRE(player.current.vertical.phase ==
             character::PlayerGroundPhase::grounded);
-        REQUIRE(character::advance_player_capsule(
+        REQUIRE(advance_dry_player_capsule(
             player,
             {},
             {},
@@ -1767,7 +1815,7 @@ TEST_CASE(
             }));
         REQUIRE(player.current.vertical.phase ==
             character::PlayerGroundPhase::steep_contact);
-        REQUIRE(character::advance_player_capsule(
+        REQUIRE(advance_dry_player_capsule(
             player,
             {},
             {},
@@ -1785,7 +1833,7 @@ TEST_CASE(
         std::uint64_t tick = 0U;
         do {
             ++tick;
-            REQUIRE(character::advance_player_capsule(
+            REQUIRE(advance_dry_player_capsule(
                 falling,
                 {},
                 {},
@@ -1818,7 +1866,7 @@ TEST_CASE(
 
     const auto surface = make_surface();
     auto player = make_simulation(surface);
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         player,
         {},
         {},
@@ -1844,7 +1892,7 @@ TEST_CASE(
         .right = {0.0F, 0.0F, 1.0F},
         .forward = {1.0F, 0.0F, 0.0F},
     };
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         player,
         reset,
         reset_frame,
@@ -1892,7 +1940,7 @@ TEST_CASE(
     auto player = make_simulation(
         surface,
         test_config({0.0F, 3.0F, 0.0F}));
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         player,
         {.move_forward_held = true},
         {},
@@ -1933,7 +1981,7 @@ TEST_CASE(
 
     const auto wide = make_surface(make_wide_plane_tile());
     auto moving = make_simulation(wide);
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         moving,
         {.move_right_held = true},
         {},
@@ -1974,7 +2022,7 @@ TEST_CASE(
          }) {
         const auto before = player;
         const auto result =
-            character::advance_player_capsule(
+            advance_dry_player_capsule(
                 player,
                 {},
                 {},
@@ -1990,7 +2038,7 @@ TEST_CASE(
     for (const auto tick :
          std::array<std::uint64_t, 3>{0U, 2U, 8U}) {
         const auto before = player;
-        REQUIRE_FALSE(character::advance_player_capsule(
+        REQUIRE_FALSE(advance_dry_player_capsule(
             player,
             {},
             {},
@@ -2006,7 +2054,7 @@ TEST_CASE(
             character::maximum_player_look_delta_radians,
             std::numeric_limits<float>::infinity());
     const auto command_before = player;
-    REQUIRE_FALSE(character::advance_player_capsule(
+    REQUIRE_FALSE(advance_dry_player_capsule(
         player,
         invalid_command,
         {},
@@ -2019,7 +2067,7 @@ TEST_CASE(
     invalid_frame.forward.x =
         std::numeric_limits<float>::quiet_NaN();
     const auto frame_before = player;
-    REQUIRE_FALSE(character::advance_player_capsule(
+    REQUIRE_FALSE(advance_dry_player_capsule(
         player,
         {},
         invalid_frame,
@@ -2034,7 +2082,7 @@ TEST_CASE(
     malformed.current.vertical.support_normal =
         {0.0F, 1.0F, 0.0F};
     const auto malformed_before = malformed;
-    REQUIRE_FALSE(character::advance_player_capsule(
+    REQUIRE_FALSE(advance_dry_player_capsule(
         malformed,
         {},
         {},
@@ -2049,7 +2097,7 @@ TEST_CASE(
         .phase = character::PlayerGroundPhase::rising,
     };
     const auto rising_before = malformed_rising;
-    REQUIRE_FALSE(character::advance_player_capsule(
+    REQUIRE_FALSE(advance_dry_player_capsule(
         malformed_rising,
         {},
         {},
@@ -2064,7 +2112,7 @@ TEST_CASE(
         .phase = character::PlayerGroundPhase::falling,
     };
     const auto falling_before = malformed_falling;
-    REQUIRE_FALSE(character::advance_player_capsule(
+    REQUIRE_FALSE(advance_dry_player_capsule(
         malformed_falling,
         {},
         {},
@@ -2077,7 +2125,7 @@ TEST_CASE(
     malformed_horizontal.current.horizontal_velocity =
         {1.0F, 0.0F, 0.0F};
     const auto horizontal_before = malformed_horizontal;
-    REQUIRE_FALSE(character::advance_player_capsule(
+    REQUIRE_FALSE(advance_dry_player_capsule(
         malformed_horizontal,
         {},
         {},
@@ -2089,7 +2137,7 @@ TEST_CASE(
     auto excessive_air_speed = make_simulation(
         surface,
         test_config({0.0F, 3.0F, 0.0F}));
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         excessive_air_speed,
         {},
         {},
@@ -2104,7 +2152,7 @@ TEST_CASE(
             0.0F,
         };
     const auto excessive_before = excessive_air_speed;
-    REQUIRE_FALSE(character::advance_player_capsule(
+    REQUIRE_FALSE(advance_dry_player_capsule(
         excessive_air_speed,
         {},
         {},
@@ -2114,7 +2162,7 @@ TEST_CASE(
     REQUIRE(excessive_air_speed == excessive_before);
 
     auto below = player;
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         below,
         {},
         {},
@@ -2128,7 +2176,7 @@ TEST_CASE(
     };
     const auto below_before = below;
     const auto below_result =
-        character::advance_player_capsule(
+        advance_dry_player_capsule(
             below,
             {},
             {},
@@ -2141,7 +2189,7 @@ TEST_CASE(
     REQUIRE(below == below_before);
 
     auto bounded = make_simulation(surface);
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         bounded,
         {},
         {},
@@ -2157,7 +2205,7 @@ TEST_CASE(
     REQUIRE(character::is_valid(bounded));
     const auto bounded_before = bounded;
     const auto bounded_result =
-        character::advance_player_capsule(
+        advance_dry_player_capsule(
             bounded,
             {},
             {},
@@ -2189,7 +2237,7 @@ TEST_CASE(
     REQUIRE(character::is_valid(player));
     const auto before = player;
     const auto result =
-        character::advance_player_capsule(
+        advance_dry_player_capsule(
             player,
             {.reset_pressed = true},
             {},
@@ -2275,7 +2323,7 @@ TEST_CASE(
     seam_config.spawn_facing_yaw_radians =
         1.3000000365e-7F;
     auto seam = make_simulation(surface, seam_config);
-    REQUIRE(character::advance_player_capsule(
+    REQUIRE(advance_dry_player_capsule(
         seam,
         {.look_yaw_delta_radians =
              std::nextafter(
@@ -2311,6 +2359,10 @@ TEST_CASE(
     REQUIRE(baseline.trace[74].consumed_command.reset_pressed);
     REQUIRE(baseline.trace[74].vertical.phase ==
         shark::character::PlayerGroundPhase::grounded);
+    for (const auto& snapshot : baseline.trace) {
+        REQUIRE(snapshot.water ==
+            shark::character::PlayerWaterState{});
+    }
 
     for (const auto render_rate : render_rates) {
         CAPTURE(render_rate);

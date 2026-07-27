@@ -68,6 +68,13 @@ struct GameplayWaterQuery final {
         const GameplayWaterQuery&) noexcept = default;
 };
 
+// Validates the complete value-level query contract, including canonical
+// inactive fields and the checked water-depth relationship. This lets
+// Character consume an adapter-independent query without duplicating Water's
+// DTO invariants.
+[[nodiscard]] bool is_valid(
+    const GameplayWaterQuery& query) noexcept;
+
 // Queries one vertical water column over the exact canonical LOD0 terrain
 // surface. Invalid body/coordinate input fails. A finite point beyond the
 // terrain is a successful out_of_terrain result and does not evaluate warped

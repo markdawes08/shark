@@ -1,7 +1,7 @@
 # Fixed-Step Rigid-Body and Contact Contract
 
 - **Completed through:** `PHY-010`
-- **Character integration verified through:** `CHR-004`
+- **Character integration verified through:** `CHR-005`
 - **Camera integration verified through:** `CAM-001`
 - **Last verified:** July 26, 2026
 
@@ -811,19 +811,28 @@ it neither enters the rigid-body arrays nor changes their solver order.
 CAM-001 adds a separate presentation-only orbit rig on those same fixed ticks
 and never mutates Character.
 
-CHR-004 preserves the fixed-tick order: sample one command, advance the
-authoritative orbit, derive its horizontal camera basis, advance Character
-with that movement frame, and then run the unchanged dynamic-sphere path.
-Character owns bounded walk/run and weaker airborne acceleration, neutral
-airborne momentum, facing, horizontal velocity, jump launch, gravity,
-rising/falling/landing phases, support, recovery, and sampled
-three-dimensional terrain traversal; all failures remain transactional.
-Free-fly supplies neutral Character action, but an already-airborne player
-continues gravity and horizontal momentum. The controller remains kinematic
-and separate from dynamic Physics. A time-baseline discontinuity collapses
-player and camera presentation history before accumulated time is discarded.
+CHR-005 preserves and extends the fixed-tick order: sample one command,
+advance the authoritative orbit, derive its horizontal camera basis, query
+WQ-001 at the tick-start authoritative player X/Z, advance Character with that
+movement frame and water result, and then run the unchanged dynamic-sphere
+path. Catch-up frames perform the CPU query separately for every emitted tick;
+render interpolation never supplies simulation coordinates.
 
-The active queue is `CHR-005`, shallow-water wading. W-005 remains an approved
+Character classifies only supported grounded/landing motion as wading. Entry
+is `>= 0.25 m`, exit is `<= 0.125 m`, and target speed scales linearly from
+`1.0` at entry depth to `0.5` at `1.5 m`, remaining clamped deeper. The query
+bed must exactly agree with canonical LOD0 support. A movement step can cross
+the shore before its tick-start observation changes, so reclassification
+occurs on the next emitted tick. Jump/air/steep/reset/recovery publish dry
+state; reset wins over a wet source query. Flow is ignored. The controller
+remains kinematic, mutates no water, performs no GPU wait, and does not enter
+the unchanged dynamic Physics path. A time-baseline discontinuity still
+collapses player and camera presentation history before accumulated time is
+discarded.
+
+Until CHR-006, deep-bed traversal remains wading at the `0.5` multiplier rather
+than a barrier or swim transition. The active queue is `CHR-006`, surface
+swimming. W-005 remains an approved
 deferred fluid specialization; the queue is centralized in
 [ENGINE_PLAN.md](ENGINE_PLAN.md), and the query contract is in
 [WATER.md](WATER.md). The player contract is in

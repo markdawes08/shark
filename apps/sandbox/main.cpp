@@ -1596,8 +1596,9 @@ void log_platform_event(const shark::platform::Event& event)
               "tick while paused; F7 toggles third-person/free-fly; "
               "WASD moves the blue capsule, Shift runs, Space jumps, "
               "RMB orbits, and the wheel zooms the fixed-tick "
-              "third-person camera; standard gravity and canonical "
-              "terrain grounding advance per tick, and R resets the "
+              "third-person camera; standard gravity, canonical "
+              "terrain grounding, and shallow-water wading advance "
+              "per tick, deeper water slows wading, and R resets the "
               "player");
 
     auto simulation_clock_result =
@@ -2276,12 +2277,25 @@ void log_platform_event(const shark::platform::Event& event)
                 .right = camera_basis_result.value().right,
                 .forward = camera_basis_result.value().forward,
             };
+            auto player_water_result =
+                water::query_gameplay_water(
+                    gameplay_water,
+                    terrain_surface,
+                    player_simulation.current.state
+                        .center_position.x,
+                    player_simulation.current.state
+                        .center_position.z);
+            if (!player_water_result) {
+                return core::Result<void>::failure(
+                    std::move(player_water_result).error());
+            }
             auto player_step_result =
                 character::advance_player_capsule(
                     player_simulation,
                     player_command,
                     movement_frame,
                     terrain_surface,
+                    player_water_result.value(),
                     simulation_clock.fixed_delta_seconds(),
                     fixed_tick);
             if (!player_step_result) {

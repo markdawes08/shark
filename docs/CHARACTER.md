@@ -1,32 +1,36 @@
 # Character Contract
 
-- **Completed through:** `CHR-004`
+- **Completed through:** `CHR-005`
 - **Camera integration verified through:** `CAM-001`
 - **Last verified:** July 26, 2026
 
-CHR-004 turns the Island Demo's single bounded player capsule into a
-deterministic land character controller. Camera-relative walk/run and
-airborne intent, authoritative horizontal and vertical velocity, acceleration,
-braking, facing, bounded terrain traversal, jump launch, rising, falling,
-landing, recovery, and stable support all advance at the fixed simulation
-rate.
+CHR-005 extends the Island Demo's deterministic land controller with explicit
+dry and shallow-water wading state. Camera-relative walk/run and airborne
+intent, authoritative horizontal and vertical velocity, terrain traversal,
+jump/landing/recovery, WQ-001 immersion hysteresis, and depth-scaled supported
+movement all advance at the fixed simulation rate.
 
-Water movement, obstacle stepping, arbitrary world collision, an entity
-registry, and final avatar art remain outside this increment.
+Surface swimming, underwater movement, obstacle stepping, arbitrary world
+collision, an entity registry, and final avatar art remain outside this
+increment.
 
 ## Ownership and data flow
 
 `engine/character` owns the platform- and renderer-independent controller. It
-depends on Core and Terrain, using only `HeightTileSurface` CPU queries. It
-does not enter the dynamic rigid-body arrays or read a render mesh, coarse
-visual LOD, D3D12 resource, camera, or gameplay-water result.
+depends on Core and Terrain for `HeightTileSurface` CPU queries and consumes
+only the platform-independent `water::GameplayWaterQuery` result from Water.
+It does not enter the dynamic rigid-body arrays or read a render mesh, coarse
+visual LOD, D3D12 resource, camera, calm-water authoring body, or GPU fluid
+state.
 
 ```text
 Platform events
   -> sandbox PlayerCommandSource
   -> one PlayerActionCommand per emitted 60 Hz tick
   -> World advances the authoritative orbit and publishes a horizontal basis
-  -> Character maps ground/air intent, velocity, facing, and terrain probes
+  -> sandbox queries WQ-001 at authoritative tick-start player X/Z
+  -> Character maps water state, ground/air intent, velocity, facing,
+     and terrain probes
   -> Character previous/current snapshots
   -> presentation-only player interpolation
   -> renderer DebugCapsuleProxy
@@ -34,13 +38,15 @@ Platform events
 ```
 
 The sandbox advances the third-person orbit first on each emitted fixed tick,
-derives a Character-owned movement frame from that tick's new yaw, advances
-Character on the same tick number, and then advances the retained dynamic
-sphere simulation. A simultaneous look-and-move command therefore uses the
-new heading without a one-tick lag. Character does not depend on World; the
-composition root copies World's basis into `PlayerMovementFrame`. Free-fly
-camera mode neutralizes character actions but does not suspend gravity,
-airborne momentum, or grounding.
+derives a Character-owned movement frame from that tick's new yaw, queries
+WQ-001 at the current authoritative capsule X/Z, advances Character on the
+same tick number, and then advances the retained dynamic-sphere simulation.
+Catch-up frames repeat that query for every emitted tick; interpolated render
+positions never drive it. A simultaneous look-and-move command therefore uses
+the new heading without a one-tick lag. Character does not depend on World;
+the composition root copies World's basis into `PlayerMovementFrame`.
+Free-fly camera mode neutralizes character actions but does not suspend
+gravity, airborne momentum, grounding, or water observation.
 
 ## Capsule and support model
 
@@ -191,6 +197,60 @@ minimum Y, Character recovers to the canonical dry spawn. These are
 deterministic sampled heightfield rules, explicitly not an exact swept capsule
 or continuous collision detector.
 
+## Shallow-water wading
+
+`PlayerWadingSettings` belongs to Character policy, not Water. The Island Demo
+authors:
+
+| Setting | Island Demo value |
+|---|---:|
+| enter depth | `0.25 m` |
+| exit depth | `0.125 m` |
+| depth for minimum speed | `1.5 m` |
+| minimum speed multiplier | `0.5` |
+
+Each fixed tick consumes exactly one successful WQ-001 result sampled at the
+tick-start authoritative capsule X/Z. A supported `grounded` or `landing`
+player enters wading at depth `>= 0.25 m`. Once wading, it remains wading while
+depth is greater than `0.125 m` and exits at depth `<= 0.125 m`. This explicit
+hysteresis prevents threshold-adjacent dry/wading chatter.
+
+The consumed query must be internally valid and agree exactly with the
+canonical LOD0 terrain bed at the same X/Z. An `out_of_terrain` observation is
+valid only when Character also finds no terrain there; disagreement about
+terrain presence, a mismatched bed, noncanonical inactive fields, or malformed
+numeric state rejects the complete advance transaction. Character reads the
+query DTO only; it never receives the analytic `CalmWaterBody`, renderer water
+support, a D3D12 resource, or a GPU query service.
+
+`GameplayWaterQuery` does not carry its source coordinates. Supplying the
+result from the authoritative tick-start X/Z is therefore a composition-root
+binding contract, while the exact-bed comparison is a defensive consistency
+check. It detects wrong-location observations when their canonical bed differs
+but cannot distinguish a stale result from another point with exactly the same
+bed height. The sandbox performs the required query immediately before each
+Character advance; explicit query provenance can be added if future producers
+make accidental stale reuse a practical risk.
+
+Wading scales the walk/run target speed without changing ground acceleration,
+braking, facing, terrain probes, or the underlying authored `4/7 m/s` targets.
+The multiplier is `1.0` at `0.25 m`, decreases linearly to `0.5` at `1.5 m`,
+and remains clamped at `0.5` for every deeper observation. Flow is validated
+by Water but ignored by CHR-005.
+
+Only supported grounded/landing motion can publish `wading`. Jump launch,
+rising, falling, steep contact, missing support, reset, and recovery publish
+canonical dry state with positive-zero depth. Air control and neutral airborne
+momentum are unchanged. Reset wins over a valid wet tick-start observation and
+restores the proven dry spawn.
+
+The water observation describes the source position used for the current
+step. If movement crosses the shoreline, the resulting position is queried
+and reclassified on the next emitted fixed tick, not the next render frame.
+CHR-005 performs no per-probe water query, changes no water volume, and adds no
+deep-water barrier. Until CHR-006, a supported character can therefore walk a
+deep submerged bed at the clamped `0.5` multiplier instead of surface-swimming.
+
 ## Spawn, reset, and interpolation
 
 Creation validates and canonicalizes shape, bounds, grounding policy, signed
@@ -213,7 +273,8 @@ generation, zeros horizontal and vertical velocity, and collapses
 previous/current pose and motion state. Falling below the configured minimum Y
 uses the same recovery path and also increments the reset generation. Neither
 recovery emits a synthetic landing pulse or interpolates through the
-teleport.
+teleport. Both publish dry water state, and reset/recovery cannot be overridden
+by the source position's wet observation.
 
 `interpolate_player_capsule` remains presentation-only: position is linear and
 yaw follows the shortest wrapped arc. Vertical phase and velocity stay
@@ -239,10 +300,9 @@ Held actions repeat on emitted fixed ticks. Jump, primary action, reset, and
 accumulated look are one-tick pulses. Zero-tick render frames do not consume
 pending input; catch-up frames sample separately for each emitted tick.
 
-CHR-004 consumes horizontal movement, run, jump, and reset while always
-advancing gravity and grounding. Primary action remains deterministic command
-data for a later increment. Character still does not query WQ-001 or apply
-water movement policy; that boundary begins at CHR-005.
+CHR-005 consumes horizontal movement, run, jump, reset, and the composition
+root's tick-start WQ-001 result while always advancing gravity and grounding.
+Primary action remains deterministic command data for a later increment.
 
 ## Temporary presentation proxy
 
@@ -283,18 +343,24 @@ Permanent tests cover:
   generation, and interpolation-history collapse;
 - malformed settings, delta, state, tick, overflow, bounds, and source-terrain
   disagreement with transactional rollback;
+- exact `0.25/0.125 m` wading hysteresis, threshold-adjacent stability,
+  linear/clamped speed scaling, and deep-water minimum speed;
+- canonical-bed agreement, malformed water observations, source-position shore
+  entry/exit latency, and transactional rollback;
+- jump, air, steep-contact, reset, recovery, and interpolation-collapse dry
+  water state, including reset winning over a wet source observation;
 - exact command, camera basis, pose, horizontal/vertical velocity, phase,
   support, and reset transcripts across 30, 60, 120, and 144 Hz render
   partitions;
 - moving player/camera presentation composition; and
 - unchanged render-graph, resource, and one-capsule-draw smoke accounting.
 
-The complete Debug and Release suites each pass 564,929 assertions across 392
-cases, including exact 30/60/120/144 Hz transcripts. The neutral RTX 4070
-presentation smoke passes 1,000 grounded ticks, 1,000 capsule draws, and 5,000
-graph passes. Packaged WARP passes 600 grounded ticks, 600 capsule draws, and
-3,000 graph passes. Both finish with zero D3D12 corruption/errors and zero live
-D3D12 child objects; CHR-004 adds no render pass or GPU resource.
+The complete CHR-005 Debug and Release suites each pass 589,949 assertions
+across 400 cases, including exact 30/60/120/144 Hz render-partition
+invariance. The final Debug RTX 4070 and packaged-WARP presentation smokes pass
+their existing 1,000/600-frame, grounded-tick, capsule-draw, 5,000/3,000-pass,
+zero-corruption/error, and zero-live-child-object contracts. CHR-005 adds no
+render pass or GPU resource.
 
 Launch `out\build\windows-vs2026\bin\Debug\SharkSandbox.exe` to inspect the
 grounded capsule. Press `F5` to resume/pause fixed-tick simulation, use
@@ -302,6 +368,6 @@ grounded capsule. Press `F5` to resume/pause fixed-tick simulation, use
 paused, `Space` to jump, right-drag/wheel to orbit and zoom, `F7` for free-fly
 diagnostics, and `R` for a canonical grounded reset.
 
-The next increment is `CHR-005`: shallow-water wading through the existing
-WQ-001 CPU query, with water remaining non-authoritative to Character until
-that increment.
+The next increment is `CHR-006`: surface swimming with deterministic
+deep-water entry, surface-relative positioning, movement, and reliable return
+to wading or grounded shore motion.

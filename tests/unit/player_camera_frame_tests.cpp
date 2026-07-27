@@ -3,6 +3,7 @@
 #include <shark/character/player_capsule.hpp>
 #include <shark/simulation/fixed_step_clock.hpp>
 #include <shark/terrain/height_tile.hpp>
+#include <shark/water/gameplay_water.hpp>
 #include <shark/world/island_demo_scenario.hpp>
 #include <shark/world/third_person_camera.hpp>
 
@@ -79,6 +80,23 @@ void advance_camera_and_player(
     const auto camera_basis = world::horizontal_camera_basis(
         camera_rig.current.state.yaw_radians);
     REQUIRE(camera_basis);
+    const auto& position =
+        player.current.state.center_position;
+    const auto terrain_sample = surface.sample_lod0_surface(
+        position.x,
+        position.z);
+    water::GameplayWaterQuery gameplay_water;
+    if (terrain_sample.has_value()) {
+        gameplay_water = {
+            .disposition =
+                water::GameplayWaterDisposition::no_water,
+            .horizontal_support = false,
+            .surface_height =
+                terrain_sample->position.y,
+            .bed_height = terrain_sample->position.y,
+            .depth = 0.0F,
+        };
+    }
     REQUIRE(character::advance_player_capsule(
         player,
         command,
@@ -87,6 +105,7 @@ void advance_camera_and_player(
             .forward = camera_basis.value().forward,
         },
         surface,
+        gameplay_water,
         fixed_delta_seconds,
         fixed_tick));
 }

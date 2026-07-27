@@ -1,7 +1,7 @@
 # Canonical Terrain-Tile Contract
 
 - **Completed through:** `ISL-001`
-- **Character integration verified through:** `CHR-004`
+- **Character integration verified through:** `CHR-005`
 - **Last verified:** July 26, 2026
 
 ISL-001 retains the T-007 rolling-height source and all historical T-008 basin
@@ -1167,7 +1167,17 @@ features and obstacle collision are not claimed. CAM-001 continues to use the
 canonical LOD0 segment query only for presentation obstruction and never
 changes Character authority.
 
-The active queue is `CHR-005`, shallow-water wading. `W-005`, the GPU
+CHR-005 consumes one WQ-001 result at the authoritative tick-start X/Z and
+requires its bed height to equal the same canonical LOD0 face used by
+Character support. Wading changes only the supported movement target; it does
+not change terrain probes, support height, topology, coarse visual LOD, or
+terrain ownership. Water is not queried at each terrain traversal probe, so a
+shore crossing is reclassified on the next emitted fixed tick. Jumping,
+airborne motion, steep contact, reset, and recovery remain dry. Deep submerged
+beds are temporarily traversable at the clamped half-speed wading multiplier;
+CHR-005 adds neither a terrain barrier nor a swim transition.
+
+The active queue is `CHR-006`, surface swimming. `W-005`, the GPU
 shallow-water solver, remains an approved deferred specialization in
 [ENGINE_PLAN.md](ENGINE_PLAN.md); gameplay query invariants are in
 [WATER.md](WATER.md), and the player contract is in

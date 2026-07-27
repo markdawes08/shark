@@ -3,8 +3,8 @@
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
 - **Last updated:** July 26, 2026
-- **Latest completed:** `CHR-004` - jumping and landing
-- **Next increment:** `CHR-005` - shallow-water wading
+- **Latest completed:** `CHR-005` - shallow-water wading
+- **Next increment:** `CHR-006` - surface swimming
 
 ## 1. Project direction
 
@@ -851,7 +851,7 @@ coupling are outside this first playable path.
 | `CHR-002` | S | Complete: add standard gravity, exact canonical-face support with slope-correct upright-capsule clearance, inclusive walkable-slope classification, stable grounded and steep-contact states, falling, one-tick landing, terrain-aware spawn/reset, and lifecycle interpolation collapse; prove edge ownership, rollback, camera follow, and exact 30/60/120/144 Hz transcripts without horizontal control | `feat(character): add terrain grounding` |
 | `CHR-003` | S | Complete: add authoritative fixed-tick horizontal velocity, `4/7 m/s` walk/run targets, `24 m/s²` acceleration, `32 m/s²` braking, bounded shortest-arc facing, and camera-relative intent from the newly advanced orbit yaw; traverse canonical terrain with deterministic probes no farther than `0.25 m` apart, retain the safe prefix and stop at steep/missing/out-of-bounds support, and prove the complete eight-point island loop plus exact 30/60/120/144 Hz transcripts without claiming an exact swept capsule | `feat(character): add grounded locomotion` |
 | `CHR-004` | S | Complete: add a `6.5 m/s` pre-gravity jump launch, `12 m/s^2` camera-relative airborne control weaker than ground acceleration, exact neutral momentum preservation, explicit rising/falling phases, ignored airborne jump pulses, sampled three-dimensional canonical-terrain contacts, one-tick landing, and canonical dry-spawn recovery; prove apex, no double jump, landing, reset/fall recovery, camera follow, terrain bounds, and exact 30/60/120/144 Hz transcripts without claiming exact continuous collision detection | `feat(character): add jumping and landing` |
-| `CHR-005` | S | Add dry-to-wading transitions from WQ-001, immersion hysteresis, depth-scaled movement, and reliable shore exit without changing water volume | `feat(character): add shallow-water wading` |
+| `CHR-005` | S | Complete: consume one tick-start WQ-001 observation at authoritative X/Z per emitted fixed tick; enter wading at `0.25 m`, remain wading until depth is `<= 0.125 m`, and linearly scale supported ground speed from `1.0` at `0.25 m` to `0.5` at `1.5 m` with deeper water clamped to `0.5`; require exact canonical-bed agreement, classify only grounded/landing support as wading, publish dry state for jump/air/steep/reset/recovery, and prove next-tick shore reclassification without water mutation, GPU access, flow response, or a deep-water barrier | `feat(character): add shallow-water wading` |
 | `CHR-006` | S | Add surface-swim entry/exit, buoyant surface positioning, directional movement, and recovery to grounded motion; underwater free-swimming and combat remain later | `feat(character): add surface swimming` |
 | `AVT-001` | V | Replace the diagnostic capsule with one project-owned low-poly placeholder and bounded idle/walk/run/jump/wade/swim presentation states; retain controller motion as authority and defer a general skeletal asset pipeline | `feat(character): render placeholder avatar` |
 | `DEMO-001` | - | Launch Island Demo 0.1 from the dry spawn: orbit a visible character, walk/run/jump around the island, enter progressively deeper water, wade, surface-swim, and return to land without penetration, teleport, NaN, duplicate state transitions, or frame-rate-dependent outcomes; pass Debug/Release and clean hardware/WARP validation | `feat(demo): complete playable island slice` |
@@ -1020,20 +1020,19 @@ members, and zone serialization wait until measured needs after the demo.
 
 ## 14. Immediate next increment
 
-With CHR-004 completed, implement only `CHR-005`:
+With CHR-005 completed, implement only `CHR-006`:
 
-- query WQ-001 at the authoritative capsule position on each fixed tick through
-  the existing CPU-only Water boundary;
-- classify dry and wading states with explicit depth thresholds and hysteresis;
-- add bounded depth-scaled wading locomotion and reliable dry/wading
-  transitions at the shoreline;
-- preserve Character's jump, airborne, canonical-terrain, reset, and recovery
-  authority without mutating water volume or waiting for GPU data;
-- prove threshold-adjacent stability, shallow-depth speed, shore entry/exit,
-  reset, and exact 30/60/120/144 Hz outcomes; and
-- stop before surface swimming, underwater movement, water combat, buoyancy,
-  displacement, dynamic waves, GPU readback, gamepad input, animation, or
-  final avatar art.
+- add an explicit surface-swim entry from sufficiently deep wading and a
+  reliable return to wading or grounded shore motion;
+- hold the character at a bounded surface-relative height and add deterministic
+  camera-relative surface-swim movement;
+- retain the CPU-only Water query boundary, canonical terrain agreement,
+  fixed-tick snapshots, reset/recovery behavior, and render-rate invariance;
+- prove stable entry, movement, shoreline exit, jump/reset interactions, and
+  exact 30/60/120/144 Hz outcomes; and
+- stop before underwater free-swimming, water combat, buoyant rigid bodies,
+  water displacement, dynamic waves, GPU readback, gamepad input, animation,
+  or final avatar art.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -1376,7 +1375,24 @@ render pass or GPU resource. The complete Debug and Release suites each pass
 presentation smokes pass 1,000 and 600 grounded frames respectively, with
 zero D3D12 corruption/errors and zero live child objects.
 
-The active queue is `CHR-005`, shallow-water wading.
+CHR-005 consumes one WQ-001 result sampled at the tick-start authoritative
+capsule X/Z on every emitted fixed tick. Supported grounded or landing motion
+enters wading at `0.25 m` and exits at depth `<= 0.125 m`. Its target-speed
+multiplier is linear from `1.0` at `0.25 m` to `0.5` at `1.5 m`, then remains
+clamped at `0.5` in deeper water. The query bed must equal the canonical LOD0
+support bed. A shore crossing made by the current movement step is therefore
+reclassified on the next emitted tick, independent of render rate. Jumping,
+airborne motion, steep contact, reset, and recovery publish dry water state;
+reset wins over a wet source observation. Flow is deliberately ignored, and
+Character neither mutates water nor reads GPU state. Until CHR-006, deep
+submerged beds remain traversable at the `0.5` wading multiplier rather than
+forming a barrier or initiating swimming. Focused and complete checks pass
+without changing the renderer or GPU resource contract. The complete Debug and
+Release suites each pass 589,949 assertions across 400 cases; final Debug RTX
+4070 and packaged-WARP presentation smokes retain zero D3D12
+corruption/errors and zero live D3D12 child objects.
+
+The active queue is `CHR-006`, surface swimming.
 `W-005`, `W-006`, `R-001` through `R-004`, and coupled hydrology remain
 approved but deferred from the Island Demo 0.1 critical path.
 

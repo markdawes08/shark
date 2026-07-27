@@ -202,6 +202,24 @@ struct HorizontalIntent final {
     }
 }
 
+[[nodiscard]] bool valid_water_state(
+    const PlayerWaterState& water_state,
+    const PlayerVerticalState& vertical,
+    const PlayerWadingSettings& settings) noexcept
+{
+    switch (water_state.phase) {
+    case PlayerWaterPhase::dry:
+        return positive_zero(water_state.depth);
+    case PlayerWaterPhase::wading:
+        return std::isfinite(water_state.depth) &&
+            water_state.depth > settings.exit_depth &&
+            (vertical.phase == PlayerGroundPhase::grounded ||
+             vertical.phase == PlayerGroundPhase::landing);
+    default:
+        return false;
+    }
+}
+
 [[nodiscard]] bool valid_horizontal_velocity(
     const math::Float3 velocity,
     const PlayerGroundPhase phase,
@@ -264,7 +282,8 @@ struct HorizontalIntent final {
         canonical_yaw(config.spawn_facing_yaw_radians) &&
         is_valid(config.grounding) &&
         is_valid(config.ground_locomotion) &&
-        is_valid(config.air_locomotion);
+        is_valid(config.air_locomotion) &&
+        is_valid(config.wading);
 }
 
 [[nodiscard]] PlayerCapsuleState spawn_state(
@@ -312,6 +331,73 @@ struct HorizontalIntent final {
             : PlayerGroundPhase::falling,
         .support_normal = {},
     };
+}
+
+[[nodiscard]] PlayerWaterState classify_tick_start_water(
+    const PlayerWaterState& current,
+    const PlayerVerticalState& vertical,
+    const water::GameplayWaterQuery& query,
+    const PlayerWadingSettings& settings) noexcept
+{
+    const auto supported =
+        vertical.phase == PlayerGroundPhase::grounded ||
+        vertical.phase == PlayerGroundPhase::landing;
+    if (!supported ||
+        query.disposition !=
+            water::GameplayWaterDisposition::water) {
+        return {};
+    }
+
+    const auto wading = current.phase == PlayerWaterPhase::wading
+        ? query.depth > settings.exit_depth
+        : query.depth >= settings.enter_depth;
+    return wading
+        ? PlayerWaterState{
+              .phase = PlayerWaterPhase::wading,
+              .depth = query.depth,
+          }
+        : PlayerWaterState{};
+}
+
+[[nodiscard]] float wading_speed_multiplier(
+    const PlayerWaterState& water_state,
+    const PlayerWadingSettings& settings) noexcept
+{
+    if (water_state.phase != PlayerWaterPhase::wading ||
+        water_state.depth <= settings.enter_depth) {
+        return 1.0F;
+    }
+    if (water_state.depth >=
+        settings.depth_for_minimum_speed) {
+        return settings.minimum_speed_multiplier;
+    }
+
+    const auto amount =
+        (static_cast<double>(water_state.depth) -
+         static_cast<double>(settings.enter_depth)) /
+        (static_cast<double>(
+             settings.depth_for_minimum_speed) -
+         static_cast<double>(settings.enter_depth));
+    const auto multiplier =
+        1.0 -
+        (1.0 -
+         static_cast<double>(
+             settings.minimum_speed_multiplier)) *
+            amount;
+    return canonical_zero(static_cast<float>(multiplier));
+}
+
+[[nodiscard]] HorizontalIntent scale_intent_for_wading(
+    HorizontalIntent intent,
+    const PlayerWaterState& water_state,
+    const PlayerWadingSettings& settings) noexcept
+{
+    if (intent.active) {
+        intent.target_speed = canonical_zero(
+            intent.target_speed *
+            wading_speed_multiplier(water_state, settings));
+    }
+    return intent;
 }
 
 [[nodiscard]] core::Result<HorizontalIntent>
@@ -615,6 +701,7 @@ build_spawn_discontinuity(
     candidate.previous = PlayerCapsuleSnapshot{
         .state = spawn,
         .vertical = spawn_result.value().vertical,
+        .water = {},
         .horizontal_velocity = {},
         .consumed_movement_frame = {},
         .fixed_tick = fixed_tick - 1U,
@@ -623,6 +710,7 @@ build_spawn_discontinuity(
     candidate.current = PlayerCapsuleSnapshot{
         .state = spawn,
         .vertical = spawn_result.value().vertical,
+        .water = {},
         .horizontal_velocity = {},
         .consumed_command = command,
         .consumed_movement_frame = movement_frame,
@@ -673,6 +761,33 @@ build_spawn_discontinuity(
             core::ErrorCode::invalid_state,
             "Player support snapshot disagrees with canonical "
             "terrain"));
+    }
+    return core::Result<void>::success();
+}
+
+[[nodiscard]] core::Result<void> validate_source_water(
+    const water::GameplayWaterQuery& gameplay_water,
+    const std::optional<PlayerTerrainSupport>& support)
+{
+    if (!support.has_value()) {
+        if (gameplay_water.disposition ==
+            water::GameplayWaterDisposition::out_of_terrain) {
+            return core::Result<void>::success();
+        }
+        return core::Result<void>::failure(character_error(
+            core::ErrorCode::invalid_state,
+            "Player tick-start water query reports terrain where "
+            "canonical terrain is absent"));
+    }
+
+    if (gameplay_water.disposition ==
+            water::GameplayWaterDisposition::out_of_terrain ||
+        gameplay_water.bed_height !=
+            support->surface.position.y) {
+        return core::Result<void>::failure(character_error(
+            core::ErrorCode::invalid_state,
+            "Player tick-start water query disagrees with canonical "
+            "terrain support"));
     }
     return core::Result<void>::success();
 }
@@ -1182,6 +1297,24 @@ bool is_valid(
             maximum_player_air_control_acceleration;
 }
 
+bool is_valid(const PlayerWadingSettings& settings) noexcept
+{
+    return std::isfinite(settings.enter_depth) &&
+        settings.enter_depth > 0.0F &&
+        settings.enter_depth <= maximum_player_wading_depth &&
+        std::isfinite(settings.exit_depth) &&
+        settings.exit_depth >= 0.0F &&
+        settings.exit_depth < settings.enter_depth &&
+        std::isfinite(settings.depth_for_minimum_speed) &&
+        settings.depth_for_minimum_speed >
+            settings.enter_depth &&
+        settings.depth_for_minimum_speed <=
+            maximum_player_wading_depth &&
+        std::isfinite(settings.minimum_speed_multiplier) &&
+        settings.minimum_speed_multiplier > 0.0F &&
+        settings.minimum_speed_multiplier <= 1.0F;
+}
+
 bool is_valid(const PlayerMovementFrame& frame) noexcept
 {
     if (!math::is_finite(frame.right) ||
@@ -1234,6 +1367,14 @@ bool is_valid(
         !valid_vertical_state(
             simulation.current.vertical,
             simulation.config.grounding) ||
+        !valid_water_state(
+            simulation.previous.water,
+            simulation.previous.vertical,
+            simulation.config.wading) ||
+        !valid_water_state(
+            simulation.current.water,
+            simulation.current.vertical,
+            simulation.config.wading) ||
         !valid_horizontal_velocity(
             simulation.previous.horizontal_velocity,
             simulation.previous.vertical.phase,
@@ -1268,6 +1409,10 @@ bool is_valid(
                 spawn_state(simulation.config) &&
             simulation.previous.vertical ==
                 simulation.current.vertical &&
+            simulation.previous.water ==
+                simulation.current.water &&
+            simulation.current.water ==
+                PlayerWaterState{} &&
             canonical_zero_vector(
                 simulation.previous.horizontal_velocity) &&
             canonical_zero_vector(
@@ -1365,13 +1510,14 @@ create_player_capsule(
         !std::isfinite(config.spawn_facing_yaw_radians) ||
         !is_valid(config.grounding) ||
         !is_valid(config.ground_locomotion) ||
-        !is_valid(config.air_locomotion)) {
+        !is_valid(config.air_locomotion) ||
+        !is_valid(config.wading)) {
         return core::Result<PlayerCapsuleSimulation>::failure(
             character_error(
                 core::ErrorCode::invalid_argument,
                 "Player capsule requires finite bounded shape, "
                 "center bounds, spawn pose, grounding, ground "
-                "locomotion, and air locomotion settings"));
+                "locomotion, air locomotion, and wading settings"));
     }
 
     config.center_bounds.minimum =
@@ -1386,6 +1532,8 @@ create_player_capsule(
                 config.spawn_facing_yaw_radians));
     config.grounding.snap_distance =
         canonical_zero(config.grounding.snap_distance);
+    config.wading.exit_depth =
+        canonical_zero(config.wading.exit_depth);
     if (!valid_config(config)) {
         return core::Result<PlayerCapsuleSimulation>::failure(
             character_error(
@@ -1437,12 +1585,14 @@ core::Result<void> advance_player_capsule(
     PlayerActionCommand command,
     PlayerMovementFrame movement_frame,
     const terrain::HeightTileSurface& terrain_surface,
+    const water::GameplayWaterQuery& gameplay_water,
     const float fixed_delta_seconds,
     const std::uint64_t fixed_tick)
 {
     if (!is_valid(simulation) ||
         !is_valid(command) ||
         !is_valid(movement_frame) ||
+        !water::is_valid(gameplay_water) ||
         !std::isfinite(fixed_delta_seconds) ||
         fixed_delta_seconds <= 0.0F ||
         fixed_delta_seconds >
@@ -1450,7 +1600,8 @@ core::Result<void> advance_player_capsule(
         return core::Result<void>::failure(character_error(
             core::ErrorCode::invalid_argument,
             "Player-capsule advance requires valid state, command, "
-            "movement frame, and fixed delta in (0, 0.25] seconds"));
+            "movement frame, gameplay-water query, and fixed delta "
+            "in (0, 0.25] seconds"));
     }
     if (simulation.current.fixed_tick ==
         std::numeric_limits<std::uint64_t>::max()) {
@@ -1487,6 +1638,13 @@ core::Result<void> advance_player_capsule(
     if (!source_result) {
         return core::Result<void>::failure(
             source_result.error());
+    }
+    auto water_source_result = validate_source_water(
+        gameplay_water,
+        support_result.value());
+    if (!water_source_result) {
+        return core::Result<void>::failure(
+            water_source_result.error());
     }
 
     command.look_yaw_delta_radians =
@@ -1530,6 +1688,12 @@ core::Result<void> advance_player_capsule(
                 PlayerGroundPhase::rising ||
             simulation.current.vertical.phase ==
                 PlayerGroundPhase::falling;
+        const auto tick_start_water =
+            classify_tick_start_water(
+                simulation.current.water,
+                simulation.current.vertical,
+                gameplay_water,
+                simulation.config.wading);
         if (supported || airborne) {
             auto intent_result = build_horizontal_intent(
                 command,
@@ -1551,10 +1715,15 @@ core::Result<void> advance_player_capsule(
 
             if (supported && !command.jump_pressed) {
                 const auto& support = *support_result.value();
+                const auto ground_intent =
+                    scale_intent_for_wading(
+                        intent_result.value(),
+                        tick_start_water,
+                        simulation.config.wading);
                 auto velocity_result =
                     move_horizontal_velocity_toward(
                         simulation.current.horizontal_velocity,
-                        intent_result.value(),
+                        ground_intent,
                         simulation.config.ground_locomotion,
                         fixed_delta_seconds);
                 if (!velocity_result) {
@@ -1579,10 +1748,12 @@ core::Result<void> advance_player_capsule(
                     supported_vertical_state(
                         traversal_result.value().support,
                         false);
+                candidate.current.water = tick_start_water;
                 candidate.current.horizontal_velocity =
                     traversal_result.value().horizontal_velocity;
             }
             else {
+                candidate.current.water = {};
                 auto velocity_result =
                     move_air_horizontal_velocity_toward(
                         simulation.current.horizontal_velocity,
@@ -1643,6 +1814,7 @@ core::Result<void> advance_player_capsule(
                 supported_vertical_state(
                     support,
                     false);
+            candidate.current.water = {};
             candidate.current.horizontal_velocity = {};
         }
     }
@@ -1672,6 +1844,7 @@ collapse_player_capsule_interpolation(
     candidate.previous.state = candidate.current.state;
     candidate.previous.vertical =
         candidate.current.vertical;
+    candidate.previous.water = candidate.current.water;
     candidate.previous.horizontal_velocity =
         candidate.current.horizontal_velocity;
     if (!is_valid(candidate)) {

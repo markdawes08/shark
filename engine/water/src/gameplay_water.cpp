@@ -68,6 +68,19 @@ namespace {
     return value == 0.0F ? 0.0F : value;
 }
 
+[[nodiscard]] bool positive_zero(
+    const float value) noexcept
+{
+    return value == 0.0F && !std::signbit(value);
+}
+
+[[nodiscard]] bool canonical_finite(
+    const float value) noexcept
+{
+    return std::isfinite(value) &&
+        (value != 0.0F || !std::signbit(value));
+}
+
 [[nodiscard]] HorizontalFlow canonical_flow(
     const HorizontalFlow flow) noexcept
 {
@@ -91,6 +104,50 @@ namespace {
 }
 
 } // namespace
+
+bool is_valid(const GameplayWaterQuery& query) noexcept
+{
+    if (!canonical_finite(query.surface_height) ||
+        !canonical_finite(query.bed_height) ||
+        !canonical_finite(query.depth)) {
+        return false;
+    }
+
+    const auto flow_is_valid =
+        !query.flow_velocity.has_value() ||
+        (canonical_finite(query.flow_velocity->x) &&
+         canonical_finite(query.flow_velocity->z));
+    if (!flow_is_valid) {
+        return false;
+    }
+
+    switch (query.disposition) {
+    case GameplayWaterDisposition::out_of_terrain:
+        return !query.horizontal_support &&
+            positive_zero(query.bed_height) &&
+            positive_zero(query.depth) &&
+            !query.flow_velocity.has_value();
+    case GameplayWaterDisposition::no_water:
+        return positive_zero(query.depth) &&
+            !query.flow_velocity.has_value();
+    case GameplayWaterDisposition::water: {
+        const auto checked_depth =
+            static_cast<double>(query.surface_height) -
+            static_cast<double>(query.bed_height);
+        return query.horizontal_support &&
+            query.depth > 0.0F &&
+            std::isfinite(checked_depth) &&
+            checked_depth > 0.0 &&
+            checked_depth <=
+                static_cast<double>(
+                    std::numeric_limits<float>::max()) &&
+            query.depth ==
+                static_cast<float>(checked_depth);
+    }
+    default:
+        return false;
+    }
+}
 
 core::Result<GameplayWaterQuery> query_gameplay_water(
     const CalmWaterBody& body,

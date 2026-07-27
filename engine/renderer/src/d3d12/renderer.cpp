@@ -919,8 +919,8 @@ static_assert(
             return false;
         }
     }
-    return backend_detail::valid_debug_capsule_proxy(
-               frame_data.debug_capsule) &&
+    return backend_detail::valid_placeholder_avatar_proxy(
+               frame_data.placeholder_avatar) &&
         math::is_finite(frame_data.view_projection) &&
         math::is_finite(frame_data.sky_view_projection) &&
         math::is_finite(frame_data.camera_world_position) &&
@@ -1701,7 +1701,7 @@ public:
             maximum_material_sphere_count>&
             material_sphere_world_orientations,
         const std::uint32_t material_sphere_count,
-        const DebugCapsuleProxy& debug_capsule,
+        const PlaceholderAvatarProxy& placeholder_avatar,
         const TerrainMaterialView material_view,
         const EnvironmentLightingMode environment_mode,
         const bool terrain_diagnostics_enabled)
@@ -1936,29 +1936,31 @@ public:
                 0);
         }
 
-        if (debug_capsule.enabled) {
-            const auto debug_capsule_transform =
-                backend_detail::make_debug_capsule_transform(
-                    debug_capsule);
-            command_list->SetGraphicsRoot32BitConstants(
-                backend_detail::
-                    material_sphere_transform_root_parameter,
-                backend_detail::
-                    material_sphere_transform_root_constant_count,
-                &debug_capsule_transform,
-                0);
-            command_list->DrawIndexedInstanced(
-                material_sphere_index_count,
-                1,
-                terrain_surface_index_count +
-                    terrain_bounds_index_count +
-                    terrain_query_marker_index_count,
-                static_cast<INT>(
-                    terrain_vertex_count +
-                    terrain_bounds_vertex_count +
+        if (placeholder_avatar.enabled) {
+            const auto placeholder_avatar_parts =
+                backend_detail::make_placeholder_avatar_parts(
+                    placeholder_avatar);
+            for (const auto& part : placeholder_avatar_parts) {
+                command_list->SetGraphicsRoot32BitConstants(
                     backend_detail::
-                        terrain_query_marker_vertex_count),
-                0);
+                        material_sphere_transform_root_parameter,
+                    backend_detail::
+                        material_sphere_transform_root_constant_count,
+                    &part,
+                    0);
+                command_list->DrawIndexedInstanced(
+                    material_sphere_index_count,
+                    1,
+                    terrain_surface_index_count +
+                        terrain_bounds_index_count +
+                        terrain_query_marker_index_count,
+                    static_cast<INT>(
+                        terrain_vertex_count +
+                        terrain_bounds_vertex_count +
+                        backend_detail::
+                            terrain_query_marker_vertex_count),
+                    0);
+            }
         }
 
         if (terrain_diagnostics_enabled) {
@@ -5903,9 +5905,9 @@ core::Result<RenderStatus> Renderer::render_frame(
         return core::Result<RenderStatus>::failure(graphics_error(
             core::ErrorCode::invalid_argument,
             "Renderer frame view-projection matrices must be finite "
-            "and its camera, material-sphere transforms, daylight "
-            "settings, terrain fill mode, and material/environment "
-            "views must be valid"));
+            "and its camera, material-sphere/avatar transforms, "
+            "daylight settings, terrain fill mode, and "
+            "material/environment views must be valid"));
     }
     auto visibility_result =
         implementation_->update_terrain_visibility(
@@ -5962,7 +5964,8 @@ core::Result<RenderStatus> Renderer::render_frame(
                     frame_data.material_sphere_world_orientations,
                  material_sphere_count =
                     frame_data.material_sphere_count,
-                 debug_capsule = frame_data.debug_capsule,
+                 placeholder_avatar =
+                    frame_data.placeholder_avatar,
                  material_view =
                     frame_data.terrain_material_view,
                  environment_mode =
@@ -5990,7 +5993,7 @@ core::Result<RenderStatus> Renderer::render_frame(
                         material_sphere_world_positions,
                         material_sphere_world_orientations,
                         material_sphere_count,
-                        debug_capsule,
+                        placeholder_avatar,
                         material_view,
                         environment_mode,
                         terrain_diagnostics_enabled);
@@ -6272,9 +6275,12 @@ core::Result<RenderStatus> Renderer::render_frame(
         static_cast<std::uint64_t>(
             frame_data.material_sphere_count) *
         implementation_->material_sphere_index_count;
-    if (frame_data.debug_capsule.enabled) {
-        ++implementation_->statistics.debug_capsule_draw_calls;
-        implementation_->statistics.debug_capsule_indices +=
+    if (frame_data.placeholder_avatar.enabled) {
+        implementation_->statistics.placeholder_avatar_draw_calls +=
+            placeholder_avatar_part_count;
+        implementation_->statistics.placeholder_avatar_indices +=
+            static_cast<std::uint64_t>(
+                placeholder_avatar_part_count) *
             implementation_->material_sphere_index_count;
     }
     ++implementation_->statistics.tone_map_draw_calls;

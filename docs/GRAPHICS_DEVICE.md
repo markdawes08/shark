@@ -1,8 +1,8 @@
 # Direct3D 12 Device Contract
 
 - **Device capability completed through:** `G-001`
-- **Renderer integration verified through:** `CHR-001`
-- **Last verified:** July 25, 2026
+- **Renderer integration verified through:** `AVT-001`
+- **Last verified:** July 27, 2026
 
 G-001 establishes adapter discovery, diagnostics, capability reporting, and
 device ownership independently of frame submission. It intentionally creates
@@ -111,15 +111,15 @@ Selection rules are strict:
 `--gpu-smoke` and `--capabilities` create no window and exit after device
 verification. `--present-smoke` accepts the normal GPU selectors and optional
 GPU-based validation, creates a real window, presents exactly 1,000 successful
-frames normally or 120 in the focused GPU-validation mode, containing the
+frames normally or 120 in the focused GPU-validation mode, contains the
 visible indexed terrain chunks, matching magenta chunk bounds, four material
-spheres, one blue player capsule, cyan terrain-query marker, cube, skybox,
-visual water, and final tone mapping, verifies
+spheres, six parts of one project-owned placeholder avatar, cyan terrain-query
+marker, cube, skybox, visual water, and final tone mapping, verifies
 camera/depth/HDR/resource/graph lifecycles, and exits. The default interactive
 path keeps the device alive while the third-person player camera, IBL-lit
-terrain and query-normal pin, four material spheres, blue player capsule,
-textured cube, HDR sky, and visual lake run
-as `Terrain`, `TexturedCube`, `Skybox`, `Water`, and `ToneMap` passes. `F3`
+terrain and query-normal pin, four material spheres, six-part placeholder
+avatar, textured cube, HDR sky, and visual lake run as `Terrain`,
+`TexturedCube`, `Skybox`, `Water`, and `ToneMap` passes. `F3`
 retains the procedural-daylight fallback, and `F7` selects the retained
 diagnostic free-fly camera. The startup DDS cubemap remains an
 asset/upload proof and is not imported, bound, or sampled per frame.
@@ -201,15 +201,16 @@ reused, every submission compiles and executes exactly five graph passes with
 transitions plus five texture-table bindings, and every submission retires
 during explicit shutdown before frame resources are released. T-006
 historically established four geometry buffers and the active 225-chunk
-capacity; T-008 retains them, while W-001 expands timing to 12 timestamps per
-frame. Each visible surface selects a
+capacity; the Island Demo retains them, while W-001 expands timing to 12
+timestamps per frame. Each visible surface selects a
 1,536-index LOD0 or
 864-index coarse range; default frames omit bounds/query diagnostics, while
-`F4` adds them without another resource. The unchanged T-008 smoke poses expect `V=93`
-and `V=72` for the overview phases, with LOD0/coarse splits of `0/93` and
-`0/72`. Its final smoke-only near phase moves to `(16, -1, 0)` with the same
-yaw/pitch and expects `V=61` at `1/60`, keeping both packed terrain index ranges
-live without changing resources or the interactive start.
+`F4` adds them without another resource. The active Island Demo smoke poses
+expect `V=93` and `V=72` for the overview phases, with LOD0/coarse splits of
+`0/93` and `1/71`. Its final smoke-only near phase moves to `(16, -1, 0)` with
+the same yaw/pitch and expects `V=61` at `0/61`; the overview phase keeps both
+packed terrain index ranges live without changing resources or the interactive
+start.
 
 The packed terrain buffer widths are 1,443,672 vertex bytes and 1,093,980 index
 bytes; D3D12 reports 2,621,440 committed bytes for the two resources. Renderer
@@ -244,6 +245,12 @@ historical.
 `T-008` and `W-001` change no adapter selection, capability gate, queue, fence,
 heap, descriptor-lifetime, or device-removal policy. Water's root signature
 and PSO remain renderer-owned objects covered by the existing shutdown and
-live-object validation. This component page no longer duplicates the rolling
+live-object validation. AVT-001 similarly adds no capability, resource, heap,
+descriptor, upload, pass, queue, fence, or lifetime policy: six avatar-part
+draws reuse the existing material-sphere range and Terrain pass. The final
+Debug and Release suites each passed `613,817` assertions across `418` cases;
+Debug RTX/WARP/WARP+GBV and Release RTX presentation smokes passed
+`1,000/600/120/1,000` frames with zero Direct3D corruption/errors and zero live
+child objects. This component page no longer duplicates the rolling
 project queue; [ENGINE_PLAN.md](ENGINE_PLAN.md) is the roadmap source of truth.
 Rain remains deferred under the approved bounded action-RPG ceiling.

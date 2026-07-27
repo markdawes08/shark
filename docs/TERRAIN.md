@@ -2,10 +2,11 @@
 
 - **Completed through:** `ISL-001`
 - **Character integration completed through:** `CHR-006`
-- **Last verified:** July 26, 2026
-- **CHR-006 verification:** Debug and Release each passed `612,172` assertions
-  across `410` cases; focused Debug passed `22,221` assertions across `10`
-  surface-swimming cases; RTX 4070/WARP smokes passed `1,000/600` frames
+- **Presentation integration completed through:** `AVT-001`
+- **Last verified:** July 27, 2026
+- **AVT-001 verification:** Debug and Release each passed `613,817` assertions
+  across `418` cases; presentation smokes passed Debug RTX 4070 `1,000`,
+  packaged WARP `600`, WARP+GBV `120`, and Release RTX 4070 `1,000` frames
 
 ISL-001 retains the T-007 rolling-height source and all historical T-008 basin
 fixtures, but the no-argument Island Demo applies a separate deterministic Q8
@@ -734,9 +735,9 @@ The renderer-owned production declaration now contains five passes:
 
 1. `Terrain` clears color/depth, draws each visible chunk's selected LOD0 or
    coarse range in the selected solid or wireframe mode, then draws four
-   material spheres and the blue player capsule. When terrain diagnostics are
-   enabled, it also draws each visible chunk's magenta AABB and the cyan query
-   marker.
+   material spheres and the six project-owned placeholder-avatar parts. When
+   terrain diagnostics are enabled, it also draws each visible chunk's magenta
+   AABB and the cyan query marker.
 2. `TexturedCube` preserves the attachments and draws the checker cube.
 3. `Skybox` reads depth and fills only the far background with procedural
    daylight or HDR radiance.
@@ -783,12 +784,12 @@ and `D` be one when diagnostics are enabled and zero otherwise. The `Terrain`
 timing interval contains all of these commands:
 
 ```text
-Terrain indexed draws       V + 5 + D * (V + 1)
-full-frame indexed draws     V + 7 + D * (V + 1)
+Terrain indexed draws      V + 10 + D * (V + 1)
+full-frame indexed draws    V + 12 + D * (V + 1)
 LOD0 terrain indices         1,536 * V0
 coarse terrain indices         864 * Vc
 material sphere indices      6,336
-player capsule indices       1,584
+placeholder avatar indices   9,504
 diagnostic AABB indices      D * 24 * V
 diagnostic marker indices    D * 6
 textured-cube indices        36
@@ -798,8 +799,8 @@ skybox indices               36
 `Water` issues one non-indexed six-vertex draw generated from `SV_VertexID`, and
 `ToneMap` issues one non-indexed fullscreen-triangle draw. With diagnostics off,
 the initial/resized `V0=0`, `Vc=93` poses submit 80,352 terrain-surface indices;
-the turned `V0=0`, `Vc=72` overview submits 62,208; and the final smoke-only
-`V0=1`, `Vc=60` near pose submits 53,376, exercising both packed surface ranges.
+the turned `V0=1`, `Vc=71` overview submits 62,880; and the final smoke-only
+`V0=0`, `Vc=61` near pose submits 52,704, exercising both packed surface ranges.
 
 The stable PIX hierarchy and timestamp allocation remain:
 
@@ -859,8 +860,8 @@ scene_matrix_changes == 4
 sky_matrix_changes == 3
 
 material_sphere_draw_calls == 4 * F
-debug_capsule_draw_calls == F
-debug_capsule_indices == 1,584 * F
+placeholder_avatar_draw_calls == 6 * F
+placeholder_avatar_indices == 9,504 * F
 cube_draw_calls == skybox_draw_calls == water_draw_calls
     == tone_map_draw_calls == F
 water_vertices == 6 * F
@@ -987,8 +988,8 @@ Renderer coverage locks all six Direct3D clip half-spaces, normalized planes,
 inside, intersecting, tangent, and outside AABBs, rejection of
 degenerate/nonfinite matrices, positive-scale-invariant extraction, ordinary
 and extreme-far reversed-Z ranges, and exact active smoke poses:
-`93 (0/93)` before and after resize, `72 (0/72)` after the yaw, and the
-smoke-only `(16, -1, 0)` near pose at `61 (1/60)` with the same yaw/pitch.
+`93 (0/93)` before and after resize, `72 (1/71)` after the yaw, and the
+smoke-only `(16, -1, 0)` near pose at `61 (0/61)` with the same yaw/pitch.
 
 Coarse-layout coverage retains the compact oracle's sixteen center-fan patches
 per complete `8x8` chunk, 240 indices, nine boundary samples/eight edge
@@ -1195,14 +1196,18 @@ motion can be captured at the surface; rising motion remains unchanged.
 Terrain owns none of the `1.50/1.25 m` thresholds, surface offset, water
 containment, or phase policy. The WQ result still has no source-X/Z provenance,
 and Character adds no per-probe Water query, renderer dependency, GPU access,
-current response, or dynamic-water smoothing. CHR-006 focused Debug passed
-`22,221` assertions across `10` surface-swimming cases, and the complete Debug
-and Release suites each passed `612,172` assertions across `410` cases. The
-final Debug RTX 4070 and packaged-WARP presentation smokes passed `1,000/600`
-frames; each end-of-run validation reported zero D3D12 corruption, zero errors,
-zero live D3D12 child objects, and only the two expected device-level RLDO
-advisory warnings. The active queue is `AVT-001`, placeholder avatar
-presentation. `W-005`, the
+current response, or dynamic-water smoothing. AVT-001 consumes only the
+interpolated Character snapshots and adds six 1,584-index presentation draws
+inside the existing Terrain pass. Its 9,504 avatar indices add no terrain
+vertex/index payload, graph pass, GPU resource, descriptor, upload, barrier,
+PIX event, or timestamp interval.
+
+The complete Debug and Release suites each passed `613,817` assertions across
+`418` cases. The Debug RTX 4070, packaged-WARP, focused WARP+GBV, and Release
+RTX 4070 presentation smokes passed `1,000/600/120/1,000` frames with exact
+six-draw avatar accounting, zero D3D12 corruption/errors, and zero live D3D12
+child objects. The active queue is `DEMO-001`, the complete playable Island
+Demo 0.1 acceptance pass. `W-005`, the
 GPU shallow-water solver, remains an approved deferred specialization in
 [ENGINE_PLAN.md](ENGINE_PLAN.md); gameplay query invariants are in
 [WATER.md](WATER.md), and the player contract is in

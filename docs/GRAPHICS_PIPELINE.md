@@ -1,7 +1,7 @@
 # HLSL Graphics Pipeline Contract
 
-- **Completed through:** `CHR-001`
-- **Last verified:** July 25, 2026
+- **Completed through:** `AVT-001`
+- **Last verified:** July 27, 2026
 
 Shark compiles all production HLSL at build time with a pinned retail DXC and
 creates immutable Direct3D 12 pipeline state during renderer startup. W-001
@@ -13,8 +13,12 @@ PHY-001 introduced the material-sphere translation bridge, and PHY-003 reused
 it for four indexed draws. CHR-001 expands `b2` to nine root constants: one
 unit quaternion, one world position, radius, and vertical half-segment.
 Half-segment zero preserves the existing sphere branch exactly; a positive
-half-segment deforms that same parameterization into the blue player-capsule
-proxy. It changes no PSO count, geometry buffer, descriptor, or graph pass.
+half-segment deforms that same parameterization into a capsule. AVT-001
+replaces the single capsule proxy with one renderer-neutral placeholder-avatar
+pose that the backend expands into a spherical head and five capsule parts.
+All six parts reuse the same shader, material-sphere PSO, nine-DWORD `b2`
+contract, and 266-vertex/1,584-index packed sphere range. It changes no PSO
+count, geometry buffer, descriptor, upload, or graph pass.
 This remains a focused scene contract, not a general shader asset,
 material-graph, or pipeline-cache system.
 
@@ -131,8 +135,10 @@ nine `b2` values ordered as quaternion `(x,y,z,w)`, world position, radius,
 then vertical half-segment. It rotates the authored-center-relative vertex and
 normal, then uses the same sun and IBL functions. Half-segment zero selects
 the retained glossy sphere with its subtle local `+X` marker. Positive
-half-segment selects the blue capsule deformation and diagnostic material.
-This focused proxy path is not a general material or mesh instance system.
+half-segment selects the blue capsule deformation and material. AVT-001 uses
+the zero branch for the head and the positive branch for the torso, arms, and
+legs. This project-owned placeholder path is not a general skeletal animation,
+material, or mesh-instance system.
 
 The cube shader samples the deterministic checker. The sky shader forces
 reversed-Z far depth, normalizes the world direction, and either samples the
@@ -168,9 +174,9 @@ descriptor allocator or bindless convention.
   point-wrap static sampler.
 - The terrain signature contains the frame CBV, material/environment root
   constants, one six-SRV table spanning slots 2-7, and an anisotropic-wrap
-  static sampler. The material spheres and blue player capsule reuse it and
-  read nine vertex-visible environment-proxy constants from `b2`: quaternion,
-  world position, radius, and vertical half-segment.
+  static sampler. The material spheres and all six placeholder-avatar parts
+  reuse it and read nine vertex-visible environment-proxy constants from `b2`:
+  quaternion, world position, radius, and vertical half-segment.
 - The water signature contains the frame CBV, 20 surface root constants, one
   radiance SRV table, and a linear-clamp static sampler.
 - The sky signature contains the frame CBV, environment-mode constants, one
@@ -238,8 +244,9 @@ Each non-minimized frame then:
 3. composes the exact 15-import/five-pass HDR frame graph;
 4. executes `Terrain`, including one selected LOD0/coarse surface per visible
    chunk, four spheres transformed from PHY-004's immutable interpolated body
-   snapshots, and the CHR-001 capsule proxy; default-off `F4` diagnostics
-   additionally draw each visible chunk's magenta bounds and the query marker;
+   snapshots, and six parts expanded from AVT-001's one logical placeholder
+   avatar; default-off `F4` diagnostics additionally draw each visible chunk's
+   magenta bounds and the query marker;
 5. executes `TexturedCube`;
 6. executes the far-depth `Skybox`;
 7. composites the local-domain `Water` pass;
@@ -256,7 +263,8 @@ LOD0 terrain chunks      V0 * DrawIndexedInstanced(1,536, ...)
 coarse terrain chunks    Vc * DrawIndexedInstanced(864, ...)
 four material spheres at b2 transforms
                          4 * DrawIndexedInstanced(1,584, ...)
-blue player capsule     DrawIndexedInstanced(1,584, ...)
+six placeholder-avatar parts
+                         6 * DrawIndexedInstanced(1,584, ...)
 visible chunk AABBs      F4 ? V * DrawIndexedInstanced(24, ...) : 0
 terrain query marker     F4 ? DrawIndexedInstanced(6, ...) : 0
 textured cube            DrawIndexedInstanced(36, ...)
@@ -270,8 +278,8 @@ the shared 58,081-vertex stream; its maximum surface index is 58,080. The
 matching bounds draw selects its own packed eight-vertex/24-index range. Fine
 and coarse terrain indices occupy `0..345,599` and `345,600..539,999`; bounds,
 marker, and sphere begin at 540,000, 545,400, and 545,406. The four sphere
-draws and the player capsule reuse that one geometry range, so the normal
-`V + 7` indexed draws and optional `F4` diagnostic draws still use four
+draws and six avatar-part draws reuse that one geometry range, so the normal
+`V + 12` indexed draws and optional `F4` diagnostic draws still use four
 geometry buffers. Initial/resized smoke
 poses select `V0/Vc=0/93`; the turned overview selects `1/71`; and the final
 smoke-only `(16, -1, 0)` near pose selects `0/61` with unchanged yaw/pitch.
@@ -343,3 +351,17 @@ transform values and adds only the bounded orientation marker/shader math.
 CHR-001 extends that record to nine values and adds one capsule draw by
 reusing the same shader, PSO, and packed geometry; all resource and pass counts
 remain fixed.
+
+AVT-001 replaces that public capsule proxy with one renderer-neutral
+placeholder-avatar pose. The renderer validates bounded body, torso, arm, and
+leg pitch plus vertical offset, then expands the logical avatar into one
+spherical head and five capsule parts. Each submitted frame therefore records
+six part draws and 9,504 indices through the existing material-sphere PSO, packed
+266-vertex/1,584-index sphere range, and nine-DWORD `b2` root constants. Debug
+and Release each pass 613,817 assertions across 418 cases. Debug RTX 4070,
+WARP, and WARP+GBV smokes pass 1,000/600/120 frames with 6,000/3,600/720
+avatar-part draws; Release RTX 4070 passes 1,000 frames with 6,000 draws. All
+four paths report zero D3D12/DXGI corruption or errors and zero live child
+objects; shutdown retains only the two expected device-level RLDO advisory
+warnings. AVT-001 adds no resource, descriptor, upload, PSO, root-signature
+DWORD, pass, PIX scope, or timestamp.

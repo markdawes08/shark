@@ -8,6 +8,8 @@ add_executable(SharkTests
     ../apps/sandbox/camera_controller.cpp
     ../apps/sandbox/camera_controller.hpp
     ../apps/sandbox/options.cpp
+    ../apps/sandbox/player_avatar_frame.cpp
+    ../apps/sandbox/player_avatar_frame.hpp
     ../apps/sandbox/player_camera_frame.cpp
     ../apps/sandbox/player_camera_frame.hpp
     ../apps/sandbox/player_command_source.cpp
@@ -23,6 +25,7 @@ add_executable(SharkTests
     unit/dds_cubemap_tests.cpp
     unit/environment_lighting_tests.cpp
     unit/island_demo_scenario_tests.cpp
+    unit/player_avatar_frame_tests.cpp
     unit/player_camera_frame_tests.cpp
     unit/third_person_camera_tests.cpp
     unit/third_person_camera_pipeline_tests.cpp

@@ -20,6 +20,8 @@ add_executable(SharkSandbox
     main.cpp
     options.cpp
     options.hpp
+    player_avatar_frame.cpp
+    player_avatar_frame.hpp
     player_camera_frame.cpp
     player_camera_frame.hpp
     player_command_source.cpp

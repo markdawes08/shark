@@ -1,8 +1,8 @@
 # Minimal Render-Graph Contract
 
 - **Completed through:** `W-001`
-- **Renderer integration verified through:** `CHR-001`
-- **Last updated:** July 25, 2026
+- **Renderer integration verified through:** `AVT-001`
+- **Last updated:** July 27, 2026
 
 Shark's render graph is a small platform-independent planner with a Direct3D
 12 legacy-barrier executor. W-001 keeps the frame-local, whole-resource HDR
@@ -168,17 +168,17 @@ uploads and per-frame diagnostic `CopyBufferRegion` remain outside the graph.
 The graph pass callbacks own commands, not graph policy:
 
 - `Terrain` clears scene/depth and issues one selected LOD0/coarse surface per
-  visible chunk, four material-sphere draws, and the CHR-001 blue capsule draw;
-  default-off `F4` diagnostics add one magenta-bounds draw per visible chunk
-  and the query marker;
+  visible chunk, four material-sphere draws, and six AVT-001
+  placeholder-avatar part draws; default-off `F4` diagnostics add one
+  magenta-bounds draw per visible chunk and the query marker;
 - `TexturedCube` issues one checker-cube indexed draw;
 - `Skybox` binds read-only depth and issues one far-depth indexed draw;
 - `Water` issues one premultiplied six-vertex procedural draw with read-only
   depth; and
 - `ToneMap` issues one non-indexed fullscreen-triangle draw.
 
-If `V` of the 225 chunks are visible, normal `Terrain` contains `V + 5`
-indexed draws and the frame contains `V + 7` indexed draws plus the water and
+If `V` of the 225 chunks are visible, normal `Terrain` contains `V + 10`
+indexed draws and the frame contains `V + 12` indexed draws plus the water and
 tone-map non-indexed draws. `F4` adds `V + 1` diagnostic draws without
 changing the graph. The
 initial/resized and scripted-overview smoke poses expose 93 and 72 chunks;
@@ -201,6 +201,8 @@ render_graph_pass_executions     == frame_submissions * 5
 render_graph_dependencies        == frame_submissions * 5
 render_graph_transition_barriers == frame_submissions * 6
 render_graph_elided_transitions  == frame_submissions * 34
+placeholder_avatar_draw_calls    == frame_submissions * 6
+placeholder_avatar_indices       == frame_submissions * 9504
 
 pix_terrain_events + cube_draw_calls + skybox_draw_calls + water_draw_calls
     + tone_map_draw_calls == render_graph_pass_executions
@@ -257,3 +259,16 @@ duplicates the active queue; [ENGINE_PLAN.md](ENGINE_PLAN.md) is authoritative.
 ISL-001 changes only scenario data and the typed side of the existing water
 clip test. It keeps the same imports, accesses, callbacks, hazards, transitions,
 elisions, draw count, and exact `15/5/5/6/34` graph accounting.
+
+AVT-001 replaces one CHR-001 capsule draw with six draws expanded from one
+logical placeholder-avatar pose inside the existing `Terrain` callback. All
+six reuse the 266-vertex/1,584-index material-sphere range, its PSO, and the
+nine-DWORD `b2` constants; they add no import, resource, descriptor, upload,
+pass, dependency, transition, elision, PIX scope, or timestamp. The exact graph
+therefore remains 15 imports, five passes, five dependencies, six transitions,
+and 34 elisions per frame. Debug and Release each pass 613,817 assertions
+across 418 cases. Debug RTX 4070/WARP/WARP+GBV smokes pass
+1,000/600/120 frames with 6,000/3,600/720 avatar-part draws, and Release RTX
+4070 passes 1,000 frames with 6,000; all report zero D3D12/DXGI corruption or
+errors and zero live child objects, with only two expected device-level RLDO
+advisory warnings.

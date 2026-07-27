@@ -2,10 +2,11 @@
 
 - **Completed through:** `WQ-001`
 - **Character integration completed through:** `CHR-006`
-- **Last verified:** July 26, 2026
-- **CHR-006 verification:** Debug and Release each passed `612,172` assertions
-  across `410` cases; focused Debug passed `22,221` assertions across `10`
-  surface-swimming cases; RTX 4070/WARP smokes passed `1,000/600` frames
+- **Presentation integration completed through:** `AVT-001`
+- **Last verified:** July 27, 2026
+- **AVT-001 verification:** Debug and Release each passed `613,817` assertions
+  across `418` cases; presentation smokes passed Debug RTX 4070 `1,000`,
+  packaged WARP `600`, WARP+GBV `120`, and Release RTX 4070 `1,000` frames
 
 WQ-001 adds a small platform- and renderer-independent `shark::water` boundary
 for character-facing calm-water queries. It depends only on Core and Terrain.
@@ -145,15 +146,18 @@ The query still carries no source X/Z or tick provenance. Exact bed agreement
 detects many misplaced observations but cannot distinguish stale results over
 equal-height terrain. The sandbox's immediate tick-start query remains the
 binding contract. Underwater movement/combat, swim jumping, current response,
-animation, dynamic-water smoothing, per-probe Water queries, and GPU
-synchronization remain deferred. CAM-001 remains presentation only. The active
-queue is `AVT-001`, placeholder avatar presentation. The authoritative
+general skeletal animation, dynamic-water smoothing, per-probe Water queries,
+and GPU synchronization remain deferred. CAM-001 and AVT-001 remain
+presentation only. The active queue is `DEMO-001`, the complete playable
+Island Demo 0.1 acceptance pass. The authoritative
 increment order remains in [ENGINE_PLAN.md](ENGINE_PLAN.md), and the player
 contract is in [CHARACTER.md](CHARACTER.md).
 
-CHR-006 focused Debug surface-swimming verification passed `22,221` assertions
-across `10` cases, and the complete Debug and Release suites each passed
-`612,172` assertions across `410` cases. The final Debug RTX 4070 and
-packaged-WARP presentation smokes passed `1,000/600` frames; each end-of-run
-validation reported zero D3D12 corruption, zero errors, zero live D3D12 child
-objects, and only the two expected device-level RLDO advisory warnings.
+AVT-001 maps the immutable Character snapshots to six presentation-only parts;
+it does not change this query, water ownership, or Character's phase authority.
+Each submitted frame adds six 1,584-index avatar draws (9,504 indices) inside
+the existing Terrain pass with no new GPU resource or graph pass. The complete
+Debug and Release suites each passed `613,817` assertions across `418` cases.
+The Debug RTX 4070, packaged-WARP, focused WARP+GBV, and Release RTX 4070
+presentation smokes passed `1,000/600/120/1,000` frames with zero D3D12
+corruption/errors and zero live D3D12 child objects.

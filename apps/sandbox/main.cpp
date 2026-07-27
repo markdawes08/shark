@@ -23,6 +23,7 @@
 #include "camera_distance_input_source.hpp"
 #include "camera_controller.hpp"
 #include "options.hpp"
+#include "player_avatar_frame.hpp"
 #include "player_camera_frame.hpp"
 #include "player_command_source.hpp"
 
@@ -1594,7 +1595,8 @@ void log_platform_event(const shark::platform::Event& event)
               "resumes/pauses the "
               "fixed 60 Hz sphere simulation and F6 advances one "
               "tick while paused; F7 toggles third-person/free-fly; "
-              "WASD moves the blue capsule, Shift runs on supported "
+              "WASD moves the blue placeholder character, Shift runs on "
+              "supported "
               "ground, Space jumps outside surface swimming, "
               "RMB orbits, and the wheel zooms the fixed-tick "
               "third-person camera; standard gravity, canonical "
@@ -1656,12 +1658,7 @@ void log_platform_event(const shark::platform::Event& event)
         camera = player_camera_frame_result.value()
             .camera_placement.camera;
     }
-    static_assert(
-        character::maximum_player_capsule_radius <=
-        renderer::maximum_debug_capsule_radius);
-    static_assert(
-        character::maximum_player_capsule_vertical_half_segment <=
-        renderer::maximum_debug_capsule_half_segment_length);
+    static_assert(renderer::placeholder_avatar_part_count == 6U);
     static_assert(
         world::island_demo_sphere_body_count ==
         physics::sphere_body_capacity);
@@ -1744,6 +1741,8 @@ void log_platform_event(const shark::platform::Event& event)
         renderer::EnvironmentLightingMode::image_based;
     auto terrain_diagnostics_enabled = false;
     auto previous_frame_time = std::chrono::steady_clock::now();
+    auto player_avatar_interpolation_mode =
+        sandbox::PlayerAvatarInterpolationMode::collapsed_to_current;
     const auto reset_simulation_time_baseline =
         [&]() -> core::Result<void> {
             auto player_result =
@@ -1760,6 +1759,9 @@ void log_platform_event(const shark::platform::Event& event)
                 return core::Result<void>::failure(
                     std::move(camera_result).error());
             }
+            player_avatar_interpolation_mode =
+                sandbox::PlayerAvatarInterpolationMode::
+                    collapsed_to_current;
             simulation_clock.discard_accumulated_time();
             previous_sphere_bodies = current_sphere_bodies;
             previous_frame_time = std::chrono::steady_clock::now();
@@ -2291,6 +2293,8 @@ void log_platform_event(const shark::platform::Event& event)
                 return core::Result<void>::failure(
                     std::move(player_water_result).error());
             }
+            const auto player_reset_generation_before_step =
+                player_simulation.current.reset_generation;
             auto player_step_result =
                 character::advance_player_capsule(
                     player_simulation,
@@ -2304,6 +2308,13 @@ void log_platform_event(const shark::platform::Event& event)
                 return core::Result<void>::failure(
                     std::move(player_step_result).error());
             }
+            player_avatar_interpolation_mode =
+                player_simulation.current.reset_generation !=
+                    player_reset_generation_before_step
+                ? sandbox::PlayerAvatarInterpolationMode::
+                      collapsed_to_current
+                : sandbox::PlayerAvatarInterpolationMode::
+                      ordered_snapshots;
             player_grounded_tick_count +=
                 static_cast<std::uint64_t>(
                     player_simulation.current.vertical.phase ==
@@ -2401,15 +2412,33 @@ void log_platform_event(const shark::platform::Event& event)
         }
         const auto& player_camera_frame =
             player_camera_frame_result.value();
-        const auto& interpolated_player =
-            player_camera_frame.interpolated_player;
         if (!smoke_mode && !free_fly_camera_enabled) {
             camera =
                 player_camera_frame.camera_placement.camera;
         }
+        auto player_avatar_frame_result =
+            sandbox::build_player_avatar_frame(
+                player_simulation,
+                simulation_frame.interpolation_alpha,
+                player_avatar_interpolation_mode);
+        if (!player_avatar_frame_result) {
+            return core::Result<void>::failure(
+                std::move(player_avatar_frame_result).error());
+        }
+        const auto& player_avatar_frame =
+            player_avatar_frame_result.value();
+        if (player_avatar_frame.interpolated_player !=
+            player_camera_frame.interpolated_player) {
+            return core::Result<void>::failure(
+                renderer_smoke_error(
+                    "Player camera and avatar presentation snapshots "
+                    "diverged"));
+        }
+        const auto& interpolated_player =
+            player_avatar_frame.interpolated_player;
         const auto player_half_yaw =
             interpolated_player.facing_yaw_radians * 0.5F;
-        const math::Quaternion player_proxy_orientation{
+        const math::Quaternion player_avatar_orientation{
             0.0F,
             std::sin(player_half_yaw),
             0.0F,
@@ -2489,15 +2518,11 @@ void log_platform_event(const shark::platform::Event& event)
             .material_sphere_count =
                 static_cast<std::uint32_t>(
                     world::island_demo_sphere_body_count),
-            .debug_capsule = {
+            .placeholder_avatar = {
                 .world_position =
                     interpolated_player.center_position,
-                .orientation = player_proxy_orientation,
-                .radius =
-                    player_simulation.config.shape.radius,
-                .half_segment_length =
-                    player_simulation.config.shape
-                        .vertical_half_segment,
+                .orientation = player_avatar_orientation,
+                .pose = player_avatar_frame.interpolated_pose,
                 .enabled = true,
             },
             .terrain_mode = terrain_mode,
@@ -2872,8 +2897,9 @@ void log_platform_event(const shark::platform::Event& event)
             stats.material_sphere_draw_calls !=
                 stats.frame_submissions *
                     world::island_demo_sphere_body_count ||
-            stats.debug_capsule_draw_calls !=
-                stats.frame_submissions ||
+            stats.placeholder_avatar_draw_calls !=
+                stats.frame_submissions *
+                    renderer::placeholder_avatar_part_count ||
             stats.tone_map_draw_calls != stats.frame_submissions ||
             stats.terrain_query_marker_draw_calls !=
                 expected_diagnostic_frames ||
@@ -2944,8 +2970,8 @@ void log_platform_event(const shark::platform::Event& event)
                 expected_diagnostic_frames * 6 ||
             stats.material_sphere_indices !=
                 stats.material_sphere_draw_calls * 1'584 ||
-            stats.debug_capsule_indices !=
-                stats.debug_capsule_draw_calls * 1'584 ||
+            stats.placeholder_avatar_indices !=
+                stats.placeholder_avatar_draw_calls * 1'584 ||
             stats.terrain_vertex_count !=
                 terrain::large_capacity_tile_vertex_count ||
             stats.terrain_index_count !=
@@ -3247,12 +3273,13 @@ void log_platform_event(const shark::platform::Event& event)
         summary.push_back('/');
         summary.append(std::to_string(stats.skybox_draw_calls));
         summary.append(
-            ", material-spheres/debug-capsule/tone-map-draws=");
+            ", material-spheres/placeholder-avatar-parts/"
+            "tone-map-draws=");
         summary.append(std::to_string(
             stats.material_sphere_draw_calls));
         summary.push_back('/');
         summary.append(std::to_string(
-            stats.debug_capsule_draw_calls));
+            stats.placeholder_avatar_draw_calls));
         summary.push_back('/');
         summary.append(std::to_string(stats.tone_map_draw_calls));
         summary.append(", camera/sky-matrix-changes=");

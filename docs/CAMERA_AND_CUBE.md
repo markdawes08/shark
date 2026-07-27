@@ -1,12 +1,12 @@
 # Camera, Reversed-Z Depth, Cube, and Skybox Contract
 
 - **Camera/cube capability completed through:** `G-005`
-- **Renderer integration verified through:** `CAM-001`
+- **Renderer integration verified through:** `AVT-001`
 - **Character integration completed through:** `CHR-006`
-- **Last verified:** July 26, 2026
-- **CHR-006 verification:** Debug and Release each passed `612,172` assertions
-  across `410` cases; focused Debug passed `22,221` assertions across `10`
-  surface-swimming cases; RTX 4070/WARP smokes passed `1,000/600` frames
+- **Last verified:** July 27, 2026
+- **AVT-001 verification:** Debug and Release each passed `613,817` assertions
+  across `418` cases; presentation smokes passed Debug RTX 4070 `1,000`,
+  packaged WARP `600`, WARP+GBV `120`, and Release RTX 4070 `1,000` frames
 
 G-005 turns the first shader pipeline into Shark's first real 3D scene. One
 engine-owned free-fly camera drives a resource-bound cube pipeline, a finite
@@ -239,15 +239,26 @@ procedural fallback. Cube, sky, terrain, and sphere write linear color to the
 ACES-fitted curve and explicit linear-to-sRGB transfer to the UNORM back
 buffer.
 
-CHR-001's shared environment-proxy `b2` contract contains nine 32-bit values:
-a unit quaternion, world position, radius, and vertical half-segment. Existing
-material spheres bind radius `1` and half-segment `0`, preserving their exact
-sphere branch. The player binds its bounded capsule dimensions; the same
-vertex shader deforms the existing sphere parameterization into a capsule and
-applies a blue diagnostic material. The sandbox interpolates immutable
-previous/current authoritative snapshots and passes each transform through
-`RenderFrameData`. Camera matrices, geometry buffers, descriptors, and pass
-count remain unchanged; the enabled capsule adds one indexed draw.
+At the CHR-001 checkpoint, the shared environment-proxy `b2` contract gained
+nine 32-bit values: a unit quaternion, world position, radius, and vertical
+half-segment. Existing material spheres bind radius `1` and half-segment `0`,
+preserving their exact sphere branch. The temporary player visual bound its
+capsule dimensions; the same vertex shader deformed the existing sphere
+parameterization into a capsule and applied the diagnostic material. The
+sandbox interpolated immutable previous/current authoritative snapshots and
+passed each transform through `RenderFrameData`. Camera matrices, geometry
+buffers, descriptors, and pass count remained unchanged; that checkpoint's
+enabled proxy added one indexed draw.
+
+AVT-001 replaces that diagnostic visual with six project-owned authored parts.
+Each part reuses the same geometry range, root constants, PBR pipeline, and
+Terrain pass. The sandbox derives the avatar root from the same interpolated
+Character snapshot used by the camera target, then supplies bounded
+idle/walk/run/jump/wade/surface-swimming pose scalars. The authoritative
+upright controller capsule, camera interpolation, and clearance remain
+unchanged. The avatar contributes six 1,584-index draws, or 9,504 indices per
+submitted frame, without adding a GPU resource, descriptor, graph pass, PIX
+event, timestamp interval, or upload allocation.
 
 The focused cube and sky root signatures plus immutable cube/skybox PSOs are
 created synchronously from pinned build-time DXIL. They survive swap-chain
@@ -288,16 +299,18 @@ draw or clear. A restore carrying the existing extent is a no-op.
 
 ## Automated and manual acceptance
 
-The fixed presentation smoke requires 1,000 successful presents on automatic
-hardware, 600 on normal packaged WARP, and 120 on the focused packaged-WARP path
-with GPU-based validation. Hardware and normal WARP change from `1280x720` to
+The fixed presentation matrix requires 1,000 successful Debug presents on
+automatic hardware, 600 on normal packaged WARP, 120 on the focused
+packaged-WARP path with GPU-based validation, and 1,000 Release presents on
+automatic hardware. Hardware and normal WARP change from `1280x720` to
 `960x600`; focused GPU validation alone uses `640x360 -> 480x300`. Both
 sequences intentionally change aspect from `16:9` to `1.6`, and each applies
 `1.25` radians of scripted yaw at three quarters.
 The interactive camera starts from the scenario-owned third-person orbit: its
 CHR-004 slope-correct player target is approximately `(0,2.6423082,112)`, it
 starts near `(0,4.8689,120.7202)`, uses pitch `-0.25` radians and a 1,500-meter
-far plane, and has an unobstructed nine-meter boom behind the blue capsule. Presentation
+far plane, and has an unobstructed nine-meter boom behind the placeholder
+avatar. Presentation
 smoke deliberately retains the separate deterministic `(0,28,112)` start with
 pitch `-0.25`. Its initial and
 resized views expose 93 terrain chunks at a `0/93`
@@ -319,7 +332,8 @@ The permanent accounting contract requires:
 
 - with `V0` visible LOD0 chunks and `Vc` visible coarse chunks, `V0`
   1,536-index and `Vc` 864-index terrain draws, four 1,584-index material
-  spheres, one 1,584-index blue player-capsule proxy, one 36-index cube, and
+  spheres, six 1,584-index placeholder-avatar parts (9,504 indices), one
+  36-index cube, and
   one 36-index skybox; `F4` optionally adds
   `V0+Vc` 24-index magenta chunk-bounds draws and one six-index cyan query
   marker; plus one six-vertex water draw, one fullscreen tone-map draw, five
@@ -392,9 +406,9 @@ atmospheric scattering, cloud, automatic exposure, time of day, terrain
 streaming, additional LOD levels, or content database.
 
 The support-sample marker, CPU chunk culling, stateless LOD choice, F4
-diagnostic gate, PHY-001 through PHY-004 sphere transforms, and CHR-001
-capsule proxy add no camera matrix, GPU resource, PSO, graph pass, dependency,
-barrier, PIX event, or timestamp.
+diagnostic gate, PHY-001 through PHY-004 sphere transforms, and AVT-001
+placeholder avatar add no camera matrix, GPU resource, PSO, graph pass,
+dependency, barrier, PIX event, or timestamp.
 W-001 retains 15 imports, five passes, five dependencies, six barriers, 34
 elisions, four geometry buffers, and 12 timestamps as the current exact
 contract.
@@ -430,8 +444,9 @@ cube geometry, sky motion, depth, input, or the deterministic smoke schedule.
 `W-001` adds only presentation-time water input and preserves those camera and
 cube contracts. `PHY-004` retains canonical terrain support and the CPU-only
 four-sphere pair pass while adding independently interpolated orientations;
-CHR-001 adds one bounded player authority and maps its interpolated snapshot to
-the blue proxy. CAM-001 now derives a terrain-cleared camera from that
+CHR-001 adds one bounded player authority and historically mapped its
+interpolated snapshot to the then-current temporary proxy. CAM-001 now derives
+a terrain-cleared camera from that
 interpolated player snapshot and its own interpolated fixed-tick orbit without
 changing Character authority. CHR-002 adds fixed-tick vertical player motion,
 so the same interpolation alpha now moves the capsule and third-person target
@@ -452,21 +467,23 @@ surface swimming uses one `3 m/s` speed with Shift ignored.
 A shore crossing is reclassified on the next emitted simulation tick because
 Character consumes only the one source-position WQ result and performs no
 per-probe Water query. The camera continues to follow only the interpolated
-player position. Descending deep-water capture and shore return therefore move
-the existing upright blue proxy and camera target through their ordinary
-presentation interpolation. The renderer receives no water phase, adds no
-swim pose/pass/resource, and remains unchanged; `AVT-001` owns placeholder
-avatar and phase-aware presentation. Space has no swim jump, flow/currents and
+player position. AVT-001 independently maps that same interpolated Character
+snapshot to the avatar root and bounded pose. Descending deep-water capture and
+shore return therefore move the avatar and camera target through the same
+ordinary presentation interval without adding camera state or making the
+renderer authoritative. Space has no swim jump, flow/currents and
 dynamic-water smoothing remain deferred, and the WQ DTO still lacks source-X/Z
 provenance. Time-baseline resets collapse both interpolation intervals before
-resuming. CHR-006 focused Debug passed `22,221` assertions across `10`
-surface-swimming cases, and the complete Debug and Release suites each passed
-`612,172` assertions across `410` cases. The final Debug RTX 4070 and
-packaged-WARP presentation smokes passed `1,000/600` frames; each end-of-run
-validation reported zero D3D12 corruption, zero errors, zero live D3D12 child
-objects, and only the two expected device-level RLDO advisory warnings. The
-active queue is
-`AVT-001`.
+resuming.
+
+The complete Debug and Release suites each passed `613,817` assertions across
+`418` cases. The Debug RTX 4070, packaged-WARP, focused WARP+GBV, and Release
+RTX 4070 presentation smokes passed `1,000/600/120/1,000` frames. Every
+submitted frame retained the five-pass graph and added exactly six avatar-part
+draws totaling 9,504 indices, with no new GPU resource or pass. End-of-run
+validation reported zero D3D12 corruption, zero errors, and zero live D3D12
+child objects. The active queue is `DEMO-001`, the complete playable Island
+Demo 0.1 acceptance pass.
 See [the Character contract](CHARACTER.md) and
 [the simulation contract](SIMULATION.md). This component page
 no longer duplicates the rolling project

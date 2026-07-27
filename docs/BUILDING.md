@@ -1,10 +1,10 @@
 # Building Shark
 
-- **Completed through:** `CHR-006`
-- **Last verified:** July 26, 2026
-- **CHR-006 verification:** Debug and Release each passed `612,172` assertions
-  across `410` cases; focused Debug passed `22,221` assertions across `10`
-  surface-swimming cases; RTX 4070/WARP smokes passed `1,000/600` frames
+- **Completed through:** `AVT-001`
+- **Last verified:** July 27, 2026
+- **AVT-001 verification:** Debug and Release each passed `613,817` assertions
+  across `418` cases; presentation smokes passed Debug RTX 4070 `1,000`,
+  packaged WARP `600`, WARP+GBV `120`, and Release RTX 4070 `1,000` frames
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
 14.50 LTS toolset, CMake 4.2 or newer, and Windows SDK 10.0.26100 exactly.
@@ -117,7 +117,7 @@ local development and testing only and must never enter a packaged product.
 With no arguments, `SharkSandbox` initializes the highest-priority eligible
 hardware device, creates the validated canonical `HeightTileSurface`, and
 continuously draws its deterministic terrain with bounded distance-selected
-LOD, four material spheres, one blue player-capsule proxy,
+LOD, four material spheres, one project-owned six-part placeholder avatar,
 procedural-checker cube, and HDR environment through named
 `Terrain`, `TexturedCube`, `Skybox`, `Water`, and `ToneMap` graph passes. The
 first four render into a resize-owned `R16G16B16A16_FLOAT` scene target;
@@ -136,8 +136,8 @@ by exactly one 60 Hz
 simulation tick while paused, or press `F5` to resume/pause continuous
 fixed-step motion. Bodies 1 and 2 collide while airborne, while primary body 0
 settles on canonical LOD0 terrain. Isolated body 3 receives a constant torque;
-its small brown local-axis cap makes the normalized rotation visible. Use
-The default camera follows the blue capsule from a nine-meter third-person
+its small brown local-axis cap makes the normalized rotation visible. The
+default camera follows the placeholder avatar from a nine-meter third-person
 boom. Because the sandbox starts paused, press `F5` to run continuously or use
 `F6` to advance input one fixed tick at a time. Hold right mouse and drag to
 orbit; use the vertical wheel to zoom within the authored bounds. Press `F7`
@@ -152,7 +152,7 @@ bar or press Alt+F4 to exit cleanly.
 The same events also feed the fixed-tick player-command boundary: WASD and
 Shift are held movement/run actions, Space is a one-shot jump action, left
 mouse is primary action, right-mouse drag supplies bounded look deltas, and
-`R` resets the capsule. CAM-001 maps those look deltas to the fixed-tick orbit
+`R` resets the character. CAM-001 maps those look deltas to the fixed-tick orbit
 and consumes wheel zoom at the same boundary. CHR-006 advances that orbit
 first, derives the current horizontal basis, queries WQ-001 at the
 authoritative tick-start player X/Z, and then applies dry/wading/
@@ -198,10 +198,11 @@ For the visual acceptance check, run `SharkSandbox.exe` without arguments. A sol
 height tile must show tiled ground and rock materials blended by slope and
 height, mapped surface detail, and direct-sun plus environment response. The
 four glossy neutral material spheres must reflect the same environment used by
-the terrain, and the blue capsule must be visible at the dry spawn. The
+the terrain, and the six-part placeholder avatar must be visible at the dry
+spawn. The
 interactive camera starts from the Island Demo's scenario-owned nine-meter
 third-person orbit, approximately `(0,4.8689,120.7202)` with pitch `-0.25`,
-looking toward the capsule. The
+looking toward the avatar. The
 surface must surround the one island footprint, meet the terrain naturally at
 its depth-tested shoreline, transmit and tint the underlying seabed, reflect
 the active environment more strongly at grazing angles, and show subtle
@@ -385,8 +386,9 @@ Every submitted frame records one outer `Frame` event with nested `Terrain`,
 15 imports, five passes, five dependencies, six recorded transitions, and 34 elided
 transitions. With `V0` visible LOD0 chunks, `Vc` visible coarse chunks, and
 `V=V0+Vc`, it issues `V0` 1,536-index terrain surfaces, `Vc` 864-index terrain
-surfaces, four draws of the 1,584-index material sphere, one 1,584-index blue
-capsule draw, one 36-index textured cube, one 36-index skybox, and one
+surfaces, four draws of the 1,584-index material sphere, six 1,584-index
+placeholder-avatar part draws (9,504 indices), one 36-index textured cube, one
+36-index skybox, and one
 non-indexed six-vertex water quad.
 `F4` additionally enables `V` matching 24-index chunk bounds and the six-index
 query marker; those diagnostics are off by default. One non-indexed
@@ -877,22 +879,37 @@ and packaged WARP passed `600` frames. Each end-of-run validation reported zero
 D3D12 corruption, zero errors, zero live D3D12 child objects, and only the two
 expected device-level RLDO advisory warnings.
 
-Launch `SharkSandbox.exe` to inspect the blue capsule through the default
-third-person camera. Press `F5`, then use WASD to walk, either Shift to run,
-`Space` to jump, right-mouse drag to steer/orbit, and the wheel to zoom; `F6`
-can advance input one tick while paused. `F7` toggles the diagnostic free-fly
-camera. `R` resets the capsule on the next tick. Gravity, grounding, horizontal
-locomotion, jumping, airborne momentum, landing, recovery, wading, and surface
-swimming always advance with Character; left mouse still produces a bounded
-fixed-tick command but remains deferred. Water slows supported movement from
+AVT-001 focused verification is available through:
+
+```powershell
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[sandbox][player-avatar]"
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[renderer][d3d12][environment][avatar]"
+```
+
+The complete Debug and Release suites each pass `613,817` assertions across
+`418` cases. Presentation validation passes the complete matrix: `1,000` Debug
+frames on the RTX 4070, `600` packaged-WARP frames, `120` packaged-WARP frames
+with GPU-based validation, and `1,000` Release frames on the RTX 4070. Every
+submitted frame draws exactly six avatar parts at 1,584 indices each, for
+9,504 avatar indices. AVT-001 adds no graph pass, GPU resource, descriptor,
+geometry buffer, upload allocation, or timestamp/PIX budget.
+
+Launch `SharkSandbox.exe` to inspect the project-owned placeholder avatar
+through the default third-person camera. Press `F5`, then use WASD to walk,
+either Shift to run, `Space` to jump, right-mouse drag to steer/orbit, and the
+wheel to zoom; `F6` can advance input one tick while paused. `F7` toggles the
+diagnostic free-fly camera. `R` resets the authoritative controller and
+collapses avatar interpolation on the next tick. Confirm bounded idle, walk,
+run, jump, wade, and surface-swimming poses while Character continues to own
+gravity, grounding, horizontal locomotion, jumping, airborne momentum,
+landing, recovery, wading, and swimming. Water slows supported movement from
 full speed at `0.25 m` depth toward half speed at `1.5 m`; sufficiently deep
 water transitions to one-speed `3 m/s` surface swimming. Shift and Space are
 ignored while swimming, so there is no swim sprint or swim jump yet. See
 [CHARACTER.md](CHARACTER.md).
 
-The next increment is `AVT-001`: replace the upright diagnostic capsule with a
-project-owned low-poly placeholder and bounded presentation states. W-005
-remains an approved deferred fluid specialization.
+The next increment is `DEMO-001`, the complete playable Island Demo 0.1
+acceptance pass. W-005 remains an approved deferred fluid specialization.
 
 ## Visual Studio
 

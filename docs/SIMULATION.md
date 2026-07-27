@@ -3,10 +3,11 @@
 - **Completed through:** `PHY-010`
 - **Character integration completed through:** `CHR-006`
 - **Camera integration verified through:** `CAM-001`
-- **Last verified:** July 26, 2026
-- **CHR-006 verification:** Debug and Release each passed `612,172` assertions
-  across `410` cases; focused Debug passed `22,221` assertions across `10`
-  surface-swimming cases; RTX 4070/WARP smokes passed `1,000/600` frames
+- **Presentation integration completed through:** `AVT-001`
+- **Last verified:** July 27, 2026
+- **AVT-001 verification:** Debug and Release each passed `613,817` assertions
+  across `418` cases; presentation smokes passed Debug RTX 4070 `1,000`,
+  packaged WARP `600`, WARP+GBV `120`, and Release RTX 4070 `1,000` frames
 
 PHY-001 established Shark's fixed-clock ballistic path. PHY-002 gives that one
 sphere a one-meter collider and deterministic canonical-terrain support.
@@ -529,22 +530,28 @@ to the shared solver without moving SAT or manifold generation into response.
 ## Rendering boundary
 
 The existing material-sphere mesh remains packed in the terrain geometry
-buffers at its original authored center. CHR-001 extends its shared `b2`
-record to nine 32-bit constants: one quaternion, one world position, radius,
-and vertical half-segment. `RenderFrameData` owns fixed four-entry
-position/orientation arrays and an active count in `[0, 4]`, plus one optional
-debug-capsule proxy. The renderer validates active transforms, binds the
-material-sphere PSO once, then visits active bodies in index order. Radius `1`
-and half-segment `0` retain the exact sphere branch and its local `+X` marker.
-The enabled player proxy reuses that draw state with its authored radius and
-positive half-segment, producing the blue capsule inside `Terrain`.
+buffers at its original authored center. Its shared `b2` record contains nine
+32-bit constants: one quaternion, one world position, radius, and vertical
+half-segment. `RenderFrameData` owns fixed four-entry position/orientation
+arrays and an active count in `[0, 4]`, plus one optional six-part placeholder
+avatar. The renderer validates active transforms, binds the material-sphere PSO
+once, then visits active bodies and avatar parts in their fixed authored order.
+Radius `1` and half-segment `0` retain the exact material-sphere branch and its
+local `+X` marker.
 
-This adds no geometry buffer, descriptor, texture, graph pass, water resource,
-or upload-buffer allocation. Four active bodies produce exactly four draws and
-`4 * 1,584` indices per submitted frame; CHR-001's enabled proxy adds one
-separately counted 1,584-index draw. Composition-level tests lock the physics,
-world, and renderer capacities together and validate the renderer fixture's
-one-meter visual radius against the scenario-owned collider radius.
+The Character capsule remains the sole movement/collision authority. AVT-001's
+sandbox presentation composer reads the same immutable previous/current
+snapshots used by the camera, interpolates one root, and maps authoritative
+idle/walk/run/jump/wade/surface-swimming endpoints to bounded pose scalars. Six
+project-owned sphere/capsule parts reuse the existing geometry, PBR shader, and
+Terrain pass. Four active diagnostic bodies therefore produce exactly four
+draws and `4 * 1,584 = 6,336` indices per submitted frame, while the enabled
+avatar adds six separately counted draws and `6 * 1,584 = 9,504` indices.
+
+AVT-001 adds no geometry buffer, descriptor, texture, graph pass, water
+resource, upload-buffer allocation, barrier, PIX event, or timestamp interval.
+Composition-level tests keep Physics, Character, World, and Renderer capacities
+separate; avatar transforms cannot change controller or rigid-body state.
 
 `F4` retains the existing bounded six-vertex/six-index cyan normal pin and
 magenta visible-chunk bounds. The pin is now built at the proof sphere's fixed
@@ -848,18 +855,22 @@ reclassification occurs on the next emitted tick. No per-probe Water query is
 added, and the DTO still lacks source-X/Z provenance for equal-height stale
 samples. Flow is ignored. The controller remains kinematic, mutates no water,
 performs no GPU wait, and does not enter the unchanged dynamic Physics path.
-The camera, renderer proxy, WQ ordering, and dynamic-sphere order are unchanged.
+The camera target, WQ ordering, and dynamic-sphere order are unchanged.
+AVT-001 changes only the presentation proxy: its six authored parts follow the
+same interpolated root and consume bounded pose values without simulation
+authority.
 
-CHR-006 focused Debug passed `22,221` assertions across `10` surface-swimming
-cases, and the complete Debug and Release suites each passed `612,172`
-assertions across `410` cases. The final Debug RTX 4070 and packaged-WARP
-presentation smokes passed `1,000/600` frames; each end-of-run validation
-reported zero D3D12 corruption, zero errors, zero live D3D12 child objects, and
-only the two expected device-level RLDO advisory warnings. The active queue is
-`AVT-001`, placeholder avatar presentation. Underwater
-movement/combat, swim jump, currents, animation, dynamic-water smoothing,
-per-probe Water queries, and GPU integration remain deferred. W-005 remains an
-approved fluid specialization; the queue is centralized in
+The complete Debug and Release suites each passed `613,817` assertions across
+`418` cases. The Debug RTX 4070, packaged-WARP, focused WARP+GBV, and Release
+RTX 4070 presentation smokes passed `1,000/600/120/1,000` frames. Each
+submitted frame produced six avatar draws and 9,504 avatar indices inside the
+unchanged five-pass graph, with no new GPU resource. End-of-run validation
+reported zero D3D12 corruption, zero errors, and zero live D3D12 child objects.
+The active queue is `DEMO-001`, the complete playable Island Demo 0.1
+acceptance pass. Underwater movement/combat, swim jump, currents, a general
+skeletal asset/animation system, dynamic-water smoothing, per-probe Water
+queries, and GPU integration remain deferred. W-005 remains an approved fluid
+specialization; the queue is centralized in
 [ENGINE_PLAN.md](ENGINE_PLAN.md), the query contract is in
 [WATER.md](WATER.md), and the player contract is in
 [CHARACTER.md](CHARACTER.md).

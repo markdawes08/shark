@@ -1,9 +1,13 @@
 # Sky and HDR Environment-Lighting Contract
 
 - **Sky capability completed through:** `S-003`
-- **Renderer integration verified through:** `CHR-001`
-- **Last verified:** July 25, 2026
-- **Active roadmap:** [ENGINE_PLAN.md](ENGINE_PLAN.md)
+- **Renderer integration verified through:** `AVT-001`
+- **Last verified:** July 27, 2026
+- **AVT-001 verification:** Debug and Release each passed `613,817` assertions
+  across `418` cases; presentation smokes passed Debug RTX 4070 `1,000`,
+  packaged WARP `600`, WARP+GBV `120`, and Release RTX 4070 `1,000` frames
+- **Next increment:** `DEMO-001`; [ENGINE_PLAN.md](ENGINE_PLAN.md) remains the
+  roadmap source of truth
 
 Shark still uses a skybox as the background rasterization technique: a cube is
 drawn around the camera with a translation-free view matrix and forced to the
@@ -115,6 +119,12 @@ and BRDF LUT as the terrain. This is the acceptance proof that both objects
 share one environment-lighting model, not the beginning of a general entity,
 mesh, or material system.
 
+AVT-001 reuses that same packed range, environment lighting, and PBR pipeline
+for six project-owned placeholder-avatar parts. Those six draws total 9,504
+indices per submitted frame. They add no environment texture, descriptor,
+geometry buffer, upload, graph pass, transition, PIX event, or timestamp
+interval, and they do not change the one-draw sky policy.
+
 ## HDR scene target and final presentation
 
 `Terrain`, `TexturedCube`, and `Skybox` write linear scene color to one
@@ -188,9 +198,10 @@ color into shader-read state, then restore the back buffer and depth to their
 declared final states. Persistent environment and material resources remain in
 pixel-shader-read state.
 
-With `V` visible terrain chunks, a normal submitted frame issues `V + 7`
+With `V` visible terrain chunks, a normal submitted frame issues `V + 12`
 indexed draws: `V` selected LOD0/coarse chunk surfaces, four material-sphere
-draws, the CHR-001 capsule proxy, the textured cube, and the skybox. Water adds
+draws, six placeholder-avatar part draws, the textured cube, and the skybox.
+Water adds
 one non-indexed procedural six-vertex draw after the sky, and `ToneMap` adds
 one non-indexed fullscreen-triangle draw. Default-off `F4` diagnostics add `V` matching
 magenta chunk bounds and the terrain query marker. LOD0 surfaces use 1,536
@@ -270,5 +281,5 @@ the one-draw sky policy. `W-001` preserves those contracts and places
 transparent water after the opaque sky so wireframe terrain cannot expose
 clear pixels that overwrite the lake. This component page no longer duplicates
 the rolling project queue; [ENGINE_PLAN.md](ENGINE_PLAN.md) is the source of
-truth for the next increment. Rain remains deferred under the bounded
-action-RPG ceiling.
+truth for the active `DEMO-001` acceptance increment. Rain remains deferred
+under the bounded action-RPG ceiling.

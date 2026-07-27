@@ -1,7 +1,7 @@
 # Direct3D 12 GPU Diagnostics Contract
 
-- **Completed through:** `CHR-001`
-- **Last verified:** July 25, 2026
+- **Completed through:** `AVT-001`
+- **Last verified:** July 27, 2026
 
 Shark's GPU diagnostics use fixed-capacity PIX events and direct-queue
 timestamps whose readback is delayed until the owning frame-context fence
@@ -9,7 +9,9 @@ completes. W-001 extends the frame contract to five passes, 15 imports, six
 transitions, 34 elisions, five texture binds, and 12 timestamps while adding
 no normal-frame queue drain or water resource. T-008's 225-chunk counters,
 payload/resource budgets, default-off `F4` diagnostics, and
-`0.501953125`-meter Island Demo terrain error remain unchanged.
+`0.501953125`-meter Island Demo terrain error remain unchanged. AVT-001 adds
+six actual placeholder-avatar part draws per submitted frame but no PIX scope,
+timestamp, resource, descriptor, upload, or graph pass.
 
 ## PIX marker contract
 
@@ -19,9 +21,9 @@ development prerequisite; Shark neither installs nor launches it.
 
 | Marker | Color | Frequency | Boundary |
 |---|---:|---:|---|
-| `StaticSceneUpload` | 3 | once | cube and packed terrain-LOD/chunk-bounds/marker/sphere buffer copies; checker and retained DDS copies; 36 terrain-material and 79 HDR-environment subresource copies; 13 initialization barriers |
+| `StaticSceneUpload` | 3 | once | cube and packed terrain-LOD/chunk-bounds/marker/sphere buffer copies, with the sphere range shared by the avatar; checker and retained DDS copies; 36 terrain-material and 79 HDR-environment subresource copies; 13 initialization barriers |
 | `Frame` | 1 | per submission | frame timestamp interval, 256-byte probe copy, complete graph execution, and timestamp resolve |
-| `Terrain` | 4 | per frame | HDR/depth clear, material/IBL binding, selected LOD0/coarse chunk surfaces, four spheres, one blue player capsule, matching visible chunk bounds, and marker draws |
+| `Terrain` | 4 | per frame | HDR/depth clear, material/IBL binding, selected LOD0/coarse chunk surfaces, four spheres, six placeholder-avatar parts, matching visible chunk bounds, and marker draws |
 | `TexturedCube` | 2 | per frame | HDR/depth binding, checker binding, and cube draw |
 | `Skybox` | 3 | per frame | HDR/read-only-depth binding, radiance/fallback state, and sky draw |
 | `Water` | 6 | per frame | HDR/read-only-depth binding after sky, radiance/fallback state, local-support constants, and six-vertex premultiplied draw |
@@ -203,7 +205,7 @@ terrain_lod0_chunks_last == 0
 terrain_coarse_chunks_last == 61
 
 material_sphere_draw_calls == frame_submissions * 4
-debug_capsule_draw_calls == frame_submissions
+placeholder_avatar_draw_calls == frame_submissions * 6
 terrain_bounds_draw_calls == 2790
 terrain_bounds_indices == 66960
 terrain_query_marker_draw_calls == 30
@@ -226,7 +228,8 @@ terrain_query_marker_index_count == 6
 material_sphere_vertex_count == 266
 material_sphere_index_count == 1584
 material_sphere_indices == material_sphere_draw_calls * 1584
-debug_capsule_indices == debug_capsule_draw_calls * 1584
+placeholder_avatar_indices == placeholder_avatar_draw_calls * 1584
+placeholder_avatar_indices == frame_submissions * 9504
 
 terrain_surface_vertex_payload_bytes == 1393944
 terrain_surface_index_payload_bytes == 1080000
@@ -281,6 +284,7 @@ terrain_indices == 74712000
 terrain_solid_draw_calls/terrain_wireframe_draw_calls == 46500/39875
 terrain_shaded_draw_calls/terrain_material_weight_draw_calls
     /terrain_shading_normal_draw_calls == 30969/30969/24437
+placeholder_avatar_draw_calls/placeholder_avatar_indices == 6000/9504000
 ```
 
 The Debug 600-frame WARP path requires:
@@ -293,6 +297,7 @@ terrain_indices == 44827200
 terrain_solid_draw_calls/terrain_wireframe_draw_calls == 27900/23925
 terrain_shaded_draw_calls/terrain_material_weight_draw_calls
     /terrain_shading_normal_draw_calls == 18600/18600/14625
+placeholder_avatar_draw_calls/placeholder_avatar_indices == 3600/5702400
 ```
 
 The focused Debug 120-frame GPU-validation path requires:
@@ -305,6 +310,7 @@ terrain_indices == 8965440
 terrain_solid_draw_calls/terrain_wireframe_draw_calls == 5580/4785
 terrain_shaded_draw_calls/terrain_material_weight_draw_calls
     /terrain_shading_normal_draw_calls == 3720/3720/2925
+placeholder_avatar_draw_calls/placeholder_avatar_indices == 720/1140480
 ```
 
 All three blocks additionally require visibility last/min/max `61/61/93`,
@@ -409,18 +415,25 @@ focused path completed in about 69
 seconds; active shutdown retained only the usual two device-level RLDO warnings,
 not renderer-owned live-child failures.
 
+AVT-001's active Debug and Release suites each pass 613,817 assertions across
+418 cases. Debug RTX 4070, WARP, and WARP+GBV pass 1,000/600/120 frames with
+6,000/3,600/720 placeholder-avatar part draws; Release RTX 4070 passes 1,000
+frames with 6,000. The four paths report zero D3D12/DXGI corruption or errors
+and zero live child objects. The only shutdown messages are the two expected
+device-level RLDO advisory warnings.
+
 For manual PIX acceptance:
 
 1. Capture a hardware frame and confirm one `Frame` with sequential nested
    `Terrain`, `TexturedCube`, `Skybox`, `Water`, and `ToneMap` scopes.
 2. At the initial pose, confirm `Terrain` contains 93 864-index coarse draws,
-   four spheres, and one blue capsule, with no LOD0 draw. Toggle `F4` and
-   confirm 93 matching 24-index bounds draws plus one marker; they are absent
-   when the toggle is off. At the scripted overview, confirm one 1,536-index
-   LOD0 draw and 71 864-index coarse draws. In the final smoke-only near phase,
-   confirm 61 coarse draws and no LOD0 draw. Cube and sky each retain one
-   indexed draw; `Water` retains one six-vertex non-indexed draw and `ToneMap`
-   one fullscreen draw.
+   four material spheres, and six placeholder-avatar parts, with no LOD0 draw.
+   Toggle `F4` and confirm 93 matching 24-index bounds draws plus one marker;
+   they are absent when the toggle is off. At the scripted overview, confirm
+   one 1,536-index LOD0 draw and 71 864-index coarse draws. In the final
+   smoke-only near phase, confirm 61 coarse draws and no LOD0 draw. Cube and
+   sky each retain one indexed draw; `Water` retains one six-vertex non-indexed
+   draw and `ToneMap` one fullscreen draw.
 3. Confirm all six graph transitions occur inside `Frame` but outside the
    applicable pass intervals.
 4. Confirm material/environment resources remain in pixel-shader-read state.
@@ -467,3 +480,13 @@ phase. Debug and Release each pass 492,503 assertions across 327 cases. The
 1,000-frame RTX 4070, 600-frame WARP, and focused 120-frame GPU-validated WARP
 smokes pass the island schedule with one water draw per submitted frame, zero
 D3D12/DXGI corruption or errors, and zero renderer-owned live child objects.
+
+AVT-001 supersedes the public CHR-001 capsule counters with actual
+placeholder-avatar part counters. One logical avatar expands to six
+1,584-index draws, or 9,504 indices per submitted frame, using the existing
+266-vertex material-sphere range, PSO, and nine-DWORD `b2` constants. The exact
+vertex/index/logical/committed geometry budgets remain
+1,443,672/1,093,980/2,537,652/2,621,440 bytes, with four geometry buffers and
+one static upload. Graph diagnostics remain five passes, 15 imports, five
+dependencies, six transitions, 34 elisions, five texture bindings, and 12
+timestamps per frame.

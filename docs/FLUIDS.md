@@ -218,11 +218,13 @@ dynamic coupling remain absent. Tick-start/source-only classification means a
 crossing is observed on the next emitted tick; the DTO's lack of source-X/Z
 provenance remains a known limitation. Missing support uses Character's
 collapsed spawn recovery, and reset/collapse remain Character-owned. CAM-001
-and the renderer still do not consume this solver. CHR-006 focused Debug
-passed `22,221` assertions across `10` surface-swimming cases, and the complete
-Debug and Release suites each passed `612,172` assertions across `410` cases.
-The final Debug RTX 4070 and packaged-WARP presentation smokes passed
-`1,000/600` frames; each end-of-run validation reported zero D3D12 corruption,
-zero errors, zero live D3D12 child objects, and only the two expected
-device-level RLDO advisory warnings. The active queue is `AVT-001`, placeholder
-avatar presentation.
+and AVT-001's renderer presentation still do not consume this solver. AVT-001
+maps immutable Character snapshots to six project-owned placeholder parts
+inside the existing Terrain pass; its six 1,584-index draws (9,504 indices)
+add no fluid state, GPU resource, descriptor, graph pass, or compute work.
+
+The complete Debug and Release suites each passed `613,817` assertions across
+`418` cases. The Debug RTX 4070, packaged-WARP, focused WARP+GBV, and Release
+RTX 4070 presentation smokes passed `1,000/600/120/1,000` frames with zero
+D3D12 corruption/errors and zero live D3D12 child objects. The active queue is
+`DEMO-001`, the complete playable Island Demo 0.1 acceptance pass.

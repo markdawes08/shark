@@ -1,21 +1,20 @@
 # Character Contract
 
-- **Completed through:** `CHR-006`
+- **Completed through:** `AVT-001`
 - **Camera integration verified through:** `CAM-001`
-- **Last verified:** July 26, 2026
-- **CHR-006 verification:** Debug and Release each passed `612,172` assertions
-  across `410` cases; focused Debug passed `22,221` assertions across `10`
-  surface-swimming cases; RTX 4070/WARP smokes passed `1,000/600` frames
+- **Last verified:** July 27, 2026
+- **AVT-001 verification:** Debug and Release each passed `613,817` assertions
+  across `418` cases
 
-CHR-006 extends the Island Demo's deterministic land and wading controller with
-explicit surface swimming. Camera-relative walk/run/swim and airborne intent,
-authoritative horizontal and vertical state, terrain traversal,
-jump/landing/surface capture/recovery, WQ-001 immersion hysteresis, and
-surface-relative positioning all advance at the fixed simulation rate.
+AVT-001 replaces the diagnostic capsule with an original, code-native
+six-part placeholder and derives bounded idle, walk, run, jump, wade, and
+surface-swim presentation from the existing immutable player snapshots.
+CHR-006's camera-relative movement, authoritative horizontal/vertical/water
+state, terrain traversal, surface capture, and recovery remain unchanged.
 
 Underwater movement, a swim jump, currents, obstacle stepping, arbitrary world
-collision, an entity registry, animation, and final avatar art remain outside
-this increment.
+collision, an entity registry, a skeletal/glTF asset pipeline, production
+animation, and final avatar art remain outside this increment.
 
 ## Ownership and data flow
 
@@ -36,7 +35,8 @@ Platform events
      and terrain probes
   -> Character previous/current snapshots
   -> presentation-only player interpolation
-  -> renderer DebugCapsuleProxy
+  -> sandbox PlayerAvatarFrame mapper
+  -> renderer PlaceholderAvatarProxy
   -> World third-person target (read-only sibling consumer)
 ```
 
@@ -384,20 +384,51 @@ root's tick-start WQ-001 result while advancing the applicable
 ground/air/surface-swim policy. Primary action remains deterministic command
 data for a later increment.
 
-## Temporary presentation proxy
+## Placeholder avatar presentation
 
-The visible player remains the blue diagnostic capsule. The renderer reuses
-the existing material-sphere geometry and Terrain pass. Capsule deformation
-happens in the existing shader, so the proxy adds one indexed draw per
-submitted frame and no graph pass, GPU resource, descriptor, allocation,
-upload, or timestamp interval.
+The visible player is now an original project-owned placeholder authored
+entirely in Shark code. One logical proxy expands into a torso, head, left and
+right arms, and left and right legs. The six low-poly parts reuse the existing
+material-sphere/capsule parameterization, vertex/index buffers, root
+constants, shader pipeline, and Terrain pass. A submitted avatar therefore
+costs six indexed draws and `9,504` indices, but adds no graph pass, GPU
+resource, descriptor, allocation, upload, PSO, or timestamp interval.
 
-The default World-owned third-person rig targets the same interpolated player
-position. Rising, falling, and surface-relative repositioning therefore move
-the proxy and camera target together. Terrain obstruction can shorten only the
-presentation boom and cannot mutate Character. The proxy remains upright and
-has no phase-aware swim pose; `AVT-001` owns that presentation work. `F7`
-retains the independent free-fly diagnostic camera.
+`player_avatar_frame` is a pure sandbox composition boundary. It reads the
+validated previous/current `PlayerCapsuleSnapshot` records, calls the existing
+player-root interpolation, and classifies each immutable endpoint in this
+order:
+
+1. surface swimming;
+2. rising/falling jump;
+3. wading; and
+4. dry idle/walk/run, with steep contact presented as idle.
+
+Exact stopped horizontal velocity selects idle. The default walk/run
+presentation boundary is the midpoint between the authoritative `4` and
+`7 m/s` targets (`5.5 m/s`); actual velocity selects the pose rather than the
+held Shift command. Fixed-tick modulo cycles drive bounded procedural
+arm/leg motion at `1.5 Hz`, with a `3 Hz` run harmonic. Jump uses bounded
+vertical velocity, wading uses its own restrained gait, and surface swimming
+applies a bounded forward body pitch and presentation-only vertical offset.
+Every pose scalar remains inside the renderer's validated inclusive limits.
+
+Previous/current pose scalars blend with the same alpha as the player root.
+Alpha zero and one return their exact endpoints. The mapper owns no persistent
+animator, reads no wall-clock time, mutates no snapshot, and never feeds a pose
+back into Character, Water, Terrain, Physics, or the camera. The composition
+root explicitly selects ordered-snapshot or collapsed-to-current presentation.
+It selects collapse only after reset, recovery, pause, resize, or another
+time-baseline discontinuity has collapsed Character's visible payload; the
+mapper rejects an inconsistent collapse request. Normal identical snapshots
+remain ordered, so a stationary swim cycle still interpolates smoothly, while
+real discontinuities use the current gait sample at both endpoints and cannot
+reintroduce a one-tick limb smear.
+
+The default World-owned third-person rig still targets the same interpolated
+player center, not an avatar part or visual offset. Terrain obstruction can
+shorten only the presentation boom and cannot mutate Character. `F7` retains
+the independent free-fly diagnostic camera.
 
 ## Verification
 
@@ -438,8 +469,15 @@ Permanent tests cover:
 - exact command, camera basis, pose, horizontal/vertical velocity, phase,
   support, and reset transcripts across 30, 60, 120, and 144 Hz render
   partitions;
-- moving player/camera presentation composition; and
-- unchanged render-graph, resource, and one-capsule-draw smoke accounting.
+- moving player/camera presentation composition;
+- exact avatar phase precedence, stopped/walk/run boundaries, endpoint
+  formulas, scalar bounds, alpha endpoints/midpoints, fixed-tick cycle wrap,
+  maximum-tick determinism, invalid-input non-mutation, and collapsed
+  reset/lifecycle history;
+- exact avatar presentation across 30, 60, 120, and 144 Hz render partitions;
+  and
+- six-part transform/proxy validation plus unchanged render-graph, resource,
+  descriptor, pipeline, and upload accounting.
 
 The complete CHR-005 Debug and Release suites historically passed 589,949
 assertions across 400 cases, including exact 30/60/120/144 Hz render-partition
@@ -452,14 +490,16 @@ assertions across `410` cases. The final Debug RTX 4070 presentation smoke
 passed `1,000` frames, and packaged WARP passed `600` frames. Each end-of-run
 validation reported zero D3D12 corruption, zero errors, zero live D3D12 child
 objects, and only the two expected device-level RLDO advisory warnings.
+AVT-001's complete Debug and Release suites each passed `613,817` assertions
+across `418` cases.
 
 Launch `out\build\windows-vs2026\bin\Debug\SharkSandbox.exe` to inspect the
-grounded capsule. Press `F5` to resume/pause fixed-tick simulation, use
+six-part placeholder. Press `F5` to resume/pause fixed-tick simulation, use
 `W`/`A`/`S`/`D` to walk and either `Shift` to run, `F6` to single-step while
 paused, `Space` to jump, right-drag/wheel to orbit and zoom, `F7` for free-fly
 diagnostics, and `R` for a canonical grounded reset. In sufficiently deep
 water, WASD swims at one speed; Shift and Space have no swim effect.
 
-The next increment is `AVT-001`: replace the upright diagnostic capsule with a
-project-owned low-poly placeholder and bounded locomotion/swim presentation
-states while retaining Character as motion authority.
+The next increment is `DEMO-001`: complete and verify the playable Island Demo
+slice from dry spawn through land traversal, wading, surface swimming, and the
+return to shore.

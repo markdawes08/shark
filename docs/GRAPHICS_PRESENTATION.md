@@ -1,13 +1,15 @@
 # Renderer and Direct3D 12 Presentation/Frame-Resource Contract
 
-- **Completed through:** `CHR-001`
-- **Last verified:** July 25, 2026
+- **Completed through:** `AVT-001`
+- **Last verified:** July 27, 2026
 
 `shark::renderer::Renderer` owns Shark's focused D3D12 scene/presentation
 backend. W-001 preserves the triple-buffered fence-gated HDR lifecycle,
 225-chunk capacity, and default-off `F4` diagnostics while adding one
 procedural visual-water draw. Normal frames still submit and present without
-an unconditional post-frame queue drain.
+an unconditional post-frame queue drain. AVT-001 expands one logical
+placeholder avatar into six existing-geometry draws without changing the
+frame-resource lifecycle or GPU inventory.
 
 ## Public boundary and ownership
 
@@ -28,11 +30,14 @@ synchronously and retains no caller CPU pointer.
 
 `RenderFrameData` carries finite scene/sky matrices, daylight settings, camera
 position, fixed four-entry material-sphere position/orientation arrays with
-active count, one optional bounded debug-capsule proxy, terrain fill/material
+active count, one optional `PlaceholderAvatarProxy`, terrain fill/material
 views, and the environment mode. Active orientations must be finite unit
-quaternions. An enabled capsule additionally requires a finite center, unit
-orientation, positive bounded radius, and positive bounded half-segment. `F3`
-selects
+quaternions. An enabled avatar requires a finite root position and unit root
+orientation. Its body pitch is bounded to `[-1.25, 0.25]` radians, vertical
+offset to `[0, 0.40]` meters, torso pitch to `[-0.20, 0.20]`, each arm pitch to
+`[-1.0, 1.0]`, and each leg pitch to `[-0.90, 0.90]`. These controls are a
+presentation-only view of authoritative simulation state; the renderer owns
+neither controller phase nor collision state. `F3` selects
 image-based lighting or the retained
 procedural-daylight fallback.
 Each `TerrainChunkUploadView` carries contiguous LOD0/coarse ranges, exact
@@ -66,7 +71,8 @@ The private backend owns:
 - cube, sky, terrain solid/wireframe/line, water, material-sphere, and tone-map PSOs
   plus their focused root signatures;
 - four committed geometry buffers: cube vertex/index and packed shared
-  terrain-LOD/chunk-bounds/query-marker/material-sphere vertex/index;
+  terrain-LOD/chunk-bounds/query-marker/material-sphere vertex/index; all six
+  placeholder-avatar parts reuse the material-sphere pair;
 - checker and retained S-001 DDS cubemap textures;
 - three two-layer `32x32`, six-mip terrain material arrays;
 - a `32x32` six-mip radiance cube, `8x8` irradiance cube, `32x32` six-mip
@@ -123,7 +129,8 @@ eight-vertex/24-index bounds ranges, the query marker, and the
 the complete vertex buffer contains 60,153 vertices. Index offsets are 0 for
 LOD0, 345,600 for coarse, 540,000 for bounds, 545,400 for the marker, and
 545,406 for the sphere, for 546,990 total indices. T-006 historically
-established that packing; T-008 adds no fifth geometry buffer.
+established that packing. AVT-001 submits the same sphere range six times and
+adds no fifth geometry buffer or static upload.
 
 Meaningful surface payload is 1,393,944 vertex bytes plus 1,080,000 index
 bytes. Bounds/query diagnostics add 54,156 bytes, while the packed
@@ -178,14 +185,15 @@ six transitions cover scene-color render/read state, depth write/read state,
 and back-buffer present/render state.
 
 For `V0` visible LOD0 chunks, `Vc` visible coarse chunks, and `V=V0+Vc`, normal
-submitted commands contain `V + 7` indexed scene draws plus one non-indexed
+submitted commands contain `V + 12` indexed scene draws plus one non-indexed
 six-vertex water draw. `F4` adds `V + 1` diagnostic draws:
 
 ```text
 LOD0 terrain chunks       1,536 * V0 indices
 coarse terrain chunks       864 * Vc indices
 four material spheres    6,336 indices
-blue player capsule      1,584 indices
+six placeholder-avatar parts
+                         9,504 indices
 visible chunk AABBs       F4 ? 24 * V indices : 0
 terrain query marker      F4 ? 6 indices : 0
 textured cube                 36 indices
@@ -196,10 +204,9 @@ visual water                  6 vertices
 `ToneMap` adds `DrawInstanced(3, 1, 0, 0)`. Per frame there is one depth clear
 and five texture-table binds: terrain/IBL, checker, sky radiance, water
 radiance, and HDR scene color. The fixed smoke poses produce
-`V0/Vc=0/93`, then `0/72`, then `1/60`,
-for 80,352, 62,208, and 53,376 terrain-surface indices. The final split occurs
-only in the smoke-only near phase and keeps both packed terrain index ranges
-live. Bounds/query diagnostics are off by default.
+`V0/Vc=0/93`, then `1/71`, then `0/61`, for 80,352, 62,880, and 52,704
+terrain-surface indices. The middle split keeps both packed terrain index
+ranges live. Bounds/query diagnostics are off by default.
 
 The 256-byte frame record remains:
 
@@ -311,6 +318,8 @@ focused GPU-validated WARP requires 120. The paths:
 - prove one static upload, four geometry buffers, three material arrays, four
   HDR environment textures, ten persistent descriptors, and 79/284,608
   environment upload accounting;
+- prove six placeholder-avatar part draws and 9,504 avatar indices per
+  submitted frame through the existing material-sphere geometry and PSO;
 - prove HDR scene texture/RTV/SRV creation counts equal `resize_count + 1`;
 - prove 12 timestamps and one resolve per submission, with 36 global slots;
 - retire every submission before final validation; and
@@ -339,6 +348,15 @@ coarse error, measured GPU frame average/maximum 0.125/0.681 ms and Terrain
 average/maximum 0.105/0.285 ms, and reported zero corruption, zero errors, zero
 live child objects, and only the two expected `ReportLiveDeviceObjects`
 warnings. Smoke checks commands and accounting, not pixels.
+
+AVT-001's active verification passes 613,817 assertions across 418 cases in
+both Debug and Release. Debug RTX 4070 hardware, WARP, and WARP+GBV pass
+1,000/600/120 frames and report 6,000/3,600/720 placeholder-avatar part draws;
+Release RTX 4070 passes 1,000 frames and reports 6,000. All four paths report
+zero D3D12/DXGI corruption or errors and zero live child objects, with only the
+two expected device-level RLDO advisory warnings at shutdown. The vertex,
+index, logical, and committed terrain-geometry budgets remain exactly
+1,443,672, 1,093,980, 2,537,652, and 2,621,440 bytes.
 
 ## Explicit non-goals
 
@@ -387,3 +405,11 @@ root-signature DWORD, or graph pass. The active smoke schedule is
 `0/93 -> 1/71 -> 0/61`; cumulative 1,000-frame draw/index totals remain
 unchanged because the one LOD0 chunk moved from the final phase to the turned
 phase.
+
+AVT-001 replaces CHR-001's one public debug-capsule proxy with one
+renderer-neutral placeholder-avatar pose. The renderer expands it into a
+spherical head plus capsule torso, arms, and legs and records six
+1,584-index draws in the existing `Terrain` pass. The parts reuse the same
+266-vertex sphere range, material-sphere PSO, and nine-DWORD `b2` constants.
+No frame resource, geometry buffer, descriptor, upload, root-signature DWORD,
+PSO, graph pass, PIX scope, or timestamp is added.

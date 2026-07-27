@@ -19,7 +19,8 @@ TEST_CASE(
     STATIC_REQUIRE(std::is_standard_layout_v<RenderFrameData>);
     STATIC_REQUIRE(std::is_standard_layout_v<RendererStats>);
     STATIC_REQUIRE(std::is_standard_layout_v<WaterSurfaceSettings>);
-    STATIC_REQUIRE(std::is_standard_layout_v<DebugCapsuleProxy>);
+    STATIC_REQUIRE(std::is_standard_layout_v<PlaceholderAvatarPose>);
+    STATIC_REQUIRE(std::is_standard_layout_v<PlaceholderAvatarProxy>);
     STATIC_REQUIRE(std::is_standard_layout_v<Texture2DArrayUploadView>);
     STATIC_REQUIRE(std::is_standard_layout_v<Texture2DUploadView>);
     STATIC_REQUIRE(std::is_standard_layout_v<TerrainMaterialUploadView>);
@@ -66,9 +67,7 @@ TEST_CASE(
         shark::math::Float3{3.0F, 1.25F, -1.0F});
     REQUIRE(frame.material_sphere_count == 1);
     STATIC_REQUIRE(maximum_material_sphere_count == 4);
-    STATIC_REQUIRE(maximum_debug_capsule_radius == 64.0F);
-    STATIC_REQUIRE(
-        maximum_debug_capsule_half_segment_length == 64.0F);
+    STATIC_REQUIRE(placeholder_avatar_part_count == 6);
     for (const auto& orientation :
          frame.material_sphere_world_orientations) {
         REQUIRE(orientation.x == 0.0F);
@@ -83,15 +82,16 @@ TEST_CASE(
             frame.material_sphere_world_positions[sphere_index] ==
             shark::math::Float3{});
     }
-    REQUIRE_FALSE(frame.debug_capsule.enabled);
+    REQUIRE_FALSE(frame.placeholder_avatar.enabled);
     REQUIRE(
-        frame.debug_capsule.world_position ==
+        frame.placeholder_avatar.world_position ==
         shark::math::Float3{});
     REQUIRE(
-        frame.debug_capsule.orientation ==
+        frame.placeholder_avatar.orientation ==
         shark::math::Quaternion{});
-    REQUIRE(frame.debug_capsule.radius == 0.5F);
-    REQUIRE(frame.debug_capsule.half_segment_length == 0.75F);
+    REQUIRE(
+        frame.placeholder_avatar.pose ==
+        PlaceholderAvatarPose{});
     REQUIRE(
         frame.environment_lighting_mode ==
         EnvironmentLightingMode::image_based);
@@ -143,10 +143,12 @@ TEST_CASE(
     changed.material_sphere_draw_calls = 1;
     REQUIRE(changed != baseline);
     changed = baseline;
-    changed.debug_capsule_draw_calls = 1;
+    changed.placeholder_avatar_draw_calls =
+        shark::renderer::placeholder_avatar_part_count;
     REQUIRE(changed != baseline);
     changed = baseline;
-    changed.debug_capsule_indices = 1'584;
+    changed.placeholder_avatar_indices =
+        shark::renderer::placeholder_avatar_part_count * 1'584;
     REQUIRE(changed != baseline);
     changed = baseline;
     changed.terrain_chunks_visible = 1;

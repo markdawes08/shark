@@ -3,6 +3,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cmath>
 #include <limits>
 
@@ -111,40 +112,61 @@ TEST_CASE(
 }
 
 TEST_CASE(
-    "debug capsule proxy validation is bounded and enable-gated",
-    "[renderer][d3d12][environment][capsule]")
+    "placeholder avatar proxy validation is bounded and enable-gated",
+    "[renderer][d3d12][environment][avatar][validation]")
 {
     using namespace shark;
     using namespace renderer;
     using namespace renderer::d3d12::detail;
 
-    DebugCapsuleProxy proxy{
+    STATIC_REQUIRE(placeholder_avatar_part_count == 6);
+    STATIC_REQUIRE(
+        minimum_placeholder_avatar_body_pitch == -1.25F);
+    STATIC_REQUIRE(
+        maximum_placeholder_avatar_body_pitch == 0.25F);
+    STATIC_REQUIRE(
+        maximum_placeholder_avatar_body_vertical_offset == 0.40F);
+    STATIC_REQUIRE(
+        maximum_placeholder_avatar_torso_pitch == 0.20F);
+    STATIC_REQUIRE(maximum_placeholder_avatar_arm_pitch == 1.0F);
+    STATIC_REQUIRE(maximum_placeholder_avatar_leg_pitch == 0.90F);
+
+    PlaceholderAvatarProxy proxy{
         .world_position = {2.0F, 3.0F, -4.0F},
         .orientation = {},
-        .radius = 0.5F,
-        .half_segment_length = 0.75F,
+        .pose = {
+            .body_pitch_radians =
+                minimum_placeholder_avatar_body_pitch,
+            .body_vertical_offset =
+                maximum_placeholder_avatar_body_vertical_offset,
+            .torso_pitch_radians =
+                maximum_placeholder_avatar_torso_pitch,
+            .left_arm_pitch_radians =
+                -maximum_placeholder_avatar_arm_pitch,
+            .right_arm_pitch_radians =
+                maximum_placeholder_avatar_arm_pitch,
+            .left_leg_pitch_radians =
+                -maximum_placeholder_avatar_leg_pitch,
+            .right_leg_pitch_radians =
+                maximum_placeholder_avatar_leg_pitch,
+        },
         .enabled = true,
     };
-    REQUIRE(valid_debug_capsule_proxy(proxy));
+    REQUIRE(valid_placeholder_avatar_pose(proxy.pose));
+    REQUIRE(valid_placeholder_avatar_proxy(proxy));
+    for (const auto& part : make_placeholder_avatar_parts(proxy)) {
+        REQUIRE(valid_environment_proxy_transform(part));
+    }
 
-    const auto transform = make_debug_capsule_transform(proxy);
-    REQUIRE(transform.orientation == proxy.orientation);
-    REQUIRE(transform.world_position == proxy.world_position);
-    REQUIRE(transform.radius == proxy.radius);
-    REQUIRE(
-        transform.half_segment_length ==
-        proxy.half_segment_length);
+    proxy.pose.body_pitch_radians =
+        maximum_placeholder_avatar_body_pitch;
+    REQUIRE(valid_placeholder_avatar_proxy(proxy));
 
-    proxy.radius = maximum_debug_capsule_radius;
-    proxy.half_segment_length =
-        maximum_debug_capsule_half_segment_length;
-    REQUIRE(valid_debug_capsule_proxy(proxy));
-
-    const auto require_invalid = [](const DebugCapsuleProxy value) {
-        REQUIRE_FALSE(valid_debug_capsule_proxy(value));
+    const auto require_invalid = [](const PlaceholderAvatarProxy value) {
+        REQUIRE_FALSE(valid_placeholder_avatar_proxy(value));
         auto disabled = value;
         disabled.enabled = false;
-        REQUIRE(valid_debug_capsule_proxy(disabled));
+        REQUIRE(valid_placeholder_avatar_proxy(disabled));
     };
 
     auto invalid = proxy;
@@ -156,36 +178,193 @@ TEST_CASE(
     invalid.orientation = {0.0F, 0.0F, 0.0F, 2.0F};
     require_invalid(invalid);
 
-    invalid = proxy;
-    invalid.radius = 0.0F;
-    require_invalid(invalid);
-    invalid.radius = -1.0F;
-    require_invalid(invalid);
-    invalid.radius =
-        std::nextafter(
-            maximum_debug_capsule_radius,
-            std::numeric_limits<float>::infinity());
-    require_invalid(invalid);
-    invalid.radius = std::numeric_limits<float>::infinity();
-    require_invalid(invalid);
+    using PoseMember = float PlaceholderAvatarPose::*;
+    constexpr std::array<PoseMember, 7> members{{
+        &PlaceholderAvatarPose::body_pitch_radians,
+        &PlaceholderAvatarPose::body_vertical_offset,
+        &PlaceholderAvatarPose::torso_pitch_radians,
+        &PlaceholderAvatarPose::left_arm_pitch_radians,
+        &PlaceholderAvatarPose::right_arm_pitch_radians,
+        &PlaceholderAvatarPose::left_leg_pitch_radians,
+        &PlaceholderAvatarPose::right_leg_pitch_radians,
+    }};
+    constexpr std::array<float, members.size()> minimums{{
+        minimum_placeholder_avatar_body_pitch,
+        0.0F,
+        -maximum_placeholder_avatar_torso_pitch,
+        -maximum_placeholder_avatar_arm_pitch,
+        -maximum_placeholder_avatar_arm_pitch,
+        -maximum_placeholder_avatar_leg_pitch,
+        -maximum_placeholder_avatar_leg_pitch,
+    }};
+    constexpr std::array<float, members.size()> maximums{{
+        maximum_placeholder_avatar_body_pitch,
+        maximum_placeholder_avatar_body_vertical_offset,
+        maximum_placeholder_avatar_torso_pitch,
+        maximum_placeholder_avatar_arm_pitch,
+        maximum_placeholder_avatar_arm_pitch,
+        maximum_placeholder_avatar_leg_pitch,
+        maximum_placeholder_avatar_leg_pitch,
+    }};
+    for (std::size_t index = 0; index < members.size(); ++index) {
+        invalid = proxy;
+        invalid.pose.*members[index] = std::nextafter(
+            minimums[index],
+            -std::numeric_limits<float>::infinity());
+        require_invalid(invalid);
 
-    invalid = proxy;
-    invalid.half_segment_length = 0.0F;
-    require_invalid(invalid);
-    invalid.half_segment_length = -1.0F;
-    require_invalid(invalid);
-    invalid.half_segment_length =
-        std::nextafter(
-            maximum_debug_capsule_half_segment_length,
+        invalid = proxy;
+        invalid.pose.*members[index] = std::nextafter(
+            maximums[index],
             std::numeric_limits<float>::infinity());
-    require_invalid(invalid);
-    invalid.half_segment_length =
-        std::numeric_limits<float>::infinity();
-    require_invalid(invalid);
+        require_invalid(invalid);
+
+        invalid = proxy;
+        invalid.pose.*members[index] =
+            std::numeric_limits<float>::quiet_NaN();
+        require_invalid(invalid);
+    }
 }
 
 TEST_CASE(
-    "environment proxy deformation preserves spheres and forms a capsule",
+    "placeholder avatar expands to the fixed authored six-part envelope",
+    "[renderer][d3d12][environment][avatar][parts]")
+{
+    using namespace shark;
+    using namespace renderer;
+    using namespace renderer::d3d12::detail;
+
+    const PlaceholderAvatarProxy proxy{
+        .world_position = {},
+        .orientation = {},
+        .pose = {},
+        .enabled = true,
+    };
+    REQUIRE(valid_placeholder_avatar_proxy(proxy));
+    const auto parts = make_placeholder_avatar_parts(proxy);
+    REQUIRE(parts.size() == placeholder_avatar_part_count);
+
+    require_float3(
+        parts[0].world_position,
+        placeholder_avatar_torso_center);
+    REQUIRE(parts[0].radius == placeholder_avatar_torso_radius);
+    REQUIRE(
+        parts[0].half_segment_length ==
+        placeholder_avatar_torso_half_segment_length);
+
+    require_float3(
+        parts[1].world_position,
+        placeholder_avatar_head_center);
+    REQUIRE(parts[1].radius == placeholder_avatar_head_radius);
+    REQUIRE(parts[1].half_segment_length == 0.0F);
+
+    require_float3(
+        parts[2].world_position,
+        placeholder_avatar_left_arm_center);
+    require_float3(
+        parts[3].world_position,
+        placeholder_avatar_right_arm_center);
+    REQUIRE(parts[2].radius == placeholder_avatar_arm_radius);
+    REQUIRE(parts[3].radius == placeholder_avatar_arm_radius);
+    REQUIRE(
+        parts[2].half_segment_length ==
+        placeholder_avatar_arm_half_segment_length);
+    REQUIRE(
+        parts[3].half_segment_length ==
+        placeholder_avatar_arm_half_segment_length);
+
+    require_float3(
+        parts[4].world_position,
+        placeholder_avatar_left_leg_center);
+    require_float3(
+        parts[5].world_position,
+        placeholder_avatar_right_leg_center);
+    REQUIRE(parts[4].radius == placeholder_avatar_leg_radius);
+    REQUIRE(parts[5].radius == placeholder_avatar_leg_radius);
+    REQUIRE(
+        parts[4].half_segment_length ==
+        placeholder_avatar_leg_half_segment_length);
+    REQUIRE(
+        parts[5].half_segment_length ==
+        placeholder_avatar_leg_half_segment_length);
+
+    for (const auto& part : parts) {
+        REQUIRE(part.orientation == math::Quaternion{});
+        REQUIRE(valid_environment_proxy_transform(part));
+        REQUIRE(part.world_position.x - part.radius >= -1.0F);
+        REQUIRE(part.world_position.x + part.radius <= 1.0F);
+        REQUIRE(
+            part.world_position.y -
+                part.half_segment_length -
+                part.radius >=
+            -1.0F);
+        REQUIRE(
+            part.world_position.y +
+                part.half_segment_length +
+                part.radius <=
+            1.0F);
+        REQUIRE(part.world_position.z - part.radius >= -1.0F);
+        REQUIRE(part.world_position.z + part.radius <= 1.0F);
+    }
+    REQUIRE(
+        parts[1].world_position.y + parts[1].radius == 0.99F);
+    REQUIRE(
+        parts[4].world_position.y -
+            parts[4].half_segment_length -
+            parts[4].radius ==
+        -0.93F);
+    REQUIRE(
+        parts[2].world_position.x - parts[2].radius == -0.44F);
+    REQUIRE(
+        parts[3].world_position.x + parts[3].radius == 0.44F);
+}
+
+TEST_CASE(
+    "placeholder avatar hierarchy composes bounded finite root and joint poses",
+    "[renderer][d3d12][environment][avatar][hierarchy]")
+{
+    using namespace shark;
+    using namespace renderer;
+    using namespace renderer::d3d12::detail;
+
+    constexpr float sine = 0.70710677F;
+    PlaceholderAvatarProxy proxy{
+        .world_position = {10.0F, 20.0F, -30.0F},
+        .orientation = {0.0F, sine, 0.0F, sine},
+        .pose = {
+            .body_pitch_radians = -1.0F,
+            .body_vertical_offset = 0.35F,
+            .torso_pitch_radians = 0.15F,
+            .left_arm_pitch_radians = -0.75F,
+            .right_arm_pitch_radians = 0.50F,
+            .left_leg_pitch_radians = 0.60F,
+            .right_leg_pitch_radians = -0.40F,
+        },
+        .enabled = true,
+    };
+    REQUIRE(valid_placeholder_avatar_proxy(proxy));
+    const auto posed = make_placeholder_avatar_parts(proxy);
+    const auto rest = make_placeholder_avatar_parts(
+        PlaceholderAvatarProxy{.enabled = true});
+
+    REQUIRE(posed.size() == rest.size());
+    for (const auto& part : posed) {
+        REQUIRE(valid_environment_proxy_transform(part));
+        REQUIRE(math::is_finite(part.world_position));
+        REQUIRE(math::is_unit(part.orientation));
+    }
+    REQUIRE(posed[0].world_position != rest[0].world_position);
+    REQUIRE(posed[1].world_position != posed[0].world_position);
+    REQUIRE(posed[2].world_position != posed[3].world_position);
+    REQUIRE(posed[4].world_position != posed[5].world_position);
+    REQUIRE(posed[0].orientation != proxy.orientation);
+    REQUIRE(posed[1].orientation == posed[0].orientation);
+    REQUIRE(posed[2].orientation != posed[3].orientation);
+    REQUIRE(posed[4].orientation != posed[5].orientation);
+}
+
+TEST_CASE(
+    "environment proxy deformation preserves spheres and forms capsules",
     "[renderer][d3d12][environment][capsule]")
 {
     using namespace shark::renderer::d3d12::detail;
@@ -194,7 +373,7 @@ TEST_CASE(
         {0.6F, 0.8F, 0.0F},
         1.0F,
         0.0F);
-    REQUIRE_FALSE(sphere.debug_capsule);
+    REQUIRE_FALSE(sphere.capsule);
     require_float3(
         sphere.local_position,
         {0.6F, 0.8F, 0.0F});
@@ -208,13 +387,13 @@ TEST_CASE(
         {0.0F, 1.0F, 0.0F},
         radius,
         half_segment);
-    REQUIRE(top.debug_capsule);
+    REQUIRE(top.capsule);
     require_float3(top.local_position, {0.0F, 1.25F, 0.0F});
     require_float3(top.local_normal, {0.0F, 1.0F, 0.0F});
 
     constexpr float seam_x = 0.8660254F;
     const auto upper_seam = deform_environment_proxy(
-        {seam_x, debug_capsule_parameter_seam, 0.0F},
+        {seam_x, capsule_parameter_seam, 0.0F},
         radius,
         half_segment);
     require_float3(
@@ -237,7 +416,7 @@ TEST_CASE(
         {1.0F, 0.0F, 0.0F});
 
     const auto lower_seam = deform_environment_proxy(
-        {seam_x, -debug_capsule_parameter_seam, 0.0F},
+        {seam_x, -capsule_parameter_seam, 0.0F},
         radius,
         half_segment);
     require_float3(

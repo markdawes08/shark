@@ -2,9 +2,9 @@
 
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
-- **Last updated:** July 26, 2026
-- **Latest completed:** `CHR-006` - surface swimming
-- **Next increment:** `AVT-001` - placeholder avatar
+- **Last updated:** July 27, 2026
+- **Latest completed:** `AVT-001` - placeholder avatar
+- **Next increment:** `DEMO-001` - complete playable island slice
 
 ## 1. Project direction
 
@@ -853,7 +853,7 @@ coupling are outside this first playable path.
 | `CHR-004` | S | Complete: add a `6.5 m/s` pre-gravity jump launch, `12 m/s^2` camera-relative airborne control weaker than ground acceleration, exact neutral momentum preservation, explicit rising/falling phases, ignored airborne jump pulses, sampled three-dimensional canonical-terrain contacts, one-tick landing, and canonical dry-spawn recovery; prove apex, no double jump, landing, reset/fall recovery, camera follow, terrain bounds, and exact 30/60/120/144 Hz transcripts without claiming exact continuous collision detection | `feat(character): add jumping and landing` |
 | `CHR-005` | S | Complete: consume one tick-start WQ-001 observation at authoritative X/Z per emitted fixed tick; enter wading at `0.25 m`, remain wading until depth is `<= 0.125 m`, and linearly scale supported ground speed from `1.0` at `0.25 m` to `0.5` at `1.5 m` with deeper water clamped to `0.5`; require exact canonical-bed agreement, classify only grounded/landing support as wading, publish dry state for jump/air/steep/reset/recovery, and prove next-tick shore reclassification without water mutation, GPU access, flow response, or a deep-water barrier | `feat(character): add shallow-water wading` |
 | `CHR-006` | S | Complete: enter surface swimming from sufficiently deep supported wading at `1.50 m` and retain it until depth is `<= 1.25 m`; hold the capsule center at `max(surface - 0.50 m, canonical support)`, move camera-relative at one `3 m/s` speed with Shift ignored, reuse ground acceleration/braking/facing/probes and terrain safe-prefix rejection, let a wading jump win while ignoring Space during swimming, capture descending deep-water motion at the surface while leaving rising motion unchanged, and recover deterministically from no-water, missing-support, reset, and time-baseline discontinuities without per-probe Water queries, GPU access, flow response, renderer changes, or underwater movement | `feat(character): add surface swimming` |
-| `AVT-001` | V | Replace the diagnostic capsule with one project-owned low-poly placeholder and bounded idle/walk/run/jump/wade/swim presentation states; retain controller motion as authority and defer a general skeletal asset pipeline | `feat(character): render placeholder avatar` |
+| `AVT-001` | V | Complete: replace the diagnostic capsule with one original code-native six-part placeholder (torso, head, two arms, and two legs); derive bounded idle/walk/run/jump/wade/surface-swim poses only from immutable previous/current controller snapshots and fixed ticks, blend with the player render alpha, collapse pose history with controller discontinuities, and reuse the existing mesh/pipeline/pass/resources while retaining Character motion as sole authority and deferring skeletal/glTF assets and production art | `feat(character): render placeholder avatar` |
 | `DEMO-001` | - | Launch Island Demo 0.1 from the dry spawn: orbit a visible character, walk/run/jump around the island, enter progressively deeper water, wade, surface-swim, and return to land without penetration, teleport, NaN, duplicate state transitions, or frame-rate-dependent outcomes; pass Debug/Release and clean hardware/WARP validation | `feat(demo): complete playable island slice` |
 
 **M7 exit / Island Demo 0.1:** one original character can traverse one original
@@ -1020,18 +1020,18 @@ members, and zone serialization wait until measured needs after the demo.
 
 ## 14. Immediate next increment
 
-With CHR-006 completed, implement only `AVT-001`:
+With AVT-001 completed, implement only `DEMO-001`:
 
-- replace the diagnostic capsule with one project-owned low-poly placeholder;
-- map the existing authoritative controller phases to bounded idle, walk, run,
-  jump, wade, and surface-swim presentation states;
-- keep Character motion, Water queries, terrain support, the fixed-step clock,
-  and the third-person camera authoritative and unchanged;
-- retain the current renderer budgets unless the placeholder requires one
-  explicitly measured, documented extension; and
-- stop before a general skeletal asset pipeline, production character art,
-  underwater movement, combat, currents, dynamic-water smoothing, or gameplay
-  scripting.
+- launch Island Demo 0.1 at the canonical dry spawn with the six-part
+  placeholder and default third-person camera;
+- verify one complete player journey through walk, run, jump, wading,
+  surface-swim entry/exit, and the return to dry land;
+- reject penetration, unintended teleport/reset, NaN, duplicate state
+  transitions, and render-rate-dependent outcomes;
+- pass the complete Debug/Release suites and clean hardware/WARP presentation
+  validation; and
+- stop before combat, enemies, party behavior, underwater free-swimming,
+  skeletal/glTF assets, production art, scripting, or a broader entity system.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -1412,10 +1412,11 @@ with zero vertical velocity and preserved horizontal momentum.
 `out_of_terrain` or missing canonical support invokes collapsed spawn recovery.
 Reset restores and collapses the canonical dry spawn, and lifecycle
 discontinuities still collapse interpolation history. Flow remains ignored.
-The sandbox query order, third-person camera, renderer proxy, render graph, and
-GPU resource contract are unchanged. Underwater movement/combat, a swim jump,
-currents, animation, dynamic-water smoothing, per-probe Water queries, and GPU
-water synchronization remain deferred. CHR-006 focused Debug
+CHR-006 itself left the sandbox query order, third-person camera, temporary
+renderer proxy, render graph, and GPU resource contract unchanged. Underwater
+movement/combat, a swim jump, currents, skeletal animation, dynamic-water
+smoothing, per-probe Water queries, and GPU water synchronization remain
+deferred. CHR-006 focused Debug
 surface-swimming verification passed `22,221` assertions across `10` cases,
 and the complete Debug and Release suites each passed `612,172` assertions
 across `410` cases. The final Debug RTX 4070 and packaged-WARP presentation
@@ -1423,7 +1424,26 @@ smokes passed `1,000/600` frames; each end-of-run validation reported zero
 D3D12 corruption, zero errors, zero live D3D12 child objects, and only the two
 expected device-level RLDO advisory warnings.
 
-The active queue is `AVT-001`, placeholder avatar presentation.
+AVT-001 replaces that temporary capsule with an original code-native
+placeholder composed of a torso, head, two arms, and two legs. A pure sandbox
+mapper derives bounded idle, walk, run, jump, wade, and surface-swim
+presentation from immutable previous/current Character snapshots and fixed
+ticks, blends the seven pose scalars with the existing player render alpha,
+and receives an explicit ordered/collapsed policy from the composition root so
+reset, recovery, pause, and other time-baseline discontinuities cannot add a
+limb smear while stationary swimming still interpolates normally. The renderer
+expands the logical proxy into six transforms while reusing the existing
+material-sphere/capsule geometry, shader pipeline, Terrain pass, descriptors,
+and GPU resources. Character motion, Water queries, terrain support, fixed
+ticks, and the third-person camera remain authoritative and unchanged; pose
+data never feeds back into simulation.
+
+No skeletal or glTF asset pipeline, imported or production character art,
+persistent animator, gameplay script, new graph pass, descriptor, GPU
+resource, allocation, upload, or PSO was added. AVT-001's complete Debug and
+Release suites each passed `613,817` assertions across `418` cases.
+
+The active queue is `DEMO-001`, the complete playable Island Demo 0.1 slice.
 `W-005`, `W-006`, `R-001` through `R-004`, and coupled hydrology remain
 approved but deferred from the Island Demo 0.1 critical path.
 

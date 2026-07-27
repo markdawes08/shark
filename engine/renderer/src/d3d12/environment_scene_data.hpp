@@ -3,6 +3,7 @@
 #include <shark/core/math.hpp>
 #include <shark/renderer/renderer.hpp>
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -30,7 +31,58 @@ inline constexpr std::uint32_t
     material_sphere_transform_root_parameter = 3;
 inline constexpr std::uint32_t
     material_sphere_transform_root_constant_count = 9;
-inline constexpr float debug_capsule_parameter_seam = 0.5F;
+inline constexpr float capsule_parameter_seam = 0.5F;
+inline constexpr float minimum_placeholder_avatar_body_pitch =
+    -1.25F;
+inline constexpr float maximum_placeholder_avatar_body_pitch =
+    0.25F;
+inline constexpr float
+    maximum_placeholder_avatar_body_vertical_offset = 0.40F;
+inline constexpr float maximum_placeholder_avatar_torso_pitch =
+    0.20F;
+inline constexpr float maximum_placeholder_avatar_arm_pitch = 1.0F;
+inline constexpr float maximum_placeholder_avatar_leg_pitch = 0.90F;
+
+inline constexpr math::Float3 placeholder_avatar_torso_center{
+    0.0F,
+    0.20F,
+    0.0F,
+};
+inline constexpr float placeholder_avatar_torso_radius = 0.24F;
+inline constexpr float
+    placeholder_avatar_torso_half_segment_length = 0.27F;
+inline constexpr math::Float3 placeholder_avatar_head_center{
+    0.0F,
+    0.79F,
+    0.0F,
+};
+inline constexpr float placeholder_avatar_head_radius = 0.20F;
+inline constexpr math::Float3 placeholder_avatar_left_arm_center{
+    -0.34F,
+    0.20F,
+    0.0F,
+};
+inline constexpr math::Float3 placeholder_avatar_right_arm_center{
+    0.34F,
+    0.20F,
+    0.0F,
+};
+inline constexpr float placeholder_avatar_arm_radius = 0.10F;
+inline constexpr float
+    placeholder_avatar_arm_half_segment_length = 0.32F;
+inline constexpr math::Float3 placeholder_avatar_left_leg_center{
+    -0.12F,
+    -0.52F,
+    0.0F,
+};
+inline constexpr math::Float3 placeholder_avatar_right_leg_center{
+    0.12F,
+    -0.52F,
+    0.0F,
+};
+inline constexpr float placeholder_avatar_leg_radius = 0.10F;
+inline constexpr float
+    placeholder_avatar_leg_half_segment_length = 0.31F;
 
 struct MaterialSphereTransformRootConstants final {
     math::Quaternion orientation{};
@@ -53,39 +105,297 @@ make_material_sphere_transform(
 }
 
 [[nodiscard]] constexpr MaterialSphereTransformRootConstants
-make_debug_capsule_transform(
-    const DebugCapsuleProxy& proxy) noexcept
+make_environment_proxy_transform(
+    const math::Quaternion orientation,
+    const math::Float3 world_position,
+    const float radius,
+    const float half_segment_length) noexcept
 {
     return {
-        .orientation = proxy.orientation,
-        .world_position = proxy.world_position,
-        .radius = proxy.radius,
-        .half_segment_length = proxy.half_segment_length,
+        .orientation = orientation,
+        .world_position = world_position,
+        .radius = radius,
+        .half_segment_length = half_segment_length,
     };
 }
 
-[[nodiscard]] inline bool valid_debug_capsule_proxy(
-    const DebugCapsuleProxy& proxy) noexcept
+[[nodiscard]] inline bool in_inclusive_range(
+    const float value,
+    const float minimum,
+    const float maximum) noexcept
+{
+    return std::isfinite(value) &&
+        value >= minimum &&
+        value <= maximum;
+}
+
+[[nodiscard]] inline bool valid_placeholder_avatar_pose(
+    const PlaceholderAvatarPose& pose) noexcept
+{
+    return in_inclusive_range(
+               pose.body_pitch_radians,
+               minimum_placeholder_avatar_body_pitch,
+               maximum_placeholder_avatar_body_pitch) &&
+        in_inclusive_range(
+            pose.body_vertical_offset,
+            0.0F,
+            maximum_placeholder_avatar_body_vertical_offset) &&
+        in_inclusive_range(
+            pose.torso_pitch_radians,
+            -maximum_placeholder_avatar_torso_pitch,
+            maximum_placeholder_avatar_torso_pitch) &&
+        in_inclusive_range(
+            pose.left_arm_pitch_radians,
+            -maximum_placeholder_avatar_arm_pitch,
+            maximum_placeholder_avatar_arm_pitch) &&
+        in_inclusive_range(
+            pose.right_arm_pitch_radians,
+            -maximum_placeholder_avatar_arm_pitch,
+            maximum_placeholder_avatar_arm_pitch) &&
+        in_inclusive_range(
+            pose.left_leg_pitch_radians,
+            -maximum_placeholder_avatar_leg_pitch,
+            maximum_placeholder_avatar_leg_pitch) &&
+        in_inclusive_range(
+            pose.right_leg_pitch_radians,
+            -maximum_placeholder_avatar_leg_pitch,
+            maximum_placeholder_avatar_leg_pitch);
+}
+
+[[nodiscard]] inline math::Quaternion pitch_orientation(
+    const float pitch_radians) noexcept
+{
+    const auto half_pitch = pitch_radians * 0.5F;
+    return {
+        std::sin(half_pitch),
+        0.0F,
+        0.0F,
+        std::cos(half_pitch),
+    };
+}
+
+// Composition order matches the shader's vector rotation:
+// rotate(parent * local, v) == rotate(parent, rotate(local, v)).
+[[nodiscard]] constexpr math::Quaternion compose_orientation(
+    const math::Quaternion parent,
+    const math::Quaternion local) noexcept
+{
+    return {
+        parent.w * local.x +
+            parent.x * local.w +
+            parent.y * local.z -
+            parent.z * local.y,
+        parent.w * local.y -
+            parent.x * local.z +
+            parent.y * local.w +
+            parent.z * local.x,
+        parent.w * local.z +
+            parent.x * local.y -
+            parent.y * local.x +
+            parent.z * local.w,
+        parent.w * local.w -
+            parent.x * local.x -
+            parent.y * local.y -
+            parent.z * local.z,
+    };
+}
+
+[[nodiscard]] constexpr math::Float3 avatar_add(
+    const math::Float3 first,
+    const math::Float3 second) noexcept
+{
+    return {
+        first.x + second.x,
+        first.y + second.y,
+        first.z + second.z,
+    };
+}
+
+[[nodiscard]] constexpr math::Float3 avatar_subtract(
+    const math::Float3 first,
+    const math::Float3 second) noexcept
+{
+    return {
+        first.x - second.x,
+        first.y - second.y,
+        first.z - second.z,
+    };
+}
+
+[[nodiscard]] inline MaterialSphereTransformRootConstants
+make_placeholder_avatar_part(
+    const PlaceholderAvatarProxy& proxy,
+    const math::Quaternion body_orientation,
+    const math::Quaternion local_orientation,
+    const math::Float3 joint_position,
+    const math::Float3 rest_center,
+    const float radius,
+    const float half_segment_length) noexcept
+{
+    const auto joint_offset =
+        avatar_subtract(rest_center, joint_position);
+    const auto posed_center = avatar_add(
+        joint_position,
+        math::rotate(local_orientation, joint_offset));
+    auto body_center = math::rotate(body_orientation, posed_center);
+    body_center.y += proxy.pose.body_vertical_offset;
+    const auto world_center = avatar_add(
+        proxy.world_position,
+        math::rotate(proxy.orientation, body_center));
+    const auto orientation = compose_orientation(
+        proxy.orientation,
+        compose_orientation(body_orientation, local_orientation));
+    return make_environment_proxy_transform(
+        orientation,
+        world_center,
+        radius,
+        half_segment_length);
+}
+
+[[nodiscard]] inline std::array<
+    MaterialSphereTransformRootConstants,
+    placeholder_avatar_part_count>
+make_placeholder_avatar_parts(
+    const PlaceholderAvatarProxy& proxy) noexcept
+{
+    const auto body_orientation =
+        pitch_orientation(proxy.pose.body_pitch_radians);
+    const auto torso_orientation =
+        pitch_orientation(proxy.pose.torso_pitch_radians);
+    const auto left_arm_orientation =
+        pitch_orientation(proxy.pose.left_arm_pitch_radians);
+    const auto right_arm_orientation =
+        pitch_orientation(proxy.pose.right_arm_pitch_radians);
+    const auto left_leg_orientation =
+        pitch_orientation(proxy.pose.left_leg_pitch_radians);
+    const auto right_leg_orientation =
+        pitch_orientation(proxy.pose.right_leg_pitch_radians);
+
+    constexpr math::Float3 waist_joint{
+        0.0F,
+        placeholder_avatar_torso_center.y -
+            placeholder_avatar_torso_half_segment_length -
+            placeholder_avatar_torso_radius,
+        0.0F,
+    };
+    constexpr math::Float3 left_shoulder_joint{
+        placeholder_avatar_left_arm_center.x,
+        placeholder_avatar_left_arm_center.y +
+            placeholder_avatar_arm_half_segment_length +
+            placeholder_avatar_arm_radius,
+        0.0F,
+    };
+    constexpr math::Float3 right_shoulder_joint{
+        placeholder_avatar_right_arm_center.x,
+        placeholder_avatar_right_arm_center.y +
+            placeholder_avatar_arm_half_segment_length +
+            placeholder_avatar_arm_radius,
+        0.0F,
+    };
+    constexpr math::Float3 left_hip_joint{
+        placeholder_avatar_left_leg_center.x,
+        placeholder_avatar_left_leg_center.y +
+            placeholder_avatar_leg_half_segment_length +
+            placeholder_avatar_leg_radius,
+        0.0F,
+    };
+    constexpr math::Float3 right_hip_joint{
+        placeholder_avatar_right_leg_center.x,
+        placeholder_avatar_right_leg_center.y +
+            placeholder_avatar_leg_half_segment_length +
+            placeholder_avatar_leg_radius,
+        0.0F,
+    };
+
+    return {{
+        make_placeholder_avatar_part(
+            proxy,
+            body_orientation,
+            torso_orientation,
+            waist_joint,
+            placeholder_avatar_torso_center,
+            placeholder_avatar_torso_radius,
+            placeholder_avatar_torso_half_segment_length),
+        make_placeholder_avatar_part(
+            proxy,
+            body_orientation,
+            torso_orientation,
+            waist_joint,
+            placeholder_avatar_head_center,
+            placeholder_avatar_head_radius,
+            0.0F),
+        make_placeholder_avatar_part(
+            proxy,
+            body_orientation,
+            left_arm_orientation,
+            left_shoulder_joint,
+            placeholder_avatar_left_arm_center,
+            placeholder_avatar_arm_radius,
+            placeholder_avatar_arm_half_segment_length),
+        make_placeholder_avatar_part(
+            proxy,
+            body_orientation,
+            right_arm_orientation,
+            right_shoulder_joint,
+            placeholder_avatar_right_arm_center,
+            placeholder_avatar_arm_radius,
+            placeholder_avatar_arm_half_segment_length),
+        make_placeholder_avatar_part(
+            proxy,
+            body_orientation,
+            left_leg_orientation,
+            left_hip_joint,
+            placeholder_avatar_left_leg_center,
+            placeholder_avatar_leg_radius,
+            placeholder_avatar_leg_half_segment_length),
+        make_placeholder_avatar_part(
+            proxy,
+            body_orientation,
+            right_leg_orientation,
+            right_hip_joint,
+            placeholder_avatar_right_leg_center,
+            placeholder_avatar_leg_radius,
+            placeholder_avatar_leg_half_segment_length),
+    }};
+}
+
+[[nodiscard]] inline bool valid_environment_proxy_transform(
+    const MaterialSphereTransformRootConstants& transform) noexcept
+{
+    return math::is_finite(transform.orientation) &&
+        math::is_unit(transform.orientation) &&
+        math::is_finite(transform.world_position) &&
+        std::isfinite(transform.radius) &&
+        transform.radius > 0.0F &&
+        std::isfinite(transform.half_segment_length) &&
+        transform.half_segment_length >= 0.0F;
+}
+
+[[nodiscard]] inline bool valid_placeholder_avatar_proxy(
+    const PlaceholderAvatarProxy& proxy) noexcept
 {
     if (!proxy.enabled) {
         return true;
     }
-    return math::is_finite(proxy.world_position) &&
-        math::is_finite(proxy.orientation) &&
-        math::is_unit(proxy.orientation) &&
-        std::isfinite(proxy.radius) &&
-        proxy.radius > 0.0F &&
-        proxy.radius <= maximum_debug_capsule_radius &&
-        std::isfinite(proxy.half_segment_length) &&
-        proxy.half_segment_length > 0.0F &&
-        proxy.half_segment_length <=
-            maximum_debug_capsule_half_segment_length;
+    if (!math::is_finite(proxy.world_position) ||
+        !math::is_finite(proxy.orientation) ||
+        !math::is_unit(proxy.orientation) ||
+        !valid_placeholder_avatar_pose(proxy.pose)) {
+        return false;
+    }
+    const auto parts = make_placeholder_avatar_parts(proxy);
+    for (const auto& part : parts) {
+        if (!valid_environment_proxy_transform(part)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 struct EnvironmentProxySurface final {
     math::Float3 local_position{};
     math::Float3 local_normal{};
-    bool debug_capsule{};
+    bool capsule{};
 };
 
 [[nodiscard]] inline EnvironmentProxySurface
@@ -102,7 +412,7 @@ deform_environment_proxy(
                 unit_direction.z * radius,
             },
             .local_normal = unit_direction,
-            .debug_capsule = false,
+            .capsule = false,
         };
     }
 
@@ -128,7 +438,7 @@ deform_environment_proxy(
 
     math::Float3 normal{};
     math::Float3 position{};
-    if (unit_direction.y >= debug_capsule_parameter_seam) {
+    if (unit_direction.y >= capsule_parameter_seam) {
         normal = normalize_or(
             {
                 unit_direction.x,
@@ -143,7 +453,7 @@ deform_environment_proxy(
         };
     }
     else if (unit_direction.y <=
-             -debug_capsule_parameter_seam) {
+             -capsule_parameter_seam) {
         normal = normalize_or(
             {
                 unit_direction.x,
@@ -169,14 +479,14 @@ deform_environment_proxy(
             normal.x * radius,
             half_segment_length *
                 (unit_direction.y /
-                 debug_capsule_parameter_seam),
+                 capsule_parameter_seam),
             normal.z * radius,
         };
     }
     return {
         .local_position = position,
         .local_normal = normal,
-        .debug_capsule = true,
+        .capsule = true,
     };
 }
 

@@ -482,8 +482,8 @@ RTX 4070 presentation smokes passed `1,000/600/120/1,000` frames. Every
 submitted frame retained the five-pass graph and added exactly six avatar-part
 draws totaling 9,504 indices, with no new GPU resource or pass. End-of-run
 validation reported zero D3D12 corruption, zero errors, and zero live D3D12
-child objects. The active queue is `DEMO-001`, the complete playable Island
-Demo 0.1 acceptance pass.
+child objects. `DEMO-001` completed the playable Island Demo 0.1 acceptance
+pass. The active queue is `GLTF-001`, the bounded static-mesh asset loader.
 See [the Character contract](CHARACTER.md) and
 [the simulation contract](SIMULATION.md). This component page
 no longer duplicates the rolling project

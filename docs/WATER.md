@@ -148,8 +148,8 @@ equal-height terrain. The sandbox's immediate tick-start query remains the
 binding contract. Underwater movement/combat, swim jumping, current response,
 general skeletal animation, dynamic-water smoothing, per-probe Water queries,
 and GPU synchronization remain deferred. CAM-001 and AVT-001 remain
-presentation only. The active queue is `DEMO-001`, the complete playable
-Island Demo 0.1 acceptance pass. The authoritative
+presentation only. `DEMO-001` completed the playable Island Demo 0.1
+acceptance pass. The active queue is `GLTF-001`. The authoritative
 increment order remains in [ENGINE_PLAN.md](ENGINE_PLAN.md), and the player
 contract is in [CHARACTER.md](CHARACTER.md).
 

@@ -17,6 +17,8 @@ add_executable(SharkSandbox
     camera_distance_input_source.hpp
     camera_controller.cpp
     camera_controller.hpp
+    island_demo_acceptance.cpp
+    island_demo_acceptance.hpp
     main.cpp
     options.cpp
     options.hpp

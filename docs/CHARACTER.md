@@ -1,10 +1,10 @@
 # Character Contract
 
-- **Completed through:** `AVT-001`
+- **Completed through:** `DEMO-001`
 - **Camera integration verified through:** `CAM-001`
-- **Last verified:** July 27, 2026
-- **AVT-001 verification:** Debug and Release each passed `613,817` assertions
-  across `418` cases
+- **Last verified:** August 4, 2026
+- **DEMO-001 verification:** Debug and Release each passed `613,887`
+  assertions across `420` cases
 
 AVT-001 replaces the diagnostic capsule with an original, code-native
 six-part placeholder and derives bounded idle, walk, run, jump, wade, and
@@ -493,6 +493,17 @@ objects, and only the two expected device-level RLDO advisory warnings.
 AVT-001's complete Debug and Release suites each passed `613,817` assertions
 across `418` cases.
 
+DEMO-001 composes the existing controller, tick-start Water query,
+third-person orbit/basis, camera frame, and avatar frame into one golden
+3,060-tick journey. Checksum `0xCB461C6060881554` is exact across
+30/60/120/144 Hz render partitions. The route records exactly one jump,
+falling transition, landing, and dry/wading/surface-swimming/wading/dry
+sequence while continuously rejecting reset generation, teleport-sized
+displacement, missing support, terrain penetration, steep contact, and
+non-finite state. Presentation smoke submits one accepted checkpoint for each
+of the six avatar phases; this diagnostic does not replace or autoplay the
+ordinary interactive controller.
+
 Launch `out\build\windows-vs2026\bin\Debug\SharkSandbox.exe` to inspect the
 six-part placeholder. Press `F5` to resume/pause fixed-tick simulation, use
 `W`/`A`/`S`/`D` to walk and either `Shift` to run, `F6` to single-step while
@@ -500,6 +511,6 @@ paused, `Space` to jump, right-drag/wheel to orbit and zoom, `F7` for free-fly
 diagnostics, and `R` for a canonical grounded reset. In sufficiently deep
 water, WASD swims at one speed; Shift and Space have no swim effect.
 
-The next increment is `DEMO-001`: complete and verify the playable Island Demo
-slice from dry spawn through land traversal, wading, surface swimming, and the
-return to shore.
+The next increment is `GLTF-001`: load and validate one original static glTF
+mesh as renderer-neutral CPU data. It does not replace the placeholder or add
+skins/animation; GPU display follows in `GLTF-002`.

@@ -226,5 +226,5 @@ add no fluid state, GPU resource, descriptor, graph pass, or compute work.
 The complete Debug and Release suites each passed `613,817` assertions across
 `418` cases. The Debug RTX 4070, packaged-WARP, focused WARP+GBV, and Release
 RTX 4070 presentation smokes passed `1,000/600/120/1,000` frames with zero
-D3D12 corruption/errors and zero live D3D12 child objects. The active queue is
-`DEMO-001`, the complete playable Island Demo 0.1 acceptance pass.
+D3D12 corruption/errors and zero live D3D12 child objects. `DEMO-001` completed
+the playable Island Demo 0.1 acceptance pass. The active queue is `GLTF-001`.

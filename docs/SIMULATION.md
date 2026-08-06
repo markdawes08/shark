@@ -860,14 +860,23 @@ AVT-001 changes only the presentation proxy: its six authored parts follow the
 same interpolated root and consume bounded pose values without simulation
 authority.
 
-The complete Debug and Release suites each passed `613,817` assertions across
-`418` cases. The Debug RTX 4070, packaged-WARP, focused WARP+GBV, and Release
+DEMO-001 adds no simulation rule. Its acceptance driver composes the existing
+60 Hz clock, camera orbit/basis, tick-start Water query, Character step, and
+camera/avatar presentation into one 3,060-tick golden journey with checksum
+`0xCB461C6060881554`. The exact witness repeats across 30/60/120/144 Hz render
+partitions and rejects elapsed-time discard, reset, missing support,
+penetration, teleport-sized displacement, non-finite state, and duplicate or
+unexpected water transitions.
+
+The complete Debug and Release suites each passed `613,887` assertions across
+`420` cases. The Debug RTX 4070, packaged-WARP, focused WARP+GBV, and Release
 RTX 4070 presentation smokes passed `1,000/600/120/1,000` frames. Each
 submitted frame produced six avatar draws and 9,504 avatar indices inside the
 unchanged five-pass graph, with no new GPU resource. End-of-run validation
 reported zero D3D12 corruption, zero errors, and zero live D3D12 child objects.
-The active queue is `DEMO-001`, the complete playable Island Demo 0.1
-acceptance pass. Underwater movement/combat, swim jump, currents, a general
+Island Demo 0.1 is complete. The active queue is `GLTF-001`, a bounded static
+mesh asset-loader increment with no simulation authority. Underwater
+movement/combat, swim jump, currents, a general
 skeletal asset/animation system, dynamic-water smoothing, per-probe Water
 queries, and GPU integration remain deferred. W-005 remains an approved fluid
 specialization; the queue is centralized in

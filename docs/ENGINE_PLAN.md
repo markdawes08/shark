@@ -2,9 +2,9 @@
 
 - **Status:** Active working plan
 - **Plan date:** July 11, 2026
-- **Last updated:** July 27, 2026
-- **Latest completed:** `AVT-001` - placeholder avatar
-- **Next increment:** `DEMO-001` - complete playable island slice
+- **Last updated:** August 4, 2026
+- **Latest completed:** `DEMO-001` - playable Island Demo 0.1 slice
+- **Next increment:** `GLTF-001` - load one original static glTF mesh
 
 ## 1. Project direction
 
@@ -854,9 +854,9 @@ coupling are outside this first playable path.
 | `CHR-005` | S | Complete: consume one tick-start WQ-001 observation at authoritative X/Z per emitted fixed tick; enter wading at `0.25 m`, remain wading until depth is `<= 0.125 m`, and linearly scale supported ground speed from `1.0` at `0.25 m` to `0.5` at `1.5 m` with deeper water clamped to `0.5`; require exact canonical-bed agreement, classify only grounded/landing support as wading, publish dry state for jump/air/steep/reset/recovery, and prove next-tick shore reclassification without water mutation, GPU access, flow response, or a deep-water barrier | `feat(character): add shallow-water wading` |
 | `CHR-006` | S | Complete: enter surface swimming from sufficiently deep supported wading at `1.50 m` and retain it until depth is `<= 1.25 m`; hold the capsule center at `max(surface - 0.50 m, canonical support)`, move camera-relative at one `3 m/s` speed with Shift ignored, reuse ground acceleration/braking/facing/probes and terrain safe-prefix rejection, let a wading jump win while ignoring Space during swimming, capture descending deep-water motion at the surface while leaving rising motion unchanged, and recover deterministically from no-water, missing-support, reset, and time-baseline discontinuities without per-probe Water queries, GPU access, flow response, renderer changes, or underwater movement | `feat(character): add surface swimming` |
 | `AVT-001` | V | Complete: replace the diagnostic capsule with one original code-native six-part placeholder (torso, head, two arms, and two legs); derive bounded idle/walk/run/jump/wade/surface-swim poses only from immutable previous/current controller snapshots and fixed ticks, blend with the player render alpha, collapse pose history with controller discontinuities, and reuse the existing mesh/pipeline/pass/resources while retaining Character motion as sole authority and deferring skeletal/glTF assets and production art | `feat(character): render placeholder avatar` |
-| `DEMO-001` | - | Launch Island Demo 0.1 from the dry spawn: orbit a visible character, walk/run/jump around the island, enter progressively deeper water, wade, surface-swim, and return to land without penetration, teleport, NaN, duplicate state transitions, or frame-rate-dependent outcomes; pass Debug/Release and clean hardware/WARP validation | `feat(demo): complete playable island slice` |
+| `DEMO-001` | - | Complete: add one shared 3,060-tick Island Demo acceptance journey through the real fixed clock, third-person orbit/basis, gameplay-water query, Character controller, camera/avatar composition, and canonical terrain; pin transcript checksum `0xCB461C6060881554`, prove exact 30/60/120/144 Hz results, one jump/landing and one dry/wade/swim/wade/dry sequence without reset, teleport, penetration, NaN, or duplicate transition, and submit all six accepted avatar-phase checkpoints through clean hardware/WARP presentation validation without changing normal interactive play | `feat(demo): complete playable island slice` |
 
-**M7 exit / Island Demo 0.1:** one original character can traverse one original
+**M7 checkpoint achieved / Island Demo 0.1:** one original character can traverse one original
 small island and reliably transition between land, shallow water, and surface
 swimming.
 
@@ -892,6 +892,7 @@ physical source term.
 | Island | One connected landmass, closed coastline, dry spawn, traversable route, graduated shallow shelf, bounded deep-water region, and deterministic fixture checksum |
 | Character/camera | Fixed-tick command sampling, grounding, slopes, walk/run/jump, interpolation, camera obstruction, invalid-state rollback, and 30/60/120/144 Hz render invariance |
 | Water gameplay | CPU containment/surface/bed/depth queries, character-side immersion classification, threshold hysteresis, wading, surface-swim entry/exit, shore recovery, and no GPU synchronization |
+| Demo integration | Golden fixed-tick journey/checksum, exact 30/60/120/144 Hz witnesses, one jump and water-transition sequence, continuous support/finite/displacement checks, shared camera/avatar roots, and six accepted avatar phases submitted by hardware/WARP smoke |
 | Rain | Seed repeatability, capacity bounds, emission statistics, impact height, GPU timing |
 | Physics | Gravity trajectory, resting contact, analytic sphere/capsule closest features, full oriented-box SAT/manifold geometry, slope friction, restitution, stack stability, canonical islands, sleep/wake transitions, awake-path identity, rollback, and NaN scan |
 | Fluids | Lake at rest, dam break, walls, wet/dry front, non-negative depth, mass accounting, CPU/GPU tolerance |
@@ -960,6 +961,13 @@ these bounded outcomes:
   progression, inventory, HUD, save/load, and audio; or
 - focused import, animation, scenario, encounter, and dialogue-authoring tools.
 
+The owner has delegated the post-demo choice to the project driver. The first
+selected proposal is deliberately CPU-only and reviewable:
+
+| ID | Level | Selected increment and acceptance gate | Suggested commit |
+|---|---:|---|---|
+| `GLTF-001` | - | Load and validate one project-owned, original static glTF 2.0 mesh into deterministic renderer-neutral indexed vertex data with explicit meter/right-handed conversion, node transform, primitive/accessor/buffer bounds, calculated bounds, and malformed-fixture tests; log the accepted asset but stop before GPU upload, rendering, skins, joints, animation, morph targets, broad material support, or a general content database | `feat(assets): load a static glTF mesh` |
+
 Each still requires its own small roadmap increments and acceptance tests. The
 list defines what may eventually be proposed; it commits Shark to none of them
 yet.
@@ -1020,18 +1028,21 @@ members, and zone serialization wait until measured needs after the demo.
 
 ## 14. Immediate next increment
 
-With AVT-001 completed, implement only `DEMO-001`:
+With Island Demo 0.1 completed, implement only `GLTF-001`:
 
-- launch Island Demo 0.1 at the canonical dry spawn with the six-part
-  placeholder and default third-person camera;
-- verify one complete player journey through walk, run, jump, wading,
-  surface-swim entry/exit, and the return to dry land;
-- reject penetration, unintended teleport/reset, NaN, duplicate state
-  transitions, and render-rate-dependent outcomes;
-- pass the complete Debug/Release suites and clean hardware/WARP presentation
-  validation; and
-- stop before combat, enemies, party behavior, underwater free-swimming,
-  skeletal/glTF assets, production art, scripting, or a broader entity system.
+- add one small original static glTF 2.0 fixture with recorded project-owned
+  provenance;
+- decode its bounded scene/node/mesh/primitive/accessor/buffer subset into
+  renderer-neutral indexed vertices, applying the documented coordinate and
+  meter conventions exactly once;
+- validate indices, byte ranges, component/type combinations, transforms,
+  finite values, normals, and calculated bounds with deterministic success and
+  malformed-input tests;
+- log the accepted mesh name, vertex/index counts, and bounds at sandbox
+  startup; and
+- stop before GPU upload/rendering (`GLTF-002`), skins, joints, animation,
+  morph targets, broad glTF material/extension support, editor tooling, or a
+  general asset database.
 
 T-007 completed the deterministic natural-height contract on July 19, 2026.
 Seed `0x4FFB0830` and five Q23/Q30 fixed-point bands produce Q8 heights with
@@ -1443,9 +1454,39 @@ persistent animator, gameplay script, new graph pass, descriptor, GPU
 resource, allocation, upload, or PSO was added. AVT-001's complete Debug and
 Release suites each passed `613,817` assertions across `418` cases.
 
-The active queue is `DEMO-001`, the complete playable Island Demo 0.1 slice.
-`W-005`, `W-006`, `R-001` through `R-004`, and coupled hydrology remain
-approved but deferred from the Island Demo 0.1 critical path.
+DEMO-001 closes the first playable milestone with a shared sandbox acceptance
+driver rather than another gameplay rule. It launches the canonical player and
+camera, performs a visible idle orbit, walks a validated dry route prefix, runs
+home, runs and jumps toward the authored shore, crosses progressively deeper
+water through wading and surface swimming, then returns grounded and dry near
+spawn. Every fixed tick uses the real camera-relative basis, tick-start WQ-001
+observation, Character step, canonical terrain support, camera frame, and
+six-part avatar frame. The run rejects reset generation, steep/missing support,
+penetration, non-finite state, displacement above `0.5 m/tick`, unexpected or
+duplicate water transitions, and elapsed-time discard.
+
+The exact journey completes at tick `3,060`, reaches `5.723742 m` observed
+water depth, and pins transcript checksum `0xCB461C6060881554`. The complete
+witness and all six first-valid avatar checkpoints match exactly across
+30/60/120/144 Hz render partitions; the supported 4 Hz boundary also matches,
+while 3 Hz is rejected before its clock could discard time. Focused verification
+passes `70` assertions across `2` cases. The complete Debug and Release suites
+each pass `613,887` assertions across `420` cases.
+
+Presentation smoke runs that continuous CPU preflight, then submits the
+accepted idle/walk/run/jump/wade/surface-swim checkpoints through the unchanged
+six-draw avatar path and requires phase mask `63`. Debug RTX 4070, packaged
+WARP, focused WARP+GBV, and Release RTX 4070 pass
+`1,000/600/120/1,000` frames with zero D3D12/DXGI corruption or errors and zero
+live child objects; the only shutdown output is the two expected device-level
+RLDO advisory warnings. Normal no-argument play remains interactive and starts
+paused exactly as before.
+
+DEMO-001 closes Island Demo 0.1 with one shared deterministic CPU journey and
+six GPU-submitted avatar-phase checkpoints. The active queue is `GLTF-001`, the
+bounded CPU foundation for one original static glTF mesh; `GLTF-002` will make
+that mesh visible in a later increment. `W-005`, `W-006`, `R-001` through
+`R-004`, and coupled hydrology remain approved but deferred.
 
 ## 15. Primary technical references
 

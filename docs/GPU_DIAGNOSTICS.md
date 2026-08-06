@@ -1,7 +1,7 @@
 # Direct3D 12 GPU Diagnostics Contract
 
-- **Completed through:** `AVT-001`
-- **Last verified:** July 27, 2026
+- **Completed through:** `DEMO-001`
+- **Last verified:** August 4, 2026
 
 Shark's GPU diagnostics use fixed-capacity PIX events and direct-queue
 timestamps whose readback is delayed until the owning frame-context fence
@@ -422,6 +422,14 @@ frames with 6,000. The four paths report zero D3D12/DXGI corruption or errors
 and zero live child objects. The only shutdown messages are the two expected
 device-level RLDO advisory warnings.
 
+DEMO-001 keeps every counter above unchanged. Before presentation begins, the
+smoke executable completes the golden 3,060-tick CPU journey with checksum
+`0xCB461C6060881554`. The submitted GPU frames select accepted idle, walk,
+run, jump, wade, and surface-swim checkpoints in six bounded intervals and
+require final phase mask `63`. Thus the continuous motion/transition proof is
+CPU-side while D3D12 hardware, WARP, and focused GBV each execute all six pose
+payloads through the unchanged six-part Terrain draw path.
+
 For manual PIX acceptance:
 
 1. Capture a hardware frame and confirm one `Frame` with sequential nested
@@ -490,3 +498,10 @@ vertex/index/logical/committed geometry budgets remain
 one static upload. Graph diagnostics remain five passes, 15 imports, five
 dependencies, six transitions, 34 elisions, five texture bindings, and 12
 timestamps per frame.
+
+DEMO-001's complete Debug and Release suites each pass `613,887` assertions
+across `420` cases. Debug RTX 4070, packaged WARP, focused WARP+GBV, and
+Release RTX 4070 retain `1,000/600/120/1,000` successful frames, six avatar
+draws and 9,504 avatar indices per frame, zero D3D12/DXGI corruption or
+errors, and zero live child objects. The only shutdown messages remain the
+two expected device-level RLDO advisory warnings.

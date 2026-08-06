@@ -1,7 +1,7 @@
 # Renderer and Direct3D 12 Presentation/Frame-Resource Contract
 
-- **Completed through:** `AVT-001`
-- **Last verified:** July 27, 2026
+- **Completed through:** `DEMO-001`
+- **Last verified:** August 4, 2026
 
 `shark::renderer::Renderer` owns Shark's focused D3D12 scene/presentation
 backend. W-001 preserves the triple-buffered fence-gated HDR lifecycle,
@@ -413,3 +413,11 @@ spherical head plus capsule torso, arms, and legs and records six
 266-vertex sphere range, material-sphere PSO, and nine-DWORD `b2` constants.
 No frame resource, geometry buffer, descriptor, upload, root-signature DWORD,
 PSO, graph pass, PIX scope, or timestamp is added.
+
+DEMO-001 preserves those budgets and the established culling camera. Its
+continuous 3,060-tick CPU preflight captures one validated alpha-one avatar
+frame for idle, walk, run, jump, wade, and surface swim. Presentation smoke
+submits the six checkpoints in bounded intervals and requires phase mask `63`
+after the final successful frame. This exercises every accepted pose through
+the real D3D12 draw path without changing terrain visibility, frame counts,
+pass counts, resources, or the ordinary interactive executable.

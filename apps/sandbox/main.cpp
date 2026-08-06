@@ -22,6 +22,7 @@
 
 #include "camera_distance_input_source.hpp"
 #include "camera_controller.hpp"
+#include "island_demo_acceptance.hpp"
 #include "options.hpp"
 #include "player_avatar_frame.hpp"
 #include "player_camera_frame.hpp"
@@ -849,6 +850,45 @@ void log_platform_event(const shark::platform::Event& event)
     }
     auto island_scenario =
         std::move(island_scenario_result).value();
+    std::optional<sandbox::IslandDemoAcceptanceReport>
+        island_demo_acceptance_report;
+    if (smoke_mode) {
+        auto acceptance_surface_result =
+            terrain::HeightTileSurface::create(
+                island_scenario.terrain);
+        if (!acceptance_surface_result) {
+            return core::Result<void>::failure(
+                std::move(acceptance_surface_result).error());
+        }
+        auto acceptance_result =
+            sandbox::run_island_demo_acceptance(
+                island_scenario,
+                acceptance_surface_result.value(),
+                simulation::fixed_simulation_rate_hz);
+        if (!acceptance_result) {
+            return core::Result<void>::failure(
+                std::move(acceptance_result).error());
+        }
+        island_demo_acceptance_report =
+            std::move(acceptance_result).value();
+        core::log_message(
+            core::LogLevel::info,
+            "demo.acceptance",
+            std::string{
+                "Completed deterministic Island Demo CPU journey "
+                "preflight: ticks="} +
+                std::to_string(
+                    island_demo_acceptance_report->journey
+                        .completed_fixed_tick) +
+                ", checksum=" +
+                std::to_string(
+                    island_demo_acceptance_report->journey
+                        .transcript_checksum) +
+                ", max-water-depth=" +
+                std::to_string(
+                    island_demo_acceptance_report->journey
+                        .maximum_water_depth));
+    }
     auto terrain_surface_result = terrain::HeightTileSurface::create(
         std::move(island_scenario.terrain));
     if (!terrain_surface_result) {
@@ -1784,6 +1824,7 @@ void log_platform_event(const shark::platform::Event& event)
     bool smoke_camera_pose_changed = false;
     bool smoke_near_pose_changed = false;
     bool debug_state_validated = false;
+    std::uint32_t smoke_avatar_phase_mask = 0U;
     renderer::RendererStats stats_when_minimized{};
 
     for (;;) {
@@ -2434,8 +2475,33 @@ void log_platform_event(const shark::platform::Event& event)
                     "Player camera and avatar presentation snapshots "
                     "diverged"));
         }
+        const auto smoke_avatar_phase_index = smoke_mode
+            ? std::min<std::size_t>(
+                  sandbox::island_demo_avatar_phase_count - 1U,
+                  renderer_instance.stats().presented_frames *
+                      sandbox::island_demo_avatar_phase_count /
+                      required_smoke_frames)
+            : 0U;
+        const auto& rendered_player_avatar_frame = smoke_mode
+            ? island_demo_acceptance_report->avatar_phase_checkpoints[
+                  smoke_avatar_phase_index]
+            : player_avatar_frame;
+        if (smoke_mode) {
+            const auto expected_phase = static_cast<
+                sandbox::PlayerAvatarPresentationPhase>(
+                    smoke_avatar_phase_index + 1U);
+            if (rendered_player_avatar_frame.current_phase !=
+                expected_phase) {
+                return core::Result<void>::failure(
+                    renderer_smoke_error(
+                        "The presentation smoke selected an invalid "
+                        "Island Demo avatar-phase checkpoint"));
+            }
+            smoke_avatar_phase_mask |=
+                std::uint32_t{1} << smoke_avatar_phase_index;
+        }
         const auto& interpolated_player =
-            player_avatar_frame.interpolated_player;
+            rendered_player_avatar_frame.interpolated_player;
         const auto player_half_yaw =
             interpolated_player.facing_yaw_radians * 0.5F;
         const math::Quaternion player_avatar_orientation{
@@ -2522,7 +2588,8 @@ void log_platform_event(const shark::platform::Event& event)
                 .world_position =
                     interpolated_player.center_position,
                 .orientation = player_avatar_orientation,
-                .pose = player_avatar_frame.interpolated_pose,
+                .pose =
+                    rendered_player_avatar_frame.interpolated_pose,
                 .enabled = true,
             },
             .terrain_mode = terrain_mode,
@@ -2555,6 +2622,22 @@ void log_platform_event(const shark::platform::Event& event)
 
     if (smoke_mode) {
         const auto& stats = renderer_instance.stats();
+        if (!island_demo_acceptance_report.has_value()) {
+            return core::Result<void>::failure(
+                renderer_smoke_error(
+                    "The presentation smoke did not run the Island Demo "
+                    "CPU journey preflight"));
+        }
+        constexpr std::uint32_t expected_smoke_avatar_phase_mask =
+            (std::uint32_t{1} <<
+                sandbox::island_demo_avatar_phase_count) - 1U;
+        if (smoke_avatar_phase_mask !=
+            expected_smoke_avatar_phase_mask) {
+            return core::Result<void>::failure(
+                renderer_smoke_error(
+                    "The presentation smoke did not submit all accepted "
+                    "Island Demo avatar-phase checkpoints"));
+        }
         const auto player_movement_basis_result =
             world::horizontal_camera_basis(
                 player_camera_rig.current.state.yaw_radians);
@@ -3099,6 +3182,16 @@ void log_platform_event(const shark::platform::Event& event)
         summary.append(", player-grounded-ticks=");
         summary.append(std::to_string(
             player_grounded_tick_count));
+        summary.append(", demo-cpu-journey(ticks/checksum)=");
+        summary.append(std::to_string(
+            island_demo_acceptance_report->journey
+                .completed_fixed_tick));
+        summary.push_back('/');
+        summary.append(std::to_string(
+            island_demo_acceptance_report->journey
+                .transcript_checksum));
+        summary.append(", gpu-avatar-phase-mask=");
+        summary.append(std::to_string(smoke_avatar_phase_mask));
         summary.append(", resizes=");
         summary.append(std::to_string(stats.resize_count));
         summary.append(", context-reuses=");

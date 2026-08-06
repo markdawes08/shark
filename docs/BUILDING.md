@@ -1,9 +1,9 @@
 # Building Shark
 
-- **Completed through:** `AVT-001`
-- **Last verified:** July 27, 2026
-- **AVT-001 verification:** Debug and Release each passed `613,817` assertions
-  across `418` cases; presentation smokes passed Debug RTX 4070 `1,000`,
+- **Completed through:** `DEMO-001`
+- **Last verified:** August 4, 2026
+- **DEMO-001 verification:** Debug and Release each passed `613,887` assertions
+  across `420` cases; presentation smokes passed Debug RTX 4070 `1,000`,
   packaged WARP `600`, WARP+GBV `120`, and Release RTX 4070 `1,000` frames
 
 Shark currently supports Windows 11 x64 with Visual Studio 2026, the MSVC
@@ -309,6 +309,15 @@ GPU-validation command below presents 120:
 ```powershell
 & .\out\build\windows-vs2026\bin\Debug\SharkSandbox.exe --present-smoke --warp --gpu-validation
 ```
+
+Before those GPU frames, each presentation smoke replays the same continuous
+3,060-tick Island Demo CPU journey and requires checksum
+`0xCB461C6060881554`. The GPU frames then divide into six accepted avatar
+checkpoints—idle, walk, run, jump, wade, and surface swim—and require phase
+mask `63`. This preserves the established terrain/culling/frame statistics
+while proving every demo pose reaches `RenderFrameData` and the D3D12 draw
+path. The ordinary no-argument executable remains interactive and is never
+autoplayed.
 
 Hardware and normal WARP change the physical client area from `1280x720` to
 `960x600`. Only the focused GPU-validation path uses `640x360 -> 480x300` to
@@ -894,6 +903,20 @@ submitted frame draws exactly six avatar parts at 1,584 indices each, for
 9,504 avatar indices. AVT-001 adds no graph pass, GPU resource, descriptor,
 geometry buffer, upload allocation, or timestamp/PIX budget.
 
+DEMO-001 focused verification is available through:
+
+```powershell
+& .\out\build\windows-vs2026\bin\Debug\SharkTests.exe "[sandbox][island-demo][acceptance]"
+```
+
+The two focused cases pass `70` assertions. They pin the complete journey at
+3,060 fixed ticks and checksum `0xCB461C6060881554`, replay it through
+30/60/120/144 Hz render partitions, validate the supported 4 Hz clock
+boundary, and reject a 3 Hz partition that would discard elapsed time. The
+complete Debug and Release suites each pass `613,887` assertions across `420`
+cases. Hardware, WARP, focused WARP+GBV, and Release hardware retain their
+1,000/600/120/1,000-frame gates and require all six GPU avatar-phase bits.
+
 Launch `SharkSandbox.exe` to inspect the project-owned placeholder avatar
 through the default third-person camera. Press `F5`, then use WASD to walk,
 either Shift to run, `Space` to jump, right-mouse drag to steer/orbit, and the
@@ -908,8 +931,9 @@ water transitions to one-speed `3 m/s` surface swimming. Shift and Space are
 ignored while swimming, so there is no swim sprint or swim jump yet. See
 [CHARACTER.md](CHARACTER.md).
 
-The next increment is `DEMO-001`, the complete playable Island Demo 0.1
-acceptance pass. W-005 remains an approved deferred fluid specialization.
+The next increment is `GLTF-001`, the bounded CPU loader/validator for one
+original static glTF mesh. GPU upload and rendering wait for `GLTF-002`; W-005
+remains an approved deferred fluid specialization.
 
 ## Visual Studio
 

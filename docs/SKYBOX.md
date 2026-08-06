@@ -6,7 +6,7 @@
 - **AVT-001 verification:** Debug and Release each passed `613,817` assertions
   across `418` cases; presentation smokes passed Debug RTX 4070 `1,000`,
   packaged WARP `600`, WARP+GBV `120`, and Release RTX 4070 `1,000` frames
-- **Next increment:** `DEMO-001`; [ENGINE_PLAN.md](ENGINE_PLAN.md) remains the
+- **Next increment:** `GLTF-001`; [ENGINE_PLAN.md](ENGINE_PLAN.md) remains the
   roadmap source of truth
 
 Shark still uses a skybox as the background rasterization technique: a cube is
@@ -281,5 +281,5 @@ the one-draw sky policy. `W-001` preserves those contracts and places
 transparent water after the opaque sky so wireframe terrain cannot expose
 clear pixels that overwrite the lake. This component page no longer duplicates
 the rolling project queue; [ENGINE_PLAN.md](ENGINE_PLAN.md) is the source of
-truth for the active `DEMO-001` acceptance increment. Rain remains deferred
-under the bounded action-RPG ceiling.
+truth for the active `GLTF-001` static-mesh asset increment. Rain remains
+deferred under the bounded action-RPG ceiling.
